@@ -26,6 +26,11 @@ def _report_to_pdf(report_md: str, title: str = "Forecast Report") -> bytes:
         text = re.sub(r"`(.*?)`", r"\1", text)
         return text
 
+    def _cell(pdf: FPDF, h: int, text: str) -> None:
+        """Reset x to left margin then render a multi_cell."""
+        pdf.set_x(pdf.l_margin)
+        pdf.multi_cell(0, h, text)
+
     pdf = FPDF()
     pdf.set_margins(20, 20, 20)
     pdf.add_page()
@@ -33,7 +38,8 @@ def _report_to_pdf(report_md: str, title: str = "Forecast Report") -> bytes:
 
     # Cover title
     pdf.set_font("Helvetica", "B", 20)
-    pdf.cell(0, 12, _sanitize(title), new_x="LMARGIN", new_y="NEXT", align="C")
+    pdf.set_x(pdf.l_margin)
+    pdf.multi_cell(0, 12, _sanitize(title), align="C")
     pdf.ln(6)
 
     for raw_line in report_md.splitlines():
@@ -41,44 +47,42 @@ def _report_to_pdf(report_md: str, title: str = "Forecast Report") -> bytes:
         if line.startswith("### "):
             pdf.ln(3)
             pdf.set_font("Helvetica", "B", 13)
-            pdf.multi_cell(0, 7, _sanitize(_strip_inline(line[4:])))
+            _cell(pdf, 7, _sanitize(_strip_inline(line[4:])))
             pdf.ln(1)
         elif line.startswith("## "):
             pdf.ln(4)
             pdf.set_font("Helvetica", "B", 15)
-            pdf.multi_cell(0, 8, _sanitize(_strip_inline(line[3:])))
+            _cell(pdf, 8, _sanitize(_strip_inline(line[3:])))
             pdf.ln(2)
         elif line.startswith("# "):
             pdf.ln(5)
             pdf.set_font("Helvetica", "B", 17)
-            pdf.multi_cell(0, 9, _sanitize(_strip_inline(line[2:])))
+            _cell(pdf, 9, _sanitize(_strip_inline(line[2:])))
             pdf.ln(2)
         elif re.match(r"^[-*] ", line):
             pdf.set_font("Helvetica", "", 11)
-            pdf.set_x(25)
-            pdf.multi_cell(165, 6, _sanitize("- " + _strip_inline(line[2:])))
+            _cell(pdf, 6, _sanitize("  - " + _strip_inline(line[2:])))
         elif re.match(r"^\d+\. ", line):
             pdf.set_font("Helvetica", "", 11)
-            pdf.set_x(25)
-            pdf.multi_cell(165, 6, _sanitize(_strip_inline(line)))
+            _cell(pdf, 6, _sanitize("  " + _strip_inline(line)))
         elif re.match(r"^-{3,}$", line) or re.match(r"^\*{3,}$", line):
             pdf.ln(2)
             pdf.set_draw_color(180, 180, 180)
             y = pdf.get_y()
-            pdf.line(20, y, 190, y)
-            pdf.ln(3)
+            pdf.line(pdf.l_margin, y, pdf.w - pdf.r_margin, y)
+            pdf.ln(4)
         elif line == "":
             pdf.ln(3)
         else:
             pdf.set_font("Helvetica", "", 11)
-            pdf.multi_cell(0, 6, _sanitize(_strip_inline(line)))
+            _cell(pdf, 6, _sanitize(_strip_inline(line)))
 
     return bytes(pdf.output())
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 
-st.set_page_config(page_title="Data Forecaster", layout="wide", page_icon="📈")
-st.title("📈 Data Forecaster")
+st.set_page_config(page_title="Time Data Forecaster Agent", layout="wide", page_icon="📈")
+st.title("📈 Time Data Forecaster Agent")
 
 # ── Session state initialisation ──────────────────────────────────────────────
 for key in ("upload_info", "analysis_result", "error", "_running", "_job_id", "_job_progress", "_job_step", "_user_prompt"):
@@ -501,9 +505,6 @@ if result:
     # ── Tab 6: Report ─────────────────────────────────────────────────────────
     with tab_report:
         report_text = result.get("report", "Report not available.")
-        st.markdown(report_text)
-
-        st.markdown("---")
         try:
             pdf_bytes = _report_to_pdf(report_text)
             fname = f"forecast_report_{info['filename'].rsplit('.', 1)[0]}.pdf" if info else "forecast_report.pdf"
@@ -516,6 +517,8 @@ if result:
             )
         except Exception as _pdf_err:
             st.warning(f"PDF export unavailable: {_pdf_err}")
+        st.markdown("---")
+        st.markdown(report_text)
 
 else:
     st.info("Upload a time series file and click **Run Analysis** to get started.")

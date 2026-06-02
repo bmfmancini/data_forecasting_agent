@@ -1,0 +1,114 @@
+Forecast Error Metrics: Measurement, Interpretation, and Comparison
+
+Evaluating forecast quality requires quantitative error metrics. Different metrics
+capture different aspects of accuracy and each has specific strengths and weaknesses.
+Choosing the right metric is as important as choosing the right model.
+
+Notation
+- y_t: actual observed value at time t
+- f_t: forecasted value at time t
+- e_t = y_t - f_t: forecast error (positive = under-forecast, negative = over-forecast)
+- n: number of forecast periods evaluated
+
+Core Point-Accuracy Metrics
+
+Mean Error (ME)
+ME = (1/n) * sum(e_t)
+- Measures forecast bias. A positive ME means the model systematically under-forecasts;
+  negative means over-forecasting.
+- Positive and negative errors cancel out, so ME near zero does not guarantee accuracy.
+- Always compute ME alongside magnitude metrics.
+
+Mean Absolute Error (MAE)
+MAE = (1/n) * sum(|e_t|)
+- Average absolute magnitude of errors, in the same units as the series.
+- Robust to outliers — large single errors are not disproportionately penalised.
+- Easy to interpret: "on average, forecasts are off by X units."
+- Preferred when large errors are not disproportionately costly.
+
+Root Mean Squared Error (RMSE)
+RMSE = sqrt((1/n) * sum(e_t^2))
+- Also in the same units as the series.
+- Penalises large errors more heavily than MAE due to squaring.
+- Preferred when large errors are particularly undesirable (e.g. inventory stockouts).
+- More sensitive to outliers than MAE.
+- Relationship: RMSE >= MAE always. When they are equal, all errors are the same size.
+  A large RMSE/MAE ratio indicates the presence of occasional large errors.
+
+Mean Absolute Percentage Error (MAPE)
+MAPE = (100/n) * sum(|e_t / y_t|)
+- Scale-free: expressed as a percentage, so it can be compared across series with
+  different units or magnitudes.
+- Major weakness: undefined or extremely large when y_t = 0 or near zero.
+- Asymmetric: a 50% over-forecast and a 50% under-forecast are not treated equally
+  in terms of the underlying absolute errors.
+- Biased towards forecasts that systematically under-predict (under-predictions can
+  produce at most 100% MAPE; over-predictions are unbounded).
+- Use with caution for series containing zeros or very small values.
+
+Symmetric MAPE (sMAPE)
+sMAPE = (100/n) * sum(2*|e_t| / (|y_t| + |f_t|))
+- Addresses some asymmetry in MAPE by using the average of actual and forecast as
+  the denominator.
+- Still problematic when both actual and forecast are near zero.
+- Used in the M-competition series of forecasting competitions.
+
+Mean Absolute Scaled Error (MASE)
+MASE = MAE / MAE_naive
+where MAE_naive is the MAE of a naive one-step-ahead seasonal (or non-seasonal) forecast.
+- Scale-free and well-defined even when values are zero.
+- Values < 1 mean the model outperforms the naive benchmark.
+- Values > 1 mean the model is worse than naive forecasting.
+- Preferred metric for cross-series comparison and competition benchmarking.
+- Less intuitive than MAE for non-technical audiences.
+
+Directional Accuracy
+DA = (1/n) * sum(1 if sign(y_t - y_{t-1}) == sign(f_t - f_{t-1}) else 0)
+- Percentage of time steps where the forecast correctly predicted the direction of change.
+- Important in financial applications where the sign of change matters more than magnitude.
+- A value of 50% is equivalent to random guessing for a stationary series.
+
+Choosing the Right Metric
+
+Situation → Recommended Metric
+- General-purpose reporting → MAE or RMSE
+- When outliers/large errors must be heavily penalised → RMSE
+- When all errors carry equal importance → MAE
+- Comparing across different series/units → MAPE or MASE
+- Series contains zeros → MASE (never MAPE)
+- When benchmark comparison matters → MASE
+- Stakeholder communication → MAPE (if no zeros), MAE
+
+Evaluation Protocol: In-Sample vs Out-of-Sample
+
+In-sample (training) error: error on data used to fit the model. Always lower than
+out-of-sample due to overfitting. Never use in-sample error alone to assess forecast quality.
+
+Out-of-sample (test) error: the gold standard. Evaluate on a held-out portion of
+the series that the model never saw during fitting. Common splits: last 20% of
+observations, or a rolling-origin evaluation.
+
+Rolling-origin (time series cross-validation): fit the model on data up to time t,
+forecast h steps ahead, record errors, advance t by one step, repeat. Produces
+many evaluation windows and gives a more reliable estimate of forecast accuracy
+than a single train/test split.
+
+Information Criteria for Model Selection
+AIC (Akaike Information Criterion) = 2k - 2*ln(L)
+BIC (Bayesian Information Criterion) = k*ln(n) - 2*ln(L)
+where k = number of parameters, L = maximised likelihood, n = sample size.
+- Lower AIC/BIC = better model (penalises complexity).
+- BIC penalises complexity more strongly than AIC and tends to select more parsimonious models.
+- Use for comparing models on the same dataset; not comparable across different datasets.
+- AIC is preferred when forecasting is the goal; BIC is preferred when identifying
+  the true data-generating process is the goal.
+
+Residual Diagnostics
+A well-specified model should have residuals that are:
+1. Uncorrelated: ACF of residuals shows no significant spikes (verified with Ljung-Box test).
+2. Zero mean: systematic bias (nonzero ME) suggests a missing component.
+3. Homoskedastic: constant variance over time. Changing variance suggests GARCH effects.
+4. Normally distributed: required for valid prediction intervals (verify with
+   Shapiro-Wilk or Q-Q plot). Some models are robust to non-normality for point
+   forecasts but interval coverage will be inaccurate.
+Violation of any of these conditions indicates model inadequacy.

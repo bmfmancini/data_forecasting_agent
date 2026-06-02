@@ -1,0 +1,97 @@
+Time Series Decomposition Methods and Interpretation
+
+Time series decomposition separates a series into interpretable structural components:
+trend, seasonality, and residuals (irregular fluctuations). Decomposition is both
+an analytical tool (to understand the series) and a preprocessing step (to inform
+model selection).
+
+The Three Core Components
+
+1. Trend (T): The long-run direction of the series. Can be linear (constant rate of
+   change), nonlinear, or absent. A rising trend in retail sales over years is an
+   example.
+
+2. Seasonality (S): Repeating patterns at a fixed period — the same period every
+   year, week, or day. Distinct from cycles, which have variable period lengths.
+   Example: airline passengers peak every summer.
+
+3. Residual / Irregular (R): What remains after removing trend and seasonality.
+   Should behave like white noise if the decomposition is adequate. Persistent
+   structure in the residual indicates the model is missing something.
+
+Additive vs Multiplicative Decomposition
+
+Additive model: y_t = T_t + S_t + R_t
+- Appropriate when the seasonal variation is roughly constant in absolute terms
+  regardless of the level of the series.
+- Example: a store that always sells approximately 200 extra units in December.
+
+Multiplicative model: y_t = T_t * S_t * R_t
+- Appropriate when seasonal variation scales proportionally with the trend level.
+- Example: a store whose December sales are 30% above its monthly average, which
+  grows as the store's overall sales grow.
+- Often implemented by log-transforming the series: log(y_t) converts multiplicative
+  decomposition to additive.
+
+Rule of thumb: if the amplitude of seasonal swings increases as the series grows,
+use multiplicative (or log + additive). If it stays constant, use additive.
+
+Classical Decomposition (Moving Average Based)
+The oldest approach. Computes trend via a centred moving average, then derives
+seasonal indices by averaging the detrended values over all seasons.
+
+Limitations:
+- Trend is undefined at the start and end of the series (the moving average window
+  needs data on both sides).
+- Assumes seasonal patterns are constant over time — cannot handle evolving seasonality.
+- Sensitive to outliers.
+
+STL Decomposition (Seasonal-Trend decomposition using LOESS)
+STL is the recommended modern approach. It uses locally-weighted regression (LOESS)
+to estimate trend and season components iteratively, handling:
+- Non-constant (evolving) seasonality.
+- Robust fitting that downweights outliers.
+- Any seasonal period (not limited to specific frequencies).
+
+Key STL parameters:
+- seasonal_window (s-window): controls how rapidly the seasonal component is allowed
+  to change. A larger value = smoother, more stable seasonality. Setting to 'periodic'
+  forces constant seasonality across the series.
+- trend_window: controls the smoothness of the trend. Automatically set based on
+  the seasonal period if not specified. A longer window = smoother trend.
+- robustness: when enabled, outliers are identified and downweighted, making the
+  decomposition more resistant to anomalies.
+
+Interpreting STL Output
+- Trend panel: should show the underlying direction free of seasonal noise. If it
+  is nearly flat, the series has no meaningful trend.
+- Seasonal panel: the repeating pattern extracted at each period. If this is
+  approximately zero, there is no seasonality. Compare its scale to the trend and
+  residual panels.
+- Residual panel: ideally random with no obvious structure. Check by plotting the
+  ACF of the residuals — all spikes should be within the significance bands.
+- Strength of seasonality: Fs = max(0, 1 - Var(R) / Var(S + R)). Values > 0.6
+  indicate strong seasonality.
+- Strength of trend: Ft = max(0, 1 - Var(R) / Var(T + R)). Values > 0.6 indicate
+  a strong trend.
+
+X-11 and X-13ARIMA-SEATS
+These are the official decomposition methods used by statistical agencies (e.g. the
+US Census Bureau). They apply a series of moving averages and ARIMA models to
+handle trading day effects, holidays, and outliers. They are more complex than STL
+but produce higher-quality results for official economic statistics.
+
+Practical Uses of Decomposition
+1. Model selection: strong trend → ARIMA/Holt-Winters trend component needed.
+   Strong seasonality → SARIMA or Holt-Winters with seasonal component.
+   Both present → SARIMA or triple exponential smoothing (Holt-Winters).
+2. Outlier detection: unusually large residuals indicate anomalies or data errors.
+3. Seasonally adjusted series: subtracting (or dividing by) the seasonal component
+   removes seasonal effects, making year-on-year changes clearer.
+4. Forecasting: some methods forecast trend and seasonality separately, then
+   recombine. Holt-Winters is a direct implementation of this idea.
+
+Seasonality Strength as a Model Selection Signal
+- Fs > 0.6: seasonal models (SARIMA, Holt-Winters) are likely superior to ARIMA.
+- Fs < 0.3: seasonality is weak; ARIMA may be sufficient.
+- 0.3 < Fs < 0.6: borderline — compare both approaches using AIC/cross-validation.
