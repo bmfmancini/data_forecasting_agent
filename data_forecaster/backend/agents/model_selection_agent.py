@@ -131,10 +131,21 @@ def run_model_selection_agent(stat_result: StatisticalResult) -> ModelSelectionR
         result = executor.invoke({
             "input": (
                 f"{context}\n"
-                "Use all three evaluation tools to assess each model's suitability, "
-                "then select the SINGLE best model from: ARIMA, SARIMA, Holt-Winters. "
-                "Your Final Answer must start with 'Selected model: <MODEL_NAME>' "
-                "followed by the reasoning and why the other two were not chosen."
+                "Use all three evaluation tools to assess each model's suitability. "
+                "Then select the SINGLE best model from: ARIMA, SARIMA, Holt-Winters.\n\n"
+                "Your Final Answer MUST follow this exact structure:\n"
+                "Selected model: <MODEL_NAME>\n\n"
+                "## Why <MODEL_NAME> was chosen\n"
+                "<Detailed explanation referencing the specific statistical values above: "
+                "ADF/KPSS p-values, seasonal period, trend slope, dominant period. "
+                "Explain how each metric directly supports this choice.>\n\n"
+                "## Model Assessment Summary\n"
+                "- **ARIMA**: <2-3 sentences on suitability for this specific data> — Suitability: High/Medium/Low\n"
+                "- **SARIMA**: <2-3 sentences on suitability for this specific data> — Suitability: High/Medium/Low\n"
+                "- **Holt-Winters**: <2-3 sentences on suitability for this specific data> — Suitability: High/Medium/Low\n\n"
+                "## Why other models were not chosen\n"
+                "- **<Rejected Model 1>**: <specific quantitative reason referencing actual values>\n"
+                "- **<Rejected Model 2>**: <specific quantitative reason referencing actual values>"
             )
         })
         output = str(result.get("output", ""))

@@ -3,11 +3,77 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 
 import pandas as pd
 import plotly.graph_objects as go
 import requests
 import streamlit as st
+
+
+def _report_to_pdf(report_md: str, title: str = "Forecast Report") -> bytes:
+    """Render a markdown report string to PDF bytes using fpdf2."""
+    from fpdf import FPDF
+
+    def _sanitize(text: str) -> str:
+        """Drop chars outside Latin-1 so core fonts don't crash."""
+        return text.encode("latin-1", errors="replace").decode("latin-1")
+
+    def _strip_inline(text: str) -> str:
+        """Remove bold/italic/code markers, keep text content."""
+        text = re.sub(r"\*\*(.*?)\*\*", r"\1", text)
+        text = re.sub(r"\*(.*?)\*", r"\1", text)
+        text = re.sub(r"`(.*?)`", r"\1", text)
+        return text
+
+    pdf = FPDF()
+    pdf.set_margins(20, 20, 20)
+    pdf.add_page()
+    pdf.set_auto_page_break(auto=True, margin=20)
+
+    # Cover title
+    pdf.set_font("Helvetica", "B", 20)
+    pdf.cell(0, 12, _sanitize(title), new_x="LMARGIN", new_y="NEXT", align="C")
+    pdf.ln(6)
+
+    for raw_line in report_md.splitlines():
+        line = raw_line.rstrip()
+        if line.startswith("### "):
+            pdf.ln(3)
+            pdf.set_font("Helvetica", "B", 13)
+            pdf.multi_cell(0, 7, _sanitize(_strip_inline(line[4:])))
+            pdf.ln(1)
+        elif line.startswith("## "):
+            pdf.ln(4)
+            pdf.set_font("Helvetica", "B", 15)
+            pdf.multi_cell(0, 8, _sanitize(_strip_inline(line[3:])))
+            pdf.ln(2)
+        elif line.startswith("# "):
+            pdf.ln(5)
+            pdf.set_font("Helvetica", "B", 17)
+            pdf.multi_cell(0, 9, _sanitize(_strip_inline(line[2:])))
+            pdf.ln(2)
+        elif re.match(r"^[-*] ", line):
+            pdf.set_font("Helvetica", "", 11)
+            pdf.set_x(25)
+            pdf.multi_cell(165, 6, _sanitize("- " + _strip_inline(line[2:])))
+        elif re.match(r"^\d+\. ", line):
+            pdf.set_font("Helvetica", "", 11)
+            pdf.set_x(25)
+            pdf.multi_cell(165, 6, _sanitize(_strip_inline(line)))
+        elif re.match(r"^-{3,}$", line) or re.match(r"^\*{3,}$", line):
+            pdf.ln(2)
+            pdf.set_draw_color(180, 180, 180)
+            y = pdf.get_y()
+            pdf.line(20, y, 190, y)
+            pdf.ln(3)
+        elif line == "":
+            pdf.ln(3)
+        else:
+            pdf.set_font("Helvetica", "", 11)
+            pdf.multi_cell(0, 6, _sanitize(_strip_inline(line)))
+
+    return bytes(pdf.output())
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 
@@ -227,13 +293,13 @@ if st.session_state.error and not st.session_state.analysis_result:
 result = st.session_state.analysis_result
 
 if result:
-    tab_overview, tab_quality, tab_stats, tab_model, tab_forecast, tab_report = st.tabs([
-        "📊 Overview",
-        "🔍 Data Quality",
-        "📐 Statistical Analysis",
-        "🤖 Model Selection",
-        "🔮 Forecast",
+    tab_report, tab_forecast, tab_model, tab_stats, tab_quality, tab_overview = st.tabs([
         "📄 Report",
+        "🔮 Forecast",
+        "🤖 Model Selection",
+        "📐 Statistical Analysis",
+        "🔍 Data Quality",
+        "📊 Data Overview",
     ])
 
     # ── Tab 1: Overview ───────────────────────────────────────────────────────
@@ -337,6 +403,78 @@ if result:
             fig = go.Figure(result["chart_model_comparison"])
             st.plotly_chart(fig, use_container_width=True)
 
+        st.subheader("Diagnostic Statistics")
+        s = result["statistical"]
+        diag_df = pd.DataFrame({
+            "Metric": [
+                "ADF Statistic", "ADF p-value", "ADF Result",
+                "KPSS Statistic", "KPSS p-value", "KPSS Result",
+                "Trend Detected", "Trend Slope",
+                "Seasonal Period", "Dominant Period",
+            ],
+            "Value": [
+                f"{s['adf_statistic']:.4f}",
+                f"{s['adf_p_value']:.4f}",
+                "Stationary" if s["is_stationary_adf"] else "Non-stationary",
+                f"{s['kpss_statistic']:.4f}",
+                f"{s['kpss_p_value']:.4f}",
+                "Stationary" if s["is_stationary_kpss"] else "Non-stationary",
+                "Yes" if s["has_trend"] else "No",
+                f"{s['trend_slope']:.6f}",
+                str(s["seasonal_period"]) if s.get("seasonal_period") else "None detected",
+                f"{s['dominant_period']:.2f}" if s.get("dominant_period") else "N/A",
+            ],
+            "Interpretation": [
+                "More negative = stronger evidence against unit root",
+                "< 0.05 → reject unit root (stationary)",
+                "ADF conclusion",
+                "Lower = more likely stationary",
+                "< 0.05 → reject stationarity (non-stationary)",
+                "KPSS conclusion",
+                "Significant linear trend present",
+                "Rate of change per period",
+                "Seasonal cycle length (periods per season)",
+                "Strongest frequency from periodogram",
+            ],
+        })
+        st.dataframe(diag_df, use_container_width=True, hide_index=True)
+
+        st.subheader("Diagnostic Statistics")
+        s = result["statistical"]
+        diag_df = pd.DataFrame({
+            "Metric": [
+                "ADF Statistic", "ADF p-value", "ADF Result",
+                "KPSS Statistic", "KPSS p-value", "KPSS Result",
+                "Trend Detected", "Trend Slope",
+                "Seasonal Period", "Dominant Period",
+            ],
+            "Value": [
+                f"{s['adf_statistic']:.4f}",
+                f"{s['adf_p_value']:.4f}",
+                "Stationary" if s["is_stationary_adf"] else "Non-stationary",
+                f"{s['kpss_statistic']:.4f}",
+                f"{s['kpss_p_value']:.4f}",
+                "Stationary" if s["is_stationary_kpss"] else "Non-stationary",
+                "Yes" if s["has_trend"] else "No",
+                f"{s['trend_slope']:.6f}",
+                str(s["seasonal_period"]) if s.get("seasonal_period") else "None detected",
+                f"{s['dominant_period']:.2f}" if s.get("dominant_period") else "N/A",
+            ],
+            "Interpretation": [
+                "More negative = stronger evidence against unit root",
+                "< 0.05 → reject unit root (stationary)",
+                "ADF conclusion",
+                "Lower = more likely stationary",
+                "< 0.05 → reject stationarity (non-stationary)",
+                "KPSS conclusion",
+                "Significant linear trend present",
+                "Rate of change per period",
+                "Seasonal cycle length (periods per season)",
+                "Strongest frequency from periodogram",
+            ],
+        })
+        st.dataframe(diag_df, use_container_width=True, hide_index=True)
+
     # ── Tab 5: Forecast ───────────────────────────────────────────────────────
     with tab_forecast:
         f = result["forecast"]
@@ -362,7 +500,22 @@ if result:
 
     # ── Tab 6: Report ─────────────────────────────────────────────────────────
     with tab_report:
-        st.markdown(result.get("report", "Report not available."))
+        report_text = result.get("report", "Report not available.")
+        st.markdown(report_text)
+
+        st.markdown("---")
+        try:
+            pdf_bytes = _report_to_pdf(report_text)
+            fname = f"forecast_report_{info['filename'].rsplit('.', 1)[0]}.pdf" if info else "forecast_report.pdf"
+            st.download_button(
+                label="⬇️ Download Report as PDF",
+                data=pdf_bytes,
+                file_name=fname,
+                mime="application/pdf",
+                use_container_width=True,
+            )
+        except Exception as _pdf_err:
+            st.warning(f"PDF export unavailable: {_pdf_err}")
 
 else:
     st.info("Upload a time series file and click **Run Analysis** to get started.")

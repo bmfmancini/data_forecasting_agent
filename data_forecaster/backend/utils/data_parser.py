@@ -49,8 +49,10 @@ def parse_upload(
     logger.info("Detected columns: date_col=%s  value_col=%s", date_col, value_col)
 
     # ── Parse & sort ──────────────────────────────────────────────────────────
+    # Keep all original columns so the user can choose a different value column
+    # in the frontend dropdowns after upload.
     df[date_col] = pd.to_datetime(df[date_col], infer_datetime_format=True)
-    df = df[[date_col, value_col]].dropna(subset=[date_col])
+    df = df.dropna(subset=[date_col])
     df = df.sort_values(date_col).reset_index(drop=True)
     df[value_col] = pd.to_numeric(df[value_col], errors="coerce")
 
@@ -89,7 +91,11 @@ def _detect_date_column(df: pd.DataFrame) -> Optional[str]:
 
 
 def _detect_value_column(df: pd.DataFrame, exclude: Optional[str]) -> Optional[str]:
-    """Return first numeric column that is not the date column."""
+    """Return the first numeric column that is not the date column.
+
+    This is intentionally simple — the frontend exposes all columns so the
+    user can override the suggestion in the dropdown.
+    """
     for col in df.columns:
         if col == exclude:
             continue
