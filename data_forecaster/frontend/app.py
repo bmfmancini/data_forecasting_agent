@@ -24,9 +24,48 @@ for key in ("upload_info", "analysis_result", "error"):
 with st.sidebar:
     st.header("Configuration")
 
+    demo_clicked = st.button("📂 Load Demo Data", use_container_width=True, help="Loads the classic airline passengers dataset (1949–1960)")
+
+    st.markdown("**— or upload your own —**")
+
     uploaded_file = st.file_uploader(
         "Upload Time Series (CSV or XLSX)", type=["csv", "xlsx"]
     )
+
+    if demo_clicked and not st.session_state.get("_demo_loaded"):
+        import io as _io
+        try:
+            _demo_path = os.path.join(os.path.dirname(__file__), "demo_data.csv")
+            if not os.path.exists(_demo_path):
+                # Fall back to fetching from backend container's data dir via env path
+                _demo_path = "/app/data/sample_airline_passengers.csv"
+            with open(_demo_path, "rb") as _f:
+                _demo_bytes = _f.read()
+        except FileNotFoundError:
+            st.error("Demo data file not found inside the container.")
+            _demo_bytes = None
+        if _demo_bytes:
+            with st.spinner("Loading demo data…"):
+                try:
+                    resp = requests.post(
+                        f"{BACKEND_URL}/upload",
+                        files={"file": ("sample_airline_passengers.csv", _demo_bytes, "text/csv")},
+                        timeout=60,
+                    )
+                    if resp.status_code == 200:
+                        st.session_state.upload_info = resp.json()
+                        st.session_state.analysis_result = None
+                        st.session_state.error = None
+                        st.session_state["_demo_loaded"] = True
+                        st.success("Demo data loaded — 144 rows (airline passengers 1949–1960).")
+                        st.rerun()
+                    else:
+                        st.error(resp.json().get("detail", "Demo upload failed."))
+                except Exception as exc:
+                    st.error(f"Demo load error: {exc}")
+
+    if not demo_clicked:
+        st.session_state["_demo_loaded"] = False
 
     if uploaded_file and (
         st.session_state.upload_info is None
