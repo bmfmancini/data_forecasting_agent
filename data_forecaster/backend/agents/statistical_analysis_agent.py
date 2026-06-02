@@ -132,7 +132,7 @@ def run_statistical_agent(series: pd.Series, seasonal_period: int = 12) -> Stati
     agent = create_react_agent(llm, tools_list, _REACT_PROMPT)
     executor = AgentExecutor(
         agent=agent, tools=tools_list, verbose=False,
-        max_iterations=14, handle_parsing_errors=True,
+        max_iterations=7, handle_parsing_errors=True,
     )
 
     try:

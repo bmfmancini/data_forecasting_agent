@@ -126,7 +126,7 @@ def run_validation_agent(
     agent = create_react_agent(llm, tools_list, _REACT_PROMPT)
     executor = AgentExecutor(
         agent=agent, tools=tools_list, verbose=False,
-        max_iterations=12, handle_parsing_errors=True,
+        max_iterations=6, handle_parsing_errors=True,
     )
 
     try:

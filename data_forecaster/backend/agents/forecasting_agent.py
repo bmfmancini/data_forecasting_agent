@@ -118,7 +118,7 @@ def run_forecasting_agent(
     agent = create_react_agent(llm, tools_list, _REACT_PROMPT)
     executor = AgentExecutor(
         agent=agent, tools=tools_list, verbose=False,
-        max_iterations=10, handle_parsing_errors=True,
+        max_iterations=5, handle_parsing_errors=True,
     )
 
     try:

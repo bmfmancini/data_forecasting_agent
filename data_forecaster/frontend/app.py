@@ -190,7 +190,7 @@ if result:
         st.subheader("ACF / PACF")
         if result.get("chart_acf_pacf"):
             img_bytes = base64.b64decode(result["chart_acf_pacf"])
-            st.image(img_bytes, use_container_width=True)
+            st.image(img_bytes, use_column_width=True)
         else:
             st.info("ACF/PACF chart unavailable.")
 

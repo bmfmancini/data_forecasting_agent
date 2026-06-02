@@ -109,7 +109,7 @@ Forecast Results:
     agent = create_react_agent(llm, tools_list, _REACT_PROMPT)
     executor = AgentExecutor(
         agent=agent, tools=tools_list, verbose=False,
-        max_iterations=20, handle_parsing_errors=True,
+        max_iterations=8, handle_parsing_errors=True,
     )
 
     rag_queries = " ".join(f"'{q}'," for q in _REPORT_SECTIONS)

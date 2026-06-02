@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 import pandas as pd
 
 from agents.data_validation_agent import run_validation_agent
@@ -58,20 +59,24 @@ def run_pipeline(
 
     # ── Agent 2: Statistical Analysis ────────────────────────────────────────
     logger.info("Agent 2: Statistical Analysis")
+    time.sleep(3)
     stat_result = run_statistical_agent(series, seasonal_period)
 
     # ── Agent 3: Model Selection ──────────────────────────────────────────────
     logger.info("Agent 3: Model Selection")
+    time.sleep(3)
     model_selection = run_model_selection_agent(stat_result)
 
     # ── Agent 4: Forecasting ──────────────────────────────────────────────────
     logger.info("Agent 4: Forecasting")
+    time.sleep(3)
     forecast_result, all_metrics = run_forecasting_agent(
         series, model_selection, stat_result, forecast_horizon, freq
     )
 
     # ── Agent 5: Report Generation ────────────────────────────────────────────
     logger.info("Agent 5: Report Generation")
+    time.sleep(5)
     rag_kb = get_rag_kb(chroma_persist_dir)
     report = run_report_agent(validation_result, stat_result, model_selection, forecast_result, rag_kb)
 
