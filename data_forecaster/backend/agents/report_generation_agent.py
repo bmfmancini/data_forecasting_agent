@@ -55,7 +55,12 @@ def run_report_agent(
     auto_choices = [k for k, v in (preflight_options or {}).items() if v == "Let AI Decide"]
     ai_decision_context = ""
     if auto_choices:
-        ai_decision_context = f"\nAI-DRIVEN REMEDIATION ACTIVE FOR: {', '.join(auto_choices)}\n"
+        remediation_details = []
+        if "duplicate_strategy" in auto_choices: remediation_details.append("Aggregating duplicate timestamps using 'mean'")
+        if "missing_strategy" in auto_choices: remediation_details.append("Handling missing values via 'linear time-interpolation'")
+        if "frequency" in auto_choices: remediation_details.append(f"Automatically inferring frequency as '{validation.frequency}'")
+        
+        ai_decision_context = "\nAI REMEDIATION ACTIONS APPLIED:\n" + "\n".join(f"- {d}" for d in remediation_details) + "\n"
 
     analysis_context = f"""
 ANALYSIS RESULTS SUMMARY
@@ -130,7 +135,7 @@ Forecast Results:
     )
 
     ai_logic_instruction = (
-        "\nWhere 'Let AI Decide' was selected, you must assume full responsibility for the decision. "
+        "\nWhere AI Remediation was applied, you must assume full responsibility for the decision. "
         "Explain the statistical rationale for why the chosen data treatment (aggregation, interpolation, etc.) "
         "was the most robust choice to preserve signal and minimize forecast bias."
         if auto_choices else ""
@@ -146,7 +151,8 @@ Forecast Results:
             "DATA CONTEXT:\n{data_context}\n\n"
             "METHODOLOGY CONTEXT:\n{rag_context}\n\n"
             "{ai_logic_instruction}\n"
-            "Write the complete report with EXACTLY these 8 sections using Markdown headings (## level):\n\n"
+            "Write a comprehensive report. You MUST address the ADDITIONAL USER INSTRUCTIONS provided below. "
+            "Organize the report into at least these 8 sections (use ## level headings):\n\n"
             "## 1. Executive Summary\n"
             "A concise summary. State the bottom line: what the data shows now, "
             "the headline forecast direction and magnitude, model accuracy, and one key risk or caveat.\n\n"
@@ -162,13 +168,13 @@ Forecast Results:
             "## 5. Assumptions Made\n"
             "State assumptions regarding stationarity, seasonality, and persistence.\n\n"
             "## 6. Model Performance & Accuracy\n"
-            "Interpret error metrics (RMSE, MAE, MAPE) for an executive reader.\n\n"
+            "Interpret error metrics (RMSE, MAE, MAPE) for an executive reader. If a model comparison was requested, include it here.\n\n"
             "## 7. Risks & Limitations\n"
             "Cover structural break risks and model-specific constraints.\n\n"
             "## 8. Recommendations\n"
             "Provide actionable recommendations based on results.\n\n"
-            "Write each section fully. Do not use placeholder text."
-            "{extra_instructions}"
+            "Write each section fully. Do not use placeholder text.\n\n"
+            "ADDITIONAL USER INSTRUCTIONS TO INTEGRATE:\n{extra_instructions}"
         ))
     ])
 

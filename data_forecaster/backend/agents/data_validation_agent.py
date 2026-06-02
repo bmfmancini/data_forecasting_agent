@@ -51,12 +51,15 @@ def run_validation_agent(
     else:
         llm = ChatGoogleGenerativeAI(model=GEMINI_MODEL, temperature=0)
 
-    auto_mode = any(v == "Let AI Decide" for v in (preflight_options or {}).values())
+    auto_choices = [k for k, v in (preflight_options or {}).items() if v == "Let AI Decide"]
     ai_instruction = (
         "\nNOTE: The user has selected 'Let AI Decide' for data quality remediation. "
-        "Evaluate if the current state of the data is optimal for forecasting and "
-        "specifically justify why the applied cleaning steps are the best path forward."
-        if auto_mode else ""
+        "The system has automatically applied the following treatments:\n"
+        + ("- Duplicates: Aggregated using 'mean' to preserve central tendency\n" if "duplicate_strategy" in auto_choices else "")
+        + ("- Missing Values: Filled via 'linear time-interpolation' to maintain trend continuity\n" if "missing_strategy" in auto_choices else "")
+        + ("- Frequency: Inferred based on the median time delta\n" if "frequency" in auto_choices else "")
+        + "\nEvaluate if this state is optimal and justify these specific cleaning steps."
+        if auto_choices else ""
     )
 
     quality_report = (
