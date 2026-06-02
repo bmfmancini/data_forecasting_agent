@@ -123,6 +123,7 @@ def analyze(request: AnalyzeRequest) -> AnalysisResponse:
             value_col=value_col,
             freq=stored["freq"],
             forecast_horizon=request.forecast_horizon,
+            forced_model=request.forced_model,
             chroma_persist_dir=settings.CHROMA_PERSIST_DIR,
         )
     except Exception as exc:

@@ -41,6 +41,7 @@ def run_pipeline(
     value_col: str,
     freq: str,
     forecast_horizon: int,
+    forced_model: str | None = None,
     chroma_persist_dir: str = "./chroma_db",
 ) -> AnalysisResponse:
     """Execute the full 5-agent pipeline and return the complete AnalysisResponse."""
@@ -63,9 +64,20 @@ def run_pipeline(
     stat_result = run_statistical_agent(series, seasonal_period)
 
     # ── Agent 3: Model Selection ──────────────────────────────────────────────
-    logger.info("Agent 3: Model Selection")
-    time.sleep(3)
-    model_selection = run_model_selection_agent(stat_result)
+    if forced_model:
+        logger.info("Agent 3: Model Selection skipped — user forced model: %s", forced_model)
+        from schemas import ModelSelectionResult
+        model_selection = ModelSelectionResult(
+            selected_model=forced_model,
+            explanation=f"Model manually selected by user: {forced_model}.",
+            holt_winters_rejected_reason=None if forced_model == "Holt-Winters" else "Not selected (user chose a different model).",
+            arima_rejected_reason=None if forced_model == "ARIMA" else "Not selected (user chose a different model).",
+            sarima_rejected_reason=None if forced_model == "SARIMA" else "Not selected (user chose a different model).",
+        )
+    else:
+        logger.info("Agent 3: Model Selection")
+        time.sleep(3)
+        model_selection = run_model_selection_agent(stat_result)
 
     # ── Agent 4: Forecasting ──────────────────────────────────────────────────
     logger.info("Agent 4: Forecasting")

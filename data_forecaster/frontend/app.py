@@ -15,7 +15,7 @@ st.set_page_config(page_title="Data Forecaster", layout="wide", page_icon="📈"
 st.title("📈 Data Forecaster")
 
 # ── Session state initialisation ──────────────────────────────────────────────
-for key in ("upload_info", "analysis_result", "error"):
+for key in ("upload_info", "analysis_result", "error", "_running"):
     if key not in st.session_state:
         st.session_state[key] = None
 
@@ -117,10 +117,33 @@ with st.sidebar:
         disabled=not info,
     )
 
-    run_btn = st.button("🚀 Run Analysis", disabled=not info, use_container_width=True)
+    model_choice = st.selectbox(
+        "Forecasting Model",
+        options=["Auto (AI selects)", "Holt-Winters", "ARIMA", "SARIMA"],
+        index=0,
+        disabled=not info,
+        help="Auto lets the AI agent choose the best model. Selecting a model skips that step for faster results.",
+    )
+    forced_model = None if model_choice == "Auto (AI selects)" else model_choice
+
+    is_running = st.session_state._running is True
+    run_btn = st.button(
+        "⏳ Running…" if is_running else "🚀 Run Analysis",
+        disabled=not info or is_running,
+        use_container_width=True,
+    )
 
 if run_btn and info:
-    with st.spinner("Running 5-agent pipeline — this may take a minute…"):
+    st.session_state._running = True
+    st.rerun()
+
+if st.session_state._running and info:
+    spinner_msg = (
+        f"Running pipeline with {forced_model} model…"
+        if forced_model
+        else "Running 5-agent pipeline — this may take a minute…"
+    )
+    with st.spinner(spinner_msg):
         try:
             resp = requests.post(
                 f"{BACKEND_URL}/analyze",
@@ -129,6 +152,7 @@ if run_btn and info:
                     "forecast_horizon": forecast_horizon,
                     "date_col": date_col,
                     "value_col": value_col,
+                    "forced_model": forced_model,
                 },
                 timeout=600,
             )
@@ -139,6 +163,9 @@ if run_btn and info:
                 st.session_state.error = resp.json().get("detail", "Analysis failed.")
         except Exception as exc:
             st.session_state.error = str(exc)
+        finally:
+            st.session_state._running = False
+            st.rerun()
 
 if st.session_state.error and not st.session_state.analysis_result:
     st.error(f"Error: {st.session_state.error}")
