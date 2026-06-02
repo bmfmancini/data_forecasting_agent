@@ -3,3 +3,4 @@ requests
 plotly
 pandas
 python-dotenv
+fpdf

@@ -2,9 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 import pandas as pd
-from langchain.agents import AgentExecutor, create_react_agent
-from langchain_core.prompts import PromptTemplate
-from langchain_core.tools import tool
+from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_ollama import ChatOllama
 
@@ -16,28 +14,6 @@ from forecasting.sarima_model import fit_sarima
 from schemas import ForecastResult, ModelSelectionResult, StatisticalResult
 
 logger = get_logger(__name__)
-
-_REACT_PROMPT = PromptTemplate.from_template(
-    """Answer the following questions as best you can. You have access to the following tools:
-
-{tools}
-
-Use the following format:
-
-Question: the input question you must answer
-Thought: you should always think about what to do
-Action: the action to take, should be one of [{tool_names}]
-Action Input: the input to the action
-Observation: the result of the action
-... (this Thought/Action/Action Input/Observation can repeat N times)
-Thought: I now know the final answer
-Final Answer: the final answer to the original input question
-
-Begin!
-
-Question: {input}
-Thought: {agent_scratchpad}"""
-)
 
 
 def run_forecasting_agent(
@@ -56,66 +32,25 @@ def run_forecasting_agent(
     """
     seasonal_period = stat_result.seasonal_period or 12
     results_store: dict[str, dict[str, Any]] = {}
-
-    # ── Tool definitions ──────────────────────────────────────────────────────
-
-    @tool
-    def run_holt_winters_tool(command: str) -> str:
-        """Fit Holt-Winters exponential smoothing and return evaluation metrics."""
+    
+    # ── Fit all models directly in Python ─────────────────────────────────────
+    for name, fn, kwargs in [
+        ("Holt-Winters", fit_holt_winters, {}),
+        ("ARIMA", fit_arima, {}),
+        ("SARIMA", fit_sarima, {"seasonal_period": seasonal_period}),
+    ]:
         try:
-            res = fit_holt_winters(series, forecast_horizon)
-            results_store["Holt-Winters"] = res
-            return (
-                f"Holt-Winters: RMSE={res['rmse']:.4f}, "
-                f"MAE={res['mae']:.4f}, MAPE={res['mape']:.2f}%"
-            )
+            results_store[name] = fn(series, forecast_horizon, **kwargs)
         except Exception as exc:
-            logger.warning("Holt-Winters tool failed: %s", exc)
-            return f"Holt-Winters fitting failed: {exc}"
+            logger.warning("%s fitting failed: %s", name, exc)
 
-    @tool
-    def run_arima_tool(command: str) -> str:
-        """Fit ARIMA model using auto_arima and return evaluation metrics."""
-        try:
-            res = fit_arima(series, forecast_horizon)
-            results_store["ARIMA"] = res
-            return (
-                f"ARIMA: RMSE={res['rmse']:.4f}, "
-                f"MAE={res['mae']:.4f}, MAPE={res['mape']:.2f}%"
-            )
-        except Exception as exc:
-            logger.warning("ARIMA tool failed: %s", exc)
-            return f"ARIMA fitting failed: {exc}"
+    comparison_summary = "Model comparison metrics (lower is better):\n"
+    for name, res in results_store.items():
+        comparison_summary += (
+            f"- {name}: RMSE={res['rmse']:.4f}, MAE={res['mae']:.4f}, MAPE={res['mape']:.2f}%\n"
+        )
 
-    @tool
-    def run_sarima_tool(command: str) -> str:
-        """Fit SARIMA model using auto_arima (seasonal=True) and return evaluation metrics."""
-        try:
-            res = fit_sarima(series, forecast_horizon, seasonal_period)
-            results_store["SARIMA"] = res
-            return (
-                f"SARIMA (m={seasonal_period}): RMSE={res['rmse']:.4f}, "
-                f"MAE={res['mae']:.4f}, MAPE={res['mape']:.2f}%"
-            )
-        except Exception as exc:
-            logger.warning("SARIMA tool failed: %s", exc)
-            return f"SARIMA fitting failed: {exc}"
-
-    @tool
-    def compute_all_metrics_tool(command: str) -> str:
-        """Summarise and compare metrics across all fitted models."""
-        if not results_store:
-            return "No models have been fitted yet. Run the individual model tools first."
-        lines = ["Model comparison (lower is better):"]
-        for name, res in results_store.items():
-            lines.append(
-                f"  {name}: RMSE={res.get('rmse', 'N/A'):.4f}, "
-                f"MAE={res.get('mae', 'N/A'):.4f}, MAPE={res.get('mape', 'N/A'):.2f}%"
-            )
-        return "\n".join(lines)
-
-    # ── Run ReAct agent ───────────────────────────────────────────────────────
-    tools_list = [run_holt_winters_tool, run_arima_tool, run_sarima_tool, compute_all_metrics_tool]
+    # ── LLM Setup ────────────────────────────────────────────────────────────
     if USE_OLLAMA:
         llm = ChatOllama(
             model=OLLAMA_MODEL, 
@@ -126,40 +61,31 @@ def run_forecasting_agent(
     else:
         llm = ChatGoogleGenerativeAI(model=GEMINI_MODEL, temperature=0)
 
-    agent = create_react_agent(llm, tools_list, _REACT_PROMPT)
-    executor = AgentExecutor(
-        agent=agent, tools=tools_list, verbose=False, return_intermediate_steps=True,
-        max_iterations=12, handle_parsing_errors=True, early_stopping_method="generate",
-    )
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", "You are a forecasting expert. Review the performance of multiple models."),
+        ("human", (
+            "The pre-selected model is: {selected}.\n\n"
+            "Review these fitting results:\n"
+            "{summary}\n\n"
+            "Explain why the selected model is optimal or note if another model achieved better MAPE."
+        ))
+    ])
 
-    reasoning_steps: list[dict[str, Any]] = []
     try:
-        result = executor.invoke({
-            "input": (
-                f"The pre-selected model is: {model_selection.selected_model}. "
-                "Run all three forecasting tools (Holt-Winters, ARIMA, SARIMA) to fit each model "
-                "and collect metrics. Then use compute_all_metrics to compare them. "
-                "Report which model achieved the best MAPE."
-            )
+        chain = prompt | llm
+        response = chain.invoke({
+            "selected": model_selection.selected_model,
+            "summary": comparison_summary
         })
         reasoning_steps = [
-            {"thought": a.log, "observation": str(o)} for a, o in result.get("intermediate_steps", [])
+            {"thought": "Fitting Holt-Winters, ARIMA, and SARIMA in Python...", "observation": comparison_summary},
+            {"thought": "Analyzing metrics for performance comparison...", "observation": response.content}
         ]
     except Exception as exc:
-        logger.warning("Forecasting agent LLM call failed: %s — running models directly.", exc)
-        # Run all models directly as fallback
-        for name, fn, kwargs in [
-            ("Holt-Winters", fit_holt_winters, {}),
-            ("ARIMA", fit_arima, {}),
-            ("SARIMA", fit_sarima, {"seasonal_period": seasonal_period}),
-        ]:
-            try:
-                results_store[name] = fn(series, forecast_horizon, **kwargs)
-            except Exception as e:
-                logger.warning("%s fallback failed: %s", name, e)
+        logger.warning("Forecasting agent LLM call failed: %s", exc)
         reasoning_steps = [{
-            "thought": f"Forecasting agent failed: {str(exc)}",
-            "observation": "Attempting to fit models directly without LLM orchestration."
+            "thought": "LLM analysis failed, relying on direct Python metrics.",
+            "observation": comparison_summary
         }]
 
     # ── Select result for the chosen model ───────────────────────────────────

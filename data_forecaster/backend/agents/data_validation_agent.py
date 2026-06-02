@@ -2,9 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 import pandas as pd
-from langchain.agents import AgentExecutor, create_react_agent
-from langchain_core.prompts import PromptTemplate
-from langchain_core.tools import tool
+from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_ollama import ChatOllama
 
@@ -14,28 +12,6 @@ from schemas import ValidationResult
 
 logger = get_logger(__name__)
 
-_REACT_PROMPT = PromptTemplate.from_template(
-    """Answer the following questions as best you can. You have access to the following tools:
-
-{tools}
-
-Use the following format:
-
-Question: the input question you must answer
-Thought: you should always think about what to do
-Action: the action to take, should be one of [{tool_names}]
-Action Input: the input to the action
-Observation: the result of the action
-... (this Thought/Action/Action Input/Observation can repeat N times)
-Thought: I now know the final answer
-Final Answer: the final answer to the original input question
-
-Begin!
-
-Question: {input}
-Thought: {agent_scratchpad}"""
-)
-
 
 def run_validation_agent(
     df: pd.DataFrame, date_col: str, value_col: str, freq: str, preflight_options: dict[str, Any] | None = None
@@ -43,28 +19,6 @@ def run_validation_agent(
     """Run the data validation ReAct agent and return a ValidationResult."""
 
     series = df.set_index(date_col)[value_col]
-
-    # ── Tool definitions (closed over df / series) ───────────────────────────
-
-    @tool
-    def get_full_data_quality_report(command: str) -> str:
-        """Returns a complete technical report of duplicates, missing values, gaps, and frequency."""
-        diffs = series.index.to_series().diff().dropna()
-        mode_diff = diffs.mode()[0] if len(diffs) > 0 else "N/A"
-        gaps = int((diffs > mode_diff * 1.5).sum()) if mode_diff != "N/A" else 0
-        dupes = int(df[date_col].duplicated().sum())
-        missing = int(series.isna().sum())
-        n = len(series)
-        
-        return (
-            f"DATA QUALITY SNAPSHOT:\n"
-            f"- Length: {n} observations\n"
-            f"- Frequency: {freq}\n"
-            f"- Missing Gaps: {gaps}\n"
-            f"- Duplicates: {dupes}\n"
-            f"- Null Values: {missing}\n"
-            f"- Regularity: {'Regular' if (diffs.nunique() == 1 if n > 1 else True) else 'Irregular'}"
-        )
 
     # ── Compute structured values directly ───────────────────────────────────
     diffs = series.index.to_series().diff().dropna()
@@ -86,9 +40,7 @@ def run_validation_agent(
     if len(series) < 20:
         issues.append("Very short series — forecasting results may be unreliable.")
 
-    # ── Run ReAct agent for qualitative summary ───────────────────────────────
-    tools_list = [get_full_data_quality_report]
-
+    # ── LLM Setup ────────────────────────────────────────────────────────────
     if USE_OLLAMA:
         llm = ChatOllama(
             model=OLLAMA_MODEL, 
@@ -99,12 +51,6 @@ def run_validation_agent(
     else:
         llm = ChatGoogleGenerativeAI(model=GEMINI_MODEL, temperature=0)
 
-    agent = create_react_agent(llm, tools_list, _REACT_PROMPT)
-    executor = AgentExecutor(
-        agent=agent, tools=tools_list, verbose=False, return_intermediate_steps=True,
-        max_iterations=6, handle_parsing_errors=True,
-    )
-
     auto_mode = any(v == "Let AI Decide" for v in (preflight_options or {}).values())
     ai_instruction = (
         "\nNOTE: The user has selected 'Let AI Decide' for data quality remediation. "
@@ -113,20 +59,35 @@ def run_validation_agent(
         if auto_mode else ""
     )
 
-    reasoning_steps: list[dict[str, Any]] = []
+    quality_report = (
+        f"DATA QUALITY SNAPSHOT:\n"
+        f"- Length: {len(series)} observations\n"
+        f"- Frequency: {freq}\n"
+        f"- Missing Gaps: {missing_ts}\n"
+        f"- Duplicates: {duplicate_ts}\n"
+        f"- Null Values: {missing_vals}\n"
+        f"- Regularity: {'Regular' if is_regular else 'Irregular'}"
+    )
+
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", "You are a data validation expert. Summarize the data quality for forecasting."),
+        ("human", (
+            "Validate the current time series dataset based on these metrics:\n\n"
+            "{report}\n\n"
+            "Provide a professional summary of the data quality and suitability for forecasting.{ai_instruction}"
+        ))
+    ])
+
     try:
-        result = executor.invoke({
-            "input": (
-                "Validate the current time series dataset. You MUST use the "
-                "get_full_data_quality_report tool to retrieve the technical metrics. "
-                "Then, provide a professional summary of the data quality and suitability "
-                "for forecasting."
-                f"{ai_instruction}"
-            )
+        chain = prompt | llm
+        response = chain.invoke({
+            "report": quality_report,
+            "ai_instruction": ai_instruction
         })
-        summary = str(result.get("output", "Validation complete."))
+        summary = response.content
         reasoning_steps = [
-            {"thought": a.log, "observation": str(o)} for a, o in result.get("intermediate_steps", [])
+            {"thought": "Computing quality metrics in Python...", "observation": quality_report},
+            {"thought": "Generating qualitative summary...", "observation": "Complete"}
         ]
     except Exception as exc:
         logger.warning("Validation agent LLM call failed: %s", exc)

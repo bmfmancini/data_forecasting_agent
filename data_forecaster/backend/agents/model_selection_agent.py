@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
-from langchain.agents import AgentExecutor, create_react_agent
-from langchain_core.prompts import PromptTemplate
-from langchain_core.tools import tool
+from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_ollama import ChatOllama
 
@@ -13,39 +11,14 @@ from schemas import ModelSelectionResult, StatisticalResult
 
 logger = get_logger(__name__)
 
-_REACT_PROMPT = PromptTemplate.from_template(
-    """Answer the following questions as best you can. You have access to the following tools:
-
-{tools}
-
-Use the following format:
-
-Question: the input question you must answer
-Thought: you should always think about what to do
-Action: the action to take, should be one of [{tool_names}]
-Action Input: the input to the action
-Observation: the result of the action
-... (this Thought/Action/Action Input/Observation can repeat N times)
-Thought: I now know the final answer
-Final Answer: the final answer to the original input question
-
-Begin!
-
-Question: {input}
-Thought: {agent_scratchpad}"""
-)
-
 _MODELS = ("ARIMA", "SARIMA", "Holt-Winters")
 
 
 def run_model_selection_agent(stat_result: StatisticalResult) -> ModelSelectionResult:
     """Use the LLM to reason over statistical findings and select the best model."""
-
-    # ── Tool definitions (closed over stat_result) ───────────────────────────
-
-    @tool
-    def evaluate_holt_winters_suitability(command: str) -> str:
-        """Evaluate whether Holt-Winters is suitable for this time series."""
+    
+    # ── Logic to build suitability assessment in Python ──────────────────────
+    def get_hw_suitability():
         points = []
         sp = stat_result.seasonal_period
         if sp and sp > 1:
@@ -61,9 +34,7 @@ def run_model_selection_agent(stat_result: StatisticalResult) -> ModelSelectionR
         points.append("Holt-Winters is fast, interpretable, and robust on short-to-medium series.")
         return "Holt-Winters Assessment:\n" + "\n".join(f"- {p}" for p in points)
 
-    @tool
-    def evaluate_arima_suitability(command: str) -> str:
-        """Evaluate whether ARIMA is suitable for this time series."""
+    def get_arima_suitability():
         points = []
         sp = stat_result.seasonal_period
         if sp and sp > 1:
@@ -79,9 +50,7 @@ def run_model_selection_agent(stat_result: StatisticalResult) -> ModelSelectionR
         points.append("ARIMA is well-suited for non-seasonal series with complex autocorrelation.")
         return "ARIMA Assessment:\n" + "\n".join(f"- {p}" for p in points)
 
-    @tool
-    def evaluate_sarima_suitability(command: str) -> str:
-        """Evaluate whether SARIMA is suitable for this time series."""
+    def get_sarima_suitability():
         points = []
         sp = stat_result.seasonal_period
         if sp and sp > 1:
@@ -93,6 +62,8 @@ def run_model_selection_agent(stat_result: StatisticalResult) -> ModelSelectionR
             points.append("Non-stationary — SARIMA seasonal differencing (D≥1) will address this.")
         points.append("SARIMA requires more data than ARIMA (at least 2 full seasonal cycles).")
         return "SARIMA Assessment:\n" + "\n".join(f"- {p}" for p in points)
+
+    suitability_summary = f"{get_hw_suitability()}\n\n{get_arima_suitability()}\n\n{get_sarima_suitability()}"
 
     # ── Heuristic fallback selection (used if LLM fails) ─────────────────────
     sp = stat_result.seasonal_period or 1
@@ -107,13 +78,7 @@ def run_model_selection_agent(stat_result: StatisticalResult) -> ModelSelectionR
         arima_reason = None
         sarima_reason = "No seasonal period confirmed; SARIMA would overfit."
 
-    # ── Run ReAct agent ───────────────────────────────────────────────────────
-    tools_list = [
-        evaluate_holt_winters_suitability,
-        evaluate_arima_suitability,
-        evaluate_sarima_suitability,
-    ]
-
+    # ── LLM Setup ────────────────────────────────────────────────────────────
     if USE_OLLAMA:
         llm = ChatOllama(
             model=OLLAMA_MODEL, 
@@ -124,38 +89,34 @@ def run_model_selection_agent(stat_result: StatisticalResult) -> ModelSelectionR
     else:
         llm = ChatGoogleGenerativeAI(model=GEMINI_MODEL, temperature=0)
 
-    agent = create_react_agent(llm, tools_list, _REACT_PROMPT)
-    executor = AgentExecutor(
-        agent=agent, tools=tools_list, verbose=False, return_intermediate_steps=True,
-        max_iterations=10, handle_parsing_errors=True, early_stopping_method="generate",
-    )
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", "You are an expert in time series model selection. Choose the best model based on statistical assessments."),
+        ("human", (
+            "Evaluate the suitability of ARIMA, SARIMA, and Holt-Winters based on these assessments:\n\n"
+            "{suitability}\n\n"
+            "Select the SINGLE best model and provide a detailed rationale.\n"
+            "Your output MUST follow this exact structure:\n"
+            "Selected model: <MODEL_NAME>\n\n"
+            "## Why <MODEL_NAME> was chosen\n"
+            "<Detailed explanation referencing metrics>\n\n"
+            "## Model Assessment Summary\n"
+            "- **ARIMA**: <suitability detail> — Suitability: High/Medium/Low\n"
+            "- **SARIMA**: <suitability detail> — Suitability: High/Medium/Low\n"
+            "- **Holt-Winters**: <suitability detail> — Suitability: High/Medium/Low\n\n"
+            "## Why other models were not chosen\n"
+            "- **<Rejected Model 1>**: <reason>\n"
+            "- **<Rejected Model 2>**: <reason>"
+        ))
+    ])
 
-    reasoning_steps: list[dict[str, Any]] = []
     try:
-        result = executor.invoke({
-            "input": (
-                "Evaluate the suitability of ARIMA, SARIMA, and Holt-Winters for the current dataset. "
-                "You MUST use all three evaluation tools to assess the models based on the underlying "
-                "statistical data before selecting the SINGLE best model.\n\n"
-                "Your Final Answer MUST follow this exact structure:\n"
-                "Selected model: <MODEL_NAME>\n\n"
-                "## Why <MODEL_NAME> was chosen\n"
-                "<Detailed explanation referencing the specific statistical values above: "
-                "ADF/KPSS p-values, seasonal period, trend slope, dominant period. "
-                "Explain how each metric directly supports this choice.>\n\n"
-                "## Model Assessment Summary\n"
-                "- **ARIMA**: <2-3 sentences on suitability for this specific data> — Suitability: High/Medium/Low\n"
-                "- **SARIMA**: <2-3 sentences on suitability for this specific data> — Suitability: High/Medium/Low\n"
-                "- **Holt-Winters**: <2-3 sentences on suitability for this specific data> — Suitability: High/Medium/Low\n\n"
-                "## Why other models were not chosen\n"
-                "- **<Rejected Model 1>**: <specific quantitative reason referencing actual values>\n"
-                "- **<Rejected Model 2>**: <specific quantitative reason referencing actual values>"
-            )
-        })
-        output = str(result.get("output", ""))
+        chain = prompt | llm
+        response = chain.invoke({"suitability": suitability_summary})
+        output = response.content
         logger.info("Model selection agent output: %s", output[:200])
         reasoning_steps = [
-            {"thought": a.log, "observation": str(o)} for a, o in result.get("intermediate_steps", [])
+            {"thought": "Assessing suitability metrics for all models...", "observation": suitability_summary},
+            {"thought": "Finalizing model selection decision...", "observation": "Complete"}
         ]
 
         # Parse selected model from output
