@@ -2,10 +2,17 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-COPY requirements.txt .
-# Install CPU-only PyTorch first to avoid pulling CUDA (~1.5 GB) via sentence-transformers
-RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
-RUN pip install --no-cache-dir -r requirements.txt
+# Install curl for the healthcheck as the slim image does not include it
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY uv.txt .
+
+# Install uv and use it to install dependencies into the system site-packages
+RUN pip install --no-cache-dir uv && \
+    uv pip install --no-cache-dir --system torch --index-url https://download.pytorch.org/whl/cpu && \
+    uv pip install --no-cache-dir --system -r uv.txt
 
 COPY . .
 

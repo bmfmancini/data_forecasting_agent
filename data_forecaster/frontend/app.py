@@ -10,6 +10,9 @@ import pandas as pd
 import plotly.graph_objects as go
 import requests
 import streamlit as st
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 def _report_to_pdf(report_md: str, title: str = "Forecast Report") -> bytes:
@@ -486,7 +489,7 @@ if result:
 
         st.subheader("Historical Time Series")
         if result.get("chart_historical"):
-            fig = go.Figure(result["chart_historical"])
+            fig = go.Figure(result["chart_historical"], skip_invalid=True)
             st.plotly_chart(fig, use_container_width=True)
 
     # ── Tab 2: Data Quality ───────────────────────────────────────────────────
@@ -541,7 +544,7 @@ if result:
 
         st.subheader("STL Decomposition")
         if result.get("chart_stl"):
-            fig = go.Figure(result["chart_stl"])
+            fig = go.Figure(result["chart_stl"], skip_invalid=True)
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("STL chart unavailable.")
@@ -578,7 +581,7 @@ if result:
 
         st.subheader("Model Comparison Metrics")
         if result.get("chart_model_comparison"):
-            fig = go.Figure(result["chart_model_comparison"])
+            fig = go.Figure(result["chart_model_comparison"], skip_invalid=True)
             st.plotly_chart(fig, use_container_width=True)
 
         st.subheader("Diagnostic Statistics")
@@ -628,7 +631,7 @@ if result:
 
         st.subheader("Forecast Chart")
         if result.get("chart_forecast"):
-            fig = go.Figure(result["chart_forecast"])
+            fig = go.Figure(result["chart_forecast"], skip_invalid=True)
             st.plotly_chart(fig, use_container_width=True)
 
         st.subheader("Forecast Values")

@@ -5,8 +5,9 @@ from langchain.agents import AgentExecutor, create_react_agent
 from langchain_core.prompts import PromptTemplate
 from langchain_core.tools import tool
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_ollama import ChatOllama
 
-from core.config import GEMINI_MODEL
+from core.config import GEMINI_MODEL, USE_OLLAMA, OLLAMA_BASE_URL, OLLAMA_MODEL
 from core.logging_config import get_logger
 from schemas import ModelSelectionResult, StatisticalResult
 
@@ -112,11 +113,16 @@ def run_model_selection_agent(stat_result: StatisticalResult) -> ModelSelectionR
         evaluate_arima_suitability,
         evaluate_sarima_suitability,
     ]
-    llm = ChatGoogleGenerativeAI(model=GEMINI_MODEL, temperature=0)
+
+    if USE_OLLAMA:
+        llm = ChatOllama(model=OLLAMA_MODEL, base_url=OLLAMA_BASE_URL, temperature=0)
+    else:
+        llm = ChatGoogleGenerativeAI(model=GEMINI_MODEL, temperature=0)
+
     agent = create_react_agent(llm, tools_list, _REACT_PROMPT)
     executor = AgentExecutor(
         agent=agent, tools=tools_list, verbose=False, return_intermediate_steps=True,
-        max_iterations=5, handle_parsing_errors=True,
+        max_iterations=10, handle_parsing_errors=True, early_stopping_method="generate",
     )
 
     reasoning_steps: list[dict[str, Any]] = []

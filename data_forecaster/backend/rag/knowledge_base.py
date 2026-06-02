@@ -49,7 +49,7 @@ class RAGKnowledgeBase:
 
         all_ids: list[str] = []
         all_texts: list[str] = []
-        all_metas: list[dict] = []
+        all_metas: list[dict[str, Any]] = []
 
         for doc_path in doc_files:
             text = doc_path.read_text(encoding="utf-8")

@@ -6,8 +6,9 @@ from langchain.agents import AgentExecutor, create_react_agent
 from langchain_core.prompts import PromptTemplate
 from langchain_core.tools import tool
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_ollama import ChatOllama
 
-from core.config import GEMINI_MODEL
+from core.config import GEMINI_MODEL, USE_OLLAMA, OLLAMA_BASE_URL, OLLAMA_MODEL
 from core.logging_config import get_logger
 from schemas import ValidationResult
 
@@ -87,7 +88,12 @@ def run_validation_agent(
 
     # ── Run ReAct agent for qualitative summary ───────────────────────────────
     tools_list = [get_full_data_quality_report]
-    llm = ChatGoogleGenerativeAI(model=GEMINI_MODEL, temperature=0)
+
+    if USE_OLLAMA:
+        llm = ChatOllama(model=OLLAMA_MODEL, base_url=OLLAMA_BASE_URL, temperature=0)
+    else:
+        llm = ChatGoogleGenerativeAI(model=GEMINI_MODEL, temperature=0)
+
     agent = create_react_agent(llm, tools_list, _REACT_PROMPT)
     executor = AgentExecutor(
         agent=agent, tools=tools_list, verbose=False, return_intermediate_steps=True,
@@ -110,7 +116,7 @@ def run_validation_agent(
                 "get_full_data_quality_report tool to retrieve the technical metrics. "
                 "Then, provide a professional summary of the data quality and suitability "
                 "for forecasting."
-                f"Provide a concise summary of the data quality.{ai_instruction}"
+                f"{ai_instruction}"
             )
         })
         summary = str(result.get("output", "Validation complete."))

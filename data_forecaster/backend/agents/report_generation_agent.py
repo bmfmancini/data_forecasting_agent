@@ -5,8 +5,9 @@ from langchain.agents import AgentExecutor, create_react_agent
 from langchain_core.prompts import PromptTemplate
 from langchain_core.tools import tool
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_ollama import ChatOllama
 
-from core.config import GEMINI_MAX_TOKENS, GEMINI_MODEL, GEMINI_TEMPERATURE
+from core.config import GEMINI_MAX_TOKENS, GEMINI_MODEL, GEMINI_TEMPERATURE, USE_OLLAMA, OLLAMA_BASE_URL, OLLAMA_MODEL
 from core.logging_config import get_logger
 from rag.knowledge_base import RAGKnowledgeBase
 from schemas import ForecastResult, ModelSelectionResult, StatisticalResult, ValidationResult
@@ -140,16 +141,23 @@ Forecast Results:
 
     # ── Run ReAct agent ───────────────────────────────────────────────────────
     tools_list = [retrieve_from_rag]
-    # Example using Google Gemini 1.5 Flash to avoid Groq rate limits
-    llm = ChatGoogleGenerativeAI(
-        model=GEMINI_MODEL,
-        temperature=GEMINI_TEMPERATURE,
-        max_output_tokens=GEMINI_MAX_TOKENS,
-    )
+    if USE_OLLAMA:
+        llm = ChatOllama(
+            model=OLLAMA_MODEL,
+            base_url=OLLAMA_BASE_URL,
+            temperature=GEMINI_TEMPERATURE,
+        )
+    else:
+        llm = ChatGoogleGenerativeAI(
+            model=GEMINI_MODEL,
+            temperature=GEMINI_TEMPERATURE,
+            max_output_tokens=GEMINI_MAX_TOKENS,
+        )
+
     agent = create_react_agent(llm, tools_list, _REACT_PROMPT)
     executor = AgentExecutor(
         agent=agent, tools=tools_list, verbose=False, return_intermediate_steps=True,
-        max_iterations=8, handle_parsing_errors=True,
+        max_iterations=15, handle_parsing_errors=True, early_stopping_method="generate",
     )
 
     rag_queries = " ".join(f"'{q}'," for q in _REPORT_SECTIONS)

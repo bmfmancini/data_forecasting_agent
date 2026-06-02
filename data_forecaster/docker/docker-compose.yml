@@ -12,7 +12,17 @@ services:
     volumes:
       - logs_data:/app/logs
       - chroma_data:/app/chroma_db
+      - ../data:/app/data
     restart: unless-stopped
+    networks:
+      - forecasting_network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   frontend:
     build:
@@ -22,9 +32,18 @@ services:
       - "8501:8501"
     environment:
       - BACKEND_URL=http://backend:8000
+    volumes:
+      - ../data:/app/data
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     restart: unless-stopped
+    networks:
+      - forecasting_network
+
+networks:
+  forecasting_network:
+    driver: bridge
 
 volumes:
   logs_data:
