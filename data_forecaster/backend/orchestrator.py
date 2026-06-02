@@ -12,6 +12,7 @@ from agents.statistical_analysis_agent import run_statistical_agent
 from core.logging_config import get_logger
 from rag.knowledge_base import RAGKnowledgeBase
 from schemas import AnalysisResponse
+from utils.preflight import prepare_series_frame
 from utils.statistical import compute_acf_pacf, run_stl_decomposition
 from utils.visualization import (
     plot_acf_pacf,
@@ -44,6 +45,7 @@ def run_pipeline(
     forecast_horizon: int,
     forced_model: str | None = None,
     user_prompt: str | None = None,
+    preflight_options: dict | None = None,
     chroma_persist_dir: str = "./chroma_db",
     progress_callback: Callable[[int, str], None] | None = None,
 ) -> AnalysisResponse:
@@ -58,6 +60,10 @@ def run_pipeline(
         file_id, date_col, value_col, freq, forecast_horizon,
     )
 
+    if (preflight_options or {}).get("continue_short_series") == "stop":
+        raise ValueError("Analysis stopped because the selected series is too short.")
+
+    df, freq = prepare_series_frame(df, date_col, value_col, preflight_options)
     series = df.set_index(date_col)[value_col].astype(float)
     seasonal_period = _freq_to_period(freq)
 

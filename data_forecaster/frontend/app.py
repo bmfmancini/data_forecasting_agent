@@ -85,7 +85,17 @@ st.set_page_config(page_title="Time Data Forecaster Agent", layout="wide", page_
 st.title("📈 Time Data Forecaster Agent")
 
 # ── Session state initialisation ──────────────────────────────────────────────
-for key in ("upload_info", "analysis_result", "error", "_running", "_job_id", "_job_progress", "_job_step", "_user_prompt"):
+for key in (
+    "upload_info",
+    "analysis_result",
+    "error",
+    "_running",
+    "_job_id",
+    "_job_progress",
+    "_job_step",
+    "_user_prompt",
+    "_preflight_options",
+):
     if key not in st.session_state:
         st.session_state[key] = None
 
@@ -198,7 +208,7 @@ with st.sidebar:
 
     st.markdown("---")
     user_prompt = st.text_area(
-        "Additional Report Instructions (optional)",
+        "Business Context / Report Focus (optional)",
         placeholder="e.g. Focus recommendations on inventory planning. Flag any risk of over-forecasting.",
         height=100,
         disabled=not info,
@@ -206,9 +216,70 @@ with st.sidebar:
     )
 
     is_running = st.session_state._running is True
+    preflight = None
+    preflight_options = {}
+    preflight_blocks_run = False
+
+    if info and date_col and value_col:
+        st.markdown("---")
+        st.subheader("Preflight Review")
+        try:
+            resp = requests.post(
+                f"{BACKEND_URL}/preflight",
+                json={
+                    "file_id": info["file_id"],
+                    "forecast_horizon": forecast_horizon,
+                    "date_col": date_col,
+                    "value_col": value_col,
+                },
+                timeout=15,
+            )
+            if resp.status_code == 200:
+                preflight = resp.json()
+                preflight_options = {}
+
+                if preflight["status"] == "ready":
+                    st.success("Ready to run.")
+                elif preflight["status"] == "warning":
+                    st.warning("Ready to run with cautions.")
+                else:
+                    st.warning("A few choices are needed before running.")
+
+                if preflight.get("detected_frequency"):
+                    st.caption(f"Selected-series frequency: **{preflight['detected_frequency']}**")
+
+                for message in preflight.get("issues", []):
+                    st.info(message)
+                for message in preflight.get("warnings", []):
+                    st.warning(message)
+
+                for decision in preflight.get("decisions", []):
+                    key = decision["key"]
+                    options = decision["options"]
+                    default = decision["default"]
+                    default_index = options.index(default) if default in options else 0
+                    choice = st.selectbox(
+                        decision["label"],
+                        options=options,
+                        index=default_index,
+                        help=decision["message"],
+                        disabled=is_running,
+                    )
+                    preflight_options[key] = choice
+
+                if preflight_options.get("continue_short_series") == "stop":
+                    preflight_blocks_run = True
+                    st.info("Run Analysis is paused until short-series confirmation is set to continue.")
+            else:
+                st.error(resp.json().get("detail", "Preflight review failed."))
+                preflight_blocks_run = True
+        except Exception as exc:
+            st.error(f"Preflight review error: {exc}")
+            preflight_blocks_run = True
+
     run_btn = st.button(
         "⏳ Running…" if is_running else "🚀 Run Analysis",
-        disabled=not info or is_running,
+        disabled=not info or is_running or preflight_blocks_run,
         use_container_width=True,
     )
 
@@ -218,6 +289,7 @@ if run_btn and info:
     st.session_state._job_progress = 0
     st.session_state._job_step = "Submitting job…"
     st.session_state._user_prompt = user_prompt or None
+    st.session_state._preflight_options = preflight_options
     st.rerun()
 
 if st.session_state._running and info:
@@ -240,6 +312,7 @@ if st.session_state._running and info:
                     "value_col": value_col,
                     "forced_model": forced_model,
                     "user_prompt": st.session_state.get("_user_prompt"),
+                    "preflight_options": st.session_state.get("_preflight_options"),
                 },
                 timeout=30,
             )

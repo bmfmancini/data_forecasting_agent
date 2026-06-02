@@ -10,8 +10,17 @@ from fastapi.middleware.cors import CORSMiddleware
 import core.config as settings
 from core.logging_config import get_logger
 from orchestrator import run_pipeline
-from schemas import AnalysisResponse, AnalyzeRequest, JobStatusResponse, JobSubmitResponse, UploadResponse
+from schemas import (
+    AnalysisResponse,
+    AnalyzeRequest,
+    JobStatusResponse,
+    JobSubmitResponse,
+    PreflightRequest,
+    PreflightResponse,
+    UploadResponse,
+)
 from utils.data_parser import parse_upload
+from utils.preflight import run_preflight_checks
 
 logger = get_logger(__name__)
 
@@ -31,6 +40,12 @@ def _update_job_progress(job_id: str, pct: int, step: str) -> None:
     if job:
         job["progress"] = pct
         job["step"] = step
+
+
+def _dump_model(model: AnalysisResponse) -> dict:
+    if hasattr(model, "model_dump"):
+        return model.model_dump()
+    return model.dict()
 
 
 async def _job_worker() -> None:
@@ -63,6 +78,7 @@ async def _job_worker() -> None:
                 forecast_horizon=req["forecast_horizon"],
                 forced_model=req["forced_model"],
                 user_prompt=req.get("user_prompt"),
+                preflight_options=req.get("preflight_options"),
                 chroma_persist_dir=settings.CHROMA_PERSIST_DIR,
                 progress_callback=lambda pct, step: _update_job_progress(job_id, pct, step),
             )
@@ -72,7 +88,7 @@ async def _job_worker() -> None:
             job["status"] = "done"
             job["progress"] = 100
             job["step"] = "Analysis complete."
-            job["result"] = result.model_dump()
+            job["result"] = _dump_model(result)
         except Exception as exc:
             logger.exception("Pipeline failed for job_id=%s file_id=%s", job_id, req["file_id"])
             job["status"] = "error"
@@ -207,6 +223,7 @@ def analyze(request: AnalyzeRequest) -> JobSubmitResponse:
             "forecast_horizon": request.forecast_horizon,
             "forced_model": request.forced_model,
             "user_prompt": request.user_prompt,
+            "preflight_options": request.preflight_options,
         },
         "result": None,
         "error": None,
@@ -214,6 +231,28 @@ def analyze(request: AnalyzeRequest) -> JobSubmitResponse:
     _job_queue.put_nowait(job_id)
     logger.info("Job enqueued: job_id=%s file_id=%s", job_id, request.file_id)
     return JobSubmitResponse(job_id=job_id, status="pending")
+
+
+@app.post("/preflight", response_model=PreflightResponse)
+def preflight(request: PreflightRequest) -> PreflightResponse:
+    logger.info(
+        "POST /preflight  file_id=%s date_col=%s value_col=%s horizon=%d",
+        request.file_id, request.date_col, request.value_col, request.forecast_horizon,
+    )
+
+    stored = _file_store.get(request.file_id)
+    if stored is None:
+        raise HTTPException(status_code=404, detail=f"File ID '{request.file_id}' not found.")
+
+    try:
+        return run_preflight_checks(
+            stored["df"],
+            request.date_col,
+            request.value_col,
+            request.forecast_horizon,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @app.get("/jobs/{job_id}", response_model=JobStatusResponse)

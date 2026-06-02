@@ -21,6 +21,38 @@ class AnalyzeRequest(BaseModel):
     value_col: Optional[str] = None
     forced_model: Optional[str] = None  # "Holt-Winters" | "ARIMA" | "SARIMA" | None (auto)
     user_prompt: Optional[str] = None   # Extra instructions appended to the report prompt
+    preflight_options: Optional[dict] = None
+
+
+class PreflightRequest(BaseModel):
+    file_id: str
+    date_col: str
+    value_col: str
+    forecast_horizon: int
+
+
+class PreflightDecision(BaseModel):
+    key: str
+    label: str
+    message: str
+    options: list[str]
+    default: str
+    required: bool = True
+
+
+class PreflightResponse(BaseModel):
+    status: str  # "ready" | "warning" | "needs_input"
+    detected_frequency: Optional[str] = None
+    row_count: int
+    usable_observations: int
+    duplicate_timestamps: int
+    missing_values: int
+    missing_timestamps: int
+    is_regular: bool
+    issues: list[str]
+    warnings: list[str]
+    decisions: list[PreflightDecision]
+    defaults: dict
 
 
 class ValidationResult(BaseModel):
