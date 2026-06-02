@@ -20,6 +20,7 @@ class AnalyzeRequest(BaseModel):
     date_col: Optional[str] = None
     value_col: Optional[str] = None
     forced_model: Optional[str] = None  # "Holt-Winters" | "ARIMA" | "SARIMA" | None (auto)
+    user_prompt: Optional[str] = None   # Extra instructions appended to the report prompt
 
 
 class ValidationResult(BaseModel):

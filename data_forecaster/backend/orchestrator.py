@@ -43,6 +43,7 @@ def run_pipeline(
     freq: str,
     forecast_horizon: int,
     forced_model: str | None = None,
+    user_prompt: str | None = None,
     chroma_persist_dir: str = "./chroma_db",
     progress_callback: Callable[[int, str], None] | None = None,
 ) -> AnalysisResponse:
@@ -106,7 +107,7 @@ def run_pipeline(
     _progress(80, "Generating report…")
     time.sleep(5)
     rag_kb = get_rag_kb(chroma_persist_dir)
-    report = run_report_agent(validation_result, stat_result, model_selection, forecast_result, rag_kb)
+    report = run_report_agent(validation_result, stat_result, model_selection, forecast_result, rag_kb, user_prompt=user_prompt)
     _progress(92, "Report complete")
 
     # ── Visualizations ────────────────────────────────────────────────────────

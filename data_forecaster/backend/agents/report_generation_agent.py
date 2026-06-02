@@ -5,7 +5,7 @@ from langchain_core.prompts import PromptTemplate
 from langchain_core.tools import tool
 from langchain_groq import ChatGroq
 
-from core.config import GROQ_API_KEY
+from core.config import GROQ_API_KEY, GROQ_MODEL, GROQ_TEMPERATURE, GROQ_MAX_COMPLETION_TOKENS, GROQ_TOP_P, GROQ_REASONING_EFFORT
 from core.logging_config import get_logger
 from rag.knowledge_base import RAGKnowledgeBase
 from schemas import ForecastResult, ModelSelectionResult, StatisticalResult, ValidationResult
@@ -51,6 +51,7 @@ def run_report_agent(
     model_selection: ModelSelectionResult,
     forecast: ForecastResult,
     rag_kb: RAGKnowledgeBase,
+    user_prompt: str | None = None,
 ) -> str:
     """Use the LLM with RAG context to write a 6-section analyst report."""
 
@@ -135,7 +136,13 @@ Forecast Results:
 
     # ── Run ReAct agent ───────────────────────────────────────────────────────
     tools_list = [retrieve_from_rag]
-    llm = ChatGroq(model="llama-3.3-70b-versatile", groq_api_key=GROQ_API_KEY, temperature=0)
+    llm = ChatGroq(
+        model=GROQ_MODEL,
+        groq_api_key=GROQ_API_KEY,
+        temperature=GROQ_TEMPERATURE,
+        max_tokens=GROQ_MAX_COMPLETION_TOKENS,
+        model_kwargs={"top_p": GROQ_TOP_P, "reasoning_effort": GROQ_REASONING_EFFORT},
+    )
     agent = create_react_agent(llm, tools_list, _REACT_PROMPT)
     executor = AgentExecutor(
         agent=agent, tools=tools_list, verbose=False,
@@ -143,6 +150,12 @@ Forecast Results:
     )
 
     rag_queries = " ".join(f"'{q}'," for q in _REPORT_SECTIONS)
+
+    extra_instructions = (
+        f"\n\nADDITIONAL USER INSTRUCTIONS:\n{user_prompt.strip()}\n"
+        "Incorporate these instructions throughout the report where relevant."
+        if user_prompt and user_prompt.strip() else ""
+    )
 
     try:
         result = executor.invoke({
@@ -201,7 +214,8 @@ Forecast Results:
                 "the identified trend, and the uncertainty bands. "
                 "Frame them in business terms, not statistical ones.\n\n"
                 "Write each section fully. Be specific — use the actual numbers from the analysis data above. "
-                "Do not use placeholder text. The report must be ready to present to an executive audience."
+                f"Do not use placeholder text. The report must be ready to present to an executive audience."
+                f"{extra_instructions}"
             )
         })
         report = str(result.get("output", ""))

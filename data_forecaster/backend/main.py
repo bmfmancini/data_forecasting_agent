@@ -62,6 +62,7 @@ async def _job_worker() -> None:
                 freq=stored["freq"],
                 forecast_horizon=req["forecast_horizon"],
                 forced_model=req["forced_model"],
+                user_prompt=req.get("user_prompt"),
                 chroma_persist_dir=settings.CHROMA_PERSIST_DIR,
                 progress_callback=lambda pct, step: _update_job_progress(job_id, pct, step),
             )
@@ -205,6 +206,7 @@ def analyze(request: AnalyzeRequest) -> JobSubmitResponse:
             "value_col": value_col,
             "forecast_horizon": request.forecast_horizon,
             "forced_model": request.forced_model,
+            "user_prompt": request.user_prompt,
         },
         "result": None,
         "error": None,

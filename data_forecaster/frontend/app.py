@@ -15,7 +15,7 @@ st.set_page_config(page_title="Data Forecaster", layout="wide", page_icon="📈"
 st.title("📈 Data Forecaster")
 
 # ── Session state initialisation ──────────────────────────────────────────────
-for key in ("upload_info", "analysis_result", "error", "_running", "_job_id", "_job_progress", "_job_step"):
+for key in ("upload_info", "analysis_result", "error", "_running", "_job_id", "_job_progress", "_job_step", "_user_prompt"):
     if key not in st.session_state:
         st.session_state[key] = None
 
@@ -126,6 +126,15 @@ with st.sidebar:
     )
     forced_model = None if model_choice == "Auto (AI selects)" else model_choice
 
+    st.markdown("---")
+    user_prompt = st.text_area(
+        "Additional Report Instructions (optional)",
+        placeholder="e.g. Focus recommendations on inventory planning. Flag any risk of over-forecasting.",
+        height=100,
+        disabled=not info,
+        help="Appended to the AI report prompt so it can tailor the analysis to your needs.",
+    )
+
     is_running = st.session_state._running is True
     run_btn = st.button(
         "⏳ Running…" if is_running else "🚀 Run Analysis",
@@ -138,6 +147,7 @@ if run_btn and info:
     st.session_state._job_id = None
     st.session_state._job_progress = 0
     st.session_state._job_step = "Submitting job…"
+    st.session_state._user_prompt = user_prompt or None
     st.rerun()
 
 if st.session_state._running and info:
@@ -159,6 +169,7 @@ if st.session_state._running and info:
                     "date_col": date_col,
                     "value_col": value_col,
                     "forced_model": forced_model,
+                    "user_prompt": st.session_state.get("_user_prompt"),
                 },
                 timeout=30,
             )
