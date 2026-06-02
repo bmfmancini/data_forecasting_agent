@@ -81,7 +81,11 @@ def _report_to_pdf(report_md: str, title: str = "Forecast Report") -> bytes:
             pdf.set_font("Helvetica", "", 11)
             _cell(pdf, 6, _sanitize(_strip_inline(line)))
 
-    pdf_output_result = pdf.output()
+    try:
+        pdf_output_result = pdf.output(dest='S')
+    except TypeError:
+        pdf_output_result = pdf.output()
+
     if isinstance(pdf_output_result, str):
         # If fpdf.output() unexpectedly returns a string, encode it to bytes
         return pdf_output_result.encode("latin-1", errors="replace")
