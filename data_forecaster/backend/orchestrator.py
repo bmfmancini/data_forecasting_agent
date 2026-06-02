@@ -88,6 +88,10 @@ def run_pipeline(
             holt_winters_rejected_reason=None if forced_model == "Holt-Winters" else "Not selected (user chose a different model).",
             arima_rejected_reason=None if forced_model == "ARIMA" else "Not selected (user chose a different model).",
             sarima_rejected_reason=None if forced_model == "SARIMA" else "Not selected (user chose a different model).",
+            reasoning_steps=[{
+                "thought": f"User explicitly requested the {forced_model} model. Skipping automated model selection logic.",
+                "observation": f"Manual selection active: {forced_model}"
+            }]
         )
     else:
         logger.info("Agent 3: Model Selection")
@@ -107,7 +111,7 @@ def run_pipeline(
     logger.info("Agent 5: Report Generation")
     _progress(80, "Generating report…")
     rag_kb = get_rag_kb(chroma_persist_dir)
-    report = run_report_agent(
+    report, report_reasoning = run_report_agent(
         validation_result,
         stat_result,
         model_selection,
@@ -154,6 +158,7 @@ def run_pipeline(
         model_selection=model_selection,
         forecast=forecast_result,
         report=report,
+        report_reasoning=report_reasoning,
         chart_historical=chart_historical,
         chart_stl=chart_stl,
         chart_acf_pacf=chart_acf_pacf,

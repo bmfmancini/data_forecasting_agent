@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from typing import Any
 import pandas as pd
 from langchain.agents import AgentExecutor, create_react_agent
 from langchain_core.prompts import PromptTemplate
 from langchain_core.tools import tool
-from langchain_groq import ChatGroq
+from langchain_google_genai import ChatGoogleGenerativeAI
 
-from core.config import GROQ_API_KEY
+from core.config import GEMINI_MODEL
 from core.logging_config import get_logger
 from forecasting.arima_model import fit_arima
 from forecasting.holt_winters import fit_holt_winters
@@ -34,7 +35,7 @@ Final Answer: the final answer to the original input question
 Begin!
 
 Question: {input}
-Thought:{agent_scratchpad}"""
+Thought: {agent_scratchpad}"""
 )
 
 
@@ -114,15 +115,16 @@ def run_forecasting_agent(
 
     # ── Run ReAct agent ───────────────────────────────────────────────────────
     tools_list = [run_holt_winters_tool, run_arima_tool, run_sarima_tool, compute_all_metrics_tool]
-    llm = ChatGroq(model="llama-3.3-70b-versatile", groq_api_key=GROQ_API_KEY, temperature=0)
+    llm = ChatGoogleGenerativeAI(model=GEMINI_MODEL, temperature=0)
     agent = create_react_agent(llm, tools_list, _REACT_PROMPT)
     executor = AgentExecutor(
-        agent=agent, tools=tools_list, verbose=False,
+        agent=agent, tools=tools_list, verbose=False, return_intermediate_steps=True,
         max_iterations=5, handle_parsing_errors=True,
     )
 
+    reasoning_steps: list[dict[str, Any]] = []
     try:
-        executor.invoke({
+        result = executor.invoke({
             "input": (
                 f"The pre-selected model is: {model_selection.selected_model}. "
                 "Run all three forecasting tools (Holt-Winters, ARIMA, SARIMA) to fit each model "
@@ -130,6 +132,9 @@ def run_forecasting_agent(
                 "Report which model achieved the best MAPE."
             )
         })
+        reasoning_steps = [
+            {"thought": a.log, "observation": str(o)} for a, o in result.get("intermediate_steps", [])
+        ]
     except Exception as exc:
         logger.warning("Forecasting agent LLM call failed: %s — running models directly.", exc)
         # Run all models directly as fallback
@@ -142,6 +147,10 @@ def run_forecasting_agent(
                 results_store[name] = fn(series, forecast_horizon, **kwargs)
             except Exception as e:
                 logger.warning("%s fallback failed: %s", name, e)
+        reasoning_steps = [{
+            "thought": f"Forecasting agent failed: {str(exc)}",
+            "observation": "Attempting to fit models directly without LLM orchestration."
+        }]
 
     # ── Select result for the chosen model ───────────────────────────────────
     selected = model_selection.selected_model
@@ -194,5 +203,6 @@ def run_forecasting_agent(
         rmse=res["rmse"],
         mae=res["mae"],
         mape=res["mape"],
+        reasoning_steps=reasoning_steps,
     )
     return forecast_result, all_metrics

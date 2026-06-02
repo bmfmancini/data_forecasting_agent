@@ -3,6 +3,7 @@ uvicorn[standard]==0.29.0
 langchain==0.2.6
 langchain-groq==0.1.6
 langchain-community==0.2.6
+langchain_google_genai==1.0.10
 chromadb==0.5.3
 sentence-transformers==3.0.1
 statsmodels==0.14.2

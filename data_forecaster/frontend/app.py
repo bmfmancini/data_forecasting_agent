@@ -137,6 +137,29 @@ def _render_preflight_contents(preflight: dict[str, Any], disabled: bool = False
     return choices
 
 
+def _render_reasoning(steps: list[dict[str, Any]]) -> None:
+    """Helper to render agent reasoning traces in an expander."""
+    if not steps:
+        st.info("No detailed reasoning trace captured for this step.")
+        return
+    
+    for i, step in enumerate(steps):
+        with st.container():
+            st.markdown(f"**Step {i+1}**")
+            # Capture the thought/log. If 'thought' is missing, try 'thought_log' or 'log'
+            thought = (step.get("thought") or step.get("log") or "").strip()
+            
+            # Remove the "Thought:" prefix if the LLM included it in the log
+            if thought.lower().startswith("thought:"):
+                thought = thought[8:].strip()
+            
+            if thought:
+                st.caption(thought)
+                
+            if step.get("observation"):
+                st.info(f"Observation: {step['observation']}")
+
+
 def _render_preflight_dialog(preflight: dict[str, Any], disabled: bool = False) -> bool:
     choices = _render_preflight_contents(preflight, disabled=disabled)
     if st.button("Apply Preflight Choices", disabled=disabled, use_container_width=True):
@@ -267,6 +290,9 @@ with st.sidebar:
         disabled=not info,
         help="Appended to the AI report prompt so it can tailor the analysis to your needs.",
     )
+
+    st.markdown("---")
+    show_advanced = st.toggle("🕵️ Advanced Mode", value=False, help="Show AI reasoning traces and internal thoughts for each step.")
 
     is_running = st.session_state._running is True
     preflight = None
@@ -432,12 +458,13 @@ if st.session_state.error and not st.session_state.analysis_result:
 result = st.session_state.analysis_result
 
 if result:
-    tab_report, tab_forecast, tab_model, tab_stats, tab_quality, tab_overview = st.tabs([
+    tab_report, tab_forecast, tab_model, tab_stats, tab_quality, tab_trace, tab_overview = st.tabs([
         "📄 Report",
         "🔮 Forecast",
         "🤖 Model Selection",
         "📐 Statistical Analysis",
         "🔍 Data Quality",
+        "🕵️ AI Reasoning Trace",
         "📊 Data Overview",
     ])
 
@@ -479,6 +506,10 @@ if result:
         else:
             st.success("No data quality issues detected.")
 
+        if show_advanced:
+            with st.expander("🕵️ View Data Validation Reasoning", expanded=False):
+                _render_reasoning(v.get("reasoning_steps", []))
+
         st.markdown("**Validation Summary:**")
         st.write(v["summary"])
 
@@ -500,6 +531,10 @@ if result:
             st.markdown(f"**Trend:** {trend_status} (slope=`{s['trend_slope']:.6f}`)")
             st.markdown(f"**Seasonal period:** `{s['seasonal_period']}`")
             st.markdown(f"**Dominant periodogram period:** `{s['dominant_period']:.2f}`")
+
+        if show_advanced:
+            with st.expander("🕵️ View Statistical Analysis Reasoning", expanded=False):
+                _render_reasoning(s.get("reasoning_steps", []))
 
         st.markdown("**Statistical Summary:**")
         st.write(s["summary"])
@@ -524,6 +559,10 @@ if result:
         st.success(f"**Selected Model: {m['selected_model']}**")
         st.markdown("**Rationale:**")
         st.write(m["explanation"])
+
+        if show_advanced:
+            with st.expander("🕵️ View Model Selection Reasoning", expanded=False):
+                _render_reasoning(m.get("reasoning_steps", []))
 
         rejected = {
             k: v for k, v in {
@@ -618,6 +657,28 @@ if result:
             st.warning(f"PDF export unavailable: {_pdf_err}")
         st.markdown("---")
         st.markdown(report_text)
+
+    # ── Tab 7: AI Trace ───────────────────────────────────────────────────────
+    with tab_trace:
+        st.subheader("🕵️ Full AI Reasoning Trace")
+        st.write("This log shows the internal 'monologue' and tool usage of the AI agents as they processed your request.")
+        
+        with st.expander("1. Data Validation Agent", expanded=True):
+            _render_reasoning(result["validation"].get("reasoning_steps", []))
+            
+        with st.expander("2. Statistical Analysis Agent", expanded=True):
+            _render_reasoning(result["statistical"].get("reasoning_steps", []))
+            
+        with st.expander("3. Model Selection Agent", expanded=True):
+            _render_reasoning(result["model_selection"].get("reasoning_steps", []))
+            
+        with st.expander("4. Forecasting Agent", expanded=True):
+            _render_reasoning(result["forecast"].get("reasoning_steps", []))
+            
+        with st.expander("5. Report Generation Agent", expanded=True):
+            _render_reasoning(result.get("report_reasoning", []))
+            
+        st.info("💡 Advanced Mode (toggle in sidebar) also shows these traces inline within each specific analysis tab.")
 
 else:
     st.info("Upload a time series file and click **Run Analysis** to get started.")

@@ -59,6 +59,7 @@ class ValidationResult(BaseModel):
     frequency_alias: Optional[str] = None
     issues: list[str]
     summary: str
+    reasoning_steps: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class StatisticalResult(BaseModel):
@@ -73,6 +74,7 @@ class StatisticalResult(BaseModel):
     seasonal_period: Optional[int] = None
     dominant_period: Optional[float] = None
     summary: str
+    reasoning_steps: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ModelSelectionResult(BaseModel):
@@ -81,6 +83,7 @@ class ModelSelectionResult(BaseModel):
     holt_winters_rejected_reason: Optional[str] = None
     arima_rejected_reason: Optional[str] = None
     sarima_rejected_reason: Optional[str] = None
+    reasoning_steps: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ForecastResult(BaseModel):
@@ -92,6 +95,7 @@ class ForecastResult(BaseModel):
     rmse: float
     mae: float
     mape: float
+    reasoning_steps: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class AnalysisResponse(BaseModel):
@@ -101,6 +105,7 @@ class AnalysisResponse(BaseModel):
     model_selection: ModelSelectionResult
     forecast: ForecastResult
     report: str
+    report_reasoning: list[dict[str, Any]] = Field(default_factory=list)
     chart_historical: dict
     chart_stl: dict
     chart_acf_pacf: str          # base64 PNG

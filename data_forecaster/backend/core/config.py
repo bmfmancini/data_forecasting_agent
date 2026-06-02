@@ -3,12 +3,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-GROQ_API_KEY: str = os.environ["GROQ_API_KEY"]
-GROQ_MODEL: str = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
-GROQ_TEMPERATURE: float = float(os.getenv("GROQ_TEMPERATURE", "1"))
-GROQ_MAX_COMPLETION_TOKENS: int = int(os.getenv("GROQ_MAX_COMPLETION_TOKENS", "8192"))
-GROQ_TOP_P: float = float(os.getenv("GROQ_TOP_P", "1"))
-GROQ_REASONING_EFFORT: str = os.getenv("GROQ_REASONING_EFFORT", "medium")
+GOOGLE_API_KEY: str = os.environ["GOOGLE_API_KEY"]
+GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+GEMINI_TEMPERATURE: float = float(os.getenv("GEMINI_TEMPERATURE", "0.1"))
+GEMINI_MAX_TOKENS: int = int(os.getenv("GEMINI_MAX_TOKENS", "8192"))
 
 MAX_UPLOAD_MB: int = int(os.getenv("MAX_UPLOAD_MB", "10"))
 MAX_UPLOAD_BYTES: int = MAX_UPLOAD_MB * 1024 * 1024

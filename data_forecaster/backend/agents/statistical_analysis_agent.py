@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
 from langchain.agents import AgentExecutor, create_react_agent
 from langchain_core.prompts import PromptTemplate
 from langchain_core.tools import tool
-from langchain_groq import ChatGroq
+from langchain_google_genai import ChatGoogleGenerativeAI
 
-from core.config import GROQ_API_KEY
+from core.config import GEMINI_MODEL
 from core.logging_config import get_logger
 from schemas import StatisticalResult
 from utils.statistical import (
@@ -42,7 +42,7 @@ Final Answer: the final answer to the original input question
 Begin!
 
 Question: {input}
-Thought:{agent_scratchpad}"""
+Thought: {agent_scratchpad}"""
 )
 
 
@@ -71,80 +71,46 @@ def run_statistical_agent(series: pd.Series, seasonal_period: int = 12) -> Stati
     # ── Tool definitions (closed over series / computed stats) ───────────────
 
     @tool
-    def run_adf_test_tool(command: str) -> str:
-        """Run the Augmented Dickey-Fuller stationarity test."""
-        return adf["interpretation"]
-
-    @tool
-    def run_kpss_test_tool(command: str) -> str:
-        """Run the KPSS stationarity test (null = stationary)."""
-        return kpss_res["interpretation"]
-
-    @tool
-    def run_stl_decomposition_tool(command: str) -> str:
-        """Run STL decomposition to separate trend, seasonal, and residual components."""
-        try:
-            stl = run_stl_decomposition(series, period=inferred_period or 12)
-            trend_range = max(stl["trend"]) - min(stl["trend"])
-            seas_range = max(stl["seasonal"]) - min(stl["seasonal"])
-            resid_std = float(np.std(stl["residual"]))
-            return (
-                f"STL decomposition (period={inferred_period}): "
-                f"trend range={trend_range:.2f}, seasonal range={seas_range:.2f}, "
-                f"residual std={resid_std:.2f}."
-            )
-        except Exception as exc:
-            return f"STL decomposition failed: {exc}"
-
-    @tool
-    def compute_acf_pacf_tool(command: str) -> str:
-        """Compute ACF and PACF to identify autocorrelation structure."""
+    def get_statistical_profile(command: str) -> str:
+        """Returns a comprehensive summary of ADF, KPSS, Trend, and Periodogram results."""
+        # STL mini-calc
+        stl = run_stl_decomposition(series, period=inferred_period or 12)
         acf_data = compute_acf_pacf(series)
-        # Report first few significant lags
         conf_bound = 1.96 / np.sqrt(len(series))
         sig_acf = [i for i, v in enumerate(acf_data["acf_values"][1:], 1) if abs(v) > conf_bound]
-        sig_pacf = [i for i, v in enumerate(acf_data["pacf_values"][1:], 1) if abs(v) > conf_bound]
+        
         return (
-            f"ACF significant lags (95% CI): {sig_acf[:10]}. "
-            f"PACF significant lags (95% CI): {sig_pacf[:10]}."
+            f"STATISTICAL PROFILE:\n"
+            f"- ADF: {adf['interpretation']}\n"
+            f"- KPSS: {kpss_res['interpretation']}\n"
+            f"- Trend: {trend['interpretation']}\n"
+            f"- Dominant Period: {periodogram['dominant_period']:.2f}\n"
+            f"- STL Seasonal Range: {max(stl['seasonal']) - min(stl['seasonal']):.2f}\n"
+            f"- Significant ACF Lags: {sig_acf[:5]}"
         )
-
-    @tool
-    def run_periodogram_tool(command: str) -> str:
-        """Run spectral periodogram to identify dominant periodic cycle."""
-        dp = periodogram["dominant_period"]
-        return (
-            f"Dominant period from periodogram: {dp:.2f} observations. "
-            f"Suggests seasonal cycle of approximately {int(round(dp))} periods."
-        )
-
-    @tool
-    def detect_trend_tool(command: str) -> str:
-        """Detect whether a significant linear trend exists in the series."""
-        return trend["interpretation"]
 
     # ── Run ReAct agent for qualitative summary ───────────────────────────────
-    tools_list = [
-        run_adf_test_tool, run_kpss_test_tool, run_stl_decomposition_tool,
-        compute_acf_pacf_tool, run_periodogram_tool, detect_trend_tool,
-    ]
-    llm = ChatGroq(model="llama-3.3-70b-versatile", groq_api_key=GROQ_API_KEY, temperature=0)
+    tools_list = [get_statistical_profile]
+    llm = ChatGoogleGenerativeAI(model=GEMINI_MODEL, temperature=0)
     agent = create_react_agent(llm, tools_list, _REACT_PROMPT)
     executor = AgentExecutor(
-        agent=agent, tools=tools_list, verbose=False,
+        agent=agent, tools=tools_list, verbose=False, return_intermediate_steps=True,
         max_iterations=7, handle_parsing_errors=True,
     )
 
+    reasoning_steps: list[dict[str, Any]] = []
     try:
         result = executor.invoke({
             "input": (
-                "Use all available tools to perform a comprehensive statistical analysis of "
-                "this time series. Run the ADF and KPSS stationarity tests, STL decomposition, "
-                "ACF/PACF analysis, periodogram, and trend detection. "
-                "Summarise all findings including stationarity, seasonality, and trend."
+                "Perform a statistical analysis. You MUST use the get_statistical_profile tool. "
+                "Based on the results, provide a concise qualitative summary of the series "
+                "stationarity, trend strength, and seasonal patterns."
             )
         })
         summary = str(result.get("output", "Statistical analysis complete."))
+        reasoning_steps = [
+            {"thought": a.log, "observation": str(o)} for a, o in result.get("intermediate_steps", [])
+        ]
     except Exception as exc:
         logger.warning("Statistical agent LLM call failed: %s", exc)
         summary = (
@@ -152,6 +118,10 @@ def run_statistical_agent(series: pd.Series, seasonal_period: int = 12) -> Stati
             f"KPSS: {'stationary' if kpss_res['is_stationary'] else 'non-stationary'}. "
             f"Trend: {'present' if trend['has_trend'] else 'absent'}."
         )
+        reasoning_steps = [{
+            "thought": f"Statistical agent failed: {str(exc)}",
+            "observation": "Falling back to raw statistical test results."
+        }]
 
     logger.info(
         "Statistical analysis complete. stationary_adf=%s seasonal_period=%s",
@@ -170,4 +140,5 @@ def run_statistical_agent(series: pd.Series, seasonal_period: int = 12) -> Stati
         seasonal_period=inferred_period,
         dominant_period=periodogram["dominant_period"],
         summary=summary,
+        reasoning_steps=reasoning_steps,
     )

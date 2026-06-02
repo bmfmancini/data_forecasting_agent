@@ -5,9 +5,9 @@ import pandas as pd
 from langchain.agents import AgentExecutor, create_react_agent
 from langchain_core.prompts import PromptTemplate
 from langchain_core.tools import tool
-from langchain_groq import ChatGroq
+from langchain_google_genai import ChatGoogleGenerativeAI
 
-from core.config import GROQ_API_KEY
+from core.config import GEMINI_MODEL
 from core.logging_config import get_logger
 from schemas import ValidationResult
 
@@ -32,7 +32,7 @@ Final Answer: the final answer to the original input question
 Begin!
 
 Question: {input}
-Thought:{agent_scratchpad}"""
+Thought: {agent_scratchpad}"""
 )
 
 
@@ -46,57 +46,24 @@ def run_validation_agent(
     # ── Tool definitions (closed over df / series) ───────────────────────────
 
     @tool
-    def check_missing_timestamps(command: str) -> str:
-        """Check for gaps in the time series timestamps."""
+    def get_full_data_quality_report(command: str) -> str:
+        """Returns a complete technical report of duplicates, missing values, gaps, and frequency."""
         diffs = series.index.to_series().diff().dropna()
-        if len(diffs) == 0:
-            return "Only one observation — cannot check gaps."
-        mode_diff = diffs.mode()[0]
-        gaps = int((diffs > mode_diff * 1.5).sum())
-        return f"Missing timestamp gaps detected: {gaps}. Expected interval: {mode_diff}."
-
-    @tool
-    def check_duplicates(command: str) -> str:
-        """Check for duplicate timestamps in the time series."""
+        mode_diff = diffs.mode()[0] if len(diffs) > 0 else "N/A"
+        gaps = int((diffs > mode_diff * 1.5).sum()) if mode_diff != "N/A" else 0
         dupes = int(df[date_col].duplicated().sum())
-        return f"Duplicate timestamps: {dupes}."
-
-    @tool
-    def check_missing_values(command: str) -> str:
-        """Check for missing (NaN) values in the value column."""
         missing = int(series.isna().sum())
-        pct = missing / len(series) * 100 if len(series) > 0 else 0
-        return f"Missing values: {missing} ({pct:.1f}% of {len(series)} observations)."
-
-    @tool
-    def check_irregular_intervals(command: str) -> str:
-        """Check whether the time series has regular (evenly spaced) intervals."""
-        diffs = series.index.to_series().diff().dropna()
-        if len(diffs) == 0:
-            return "Cannot assess — too few observations."
-        unique_diffs = diffs.nunique()
-        is_regular = unique_diffs == 1
-        return (
-            f"Interval regularity: {'regular' if is_regular else 'irregular'}. "
-            f"Unique interval counts: {unique_diffs}."
-        )
-
-    @tool
-    def detect_frequency(command: str) -> str:
-        """Detect the inferred pandas frequency alias of the time series."""
-        return f"Detected frequency alias: '{freq}'."
-
-    @tool
-    def assess_size(command: str) -> str:
-        """Assess whether the series is large enough for reliable forecasting."""
         n = len(series)
-        if n < 20:
-            adequacy = "Too short — results unreliable (< 20 observations)."
-        elif n < 50:
-            adequacy = "Marginal — some models may be unreliable (< 50 observations)."
-        else:
-            adequacy = "Adequate for forecasting."
-        return f"Series length: {n} observations. Assessment: {adequacy}"
+        
+        return (
+            f"DATA QUALITY SNAPSHOT:\n"
+            f"- Length: {n} observations\n"
+            f"- Frequency: {freq}\n"
+            f"- Missing Gaps: {gaps}\n"
+            f"- Duplicates: {dupes}\n"
+            f"- Null Values: {missing}\n"
+            f"- Regularity: {'Regular' if (diffs.nunique() == 1 if n > 1 else True) else 'Irregular'}"
+        )
 
     # ── Compute structured values directly ───────────────────────────────────
     diffs = series.index.to_series().diff().dropna()
@@ -119,14 +86,11 @@ def run_validation_agent(
         issues.append("Very short series — forecasting results may be unreliable.")
 
     # ── Run ReAct agent for qualitative summary ───────────────────────────────
-    tools_list = [
-        check_missing_timestamps, check_duplicates, check_missing_values,
-        check_irregular_intervals, detect_frequency, assess_size,
-    ]
-    llm = ChatGroq(model="llama-3.3-70b-versatile", groq_api_key=GROQ_API_KEY, temperature=0)
+    tools_list = [get_full_data_quality_report]
+    llm = ChatGoogleGenerativeAI(model=GEMINI_MODEL, temperature=0)
     agent = create_react_agent(llm, tools_list, _REACT_PROMPT)
     executor = AgentExecutor(
-        agent=agent, tools=tools_list, verbose=False,
+        agent=agent, tools=tools_list, verbose=False, return_intermediate_steps=True,
         max_iterations=6, handle_parsing_errors=True,
     )
 
@@ -138,18 +102,28 @@ def run_validation_agent(
         if auto_mode else ""
     )
 
+    reasoning_steps: list[dict[str, Any]] = []
     try:
         result = executor.invoke({
             "input": (
-                "Use all available tools to thoroughly validate this time series dataset. "
-                "Check for missing timestamps, duplicates, missing values, irregular intervals, frequency, and size. "
+                "Validate the current time series dataset. You MUST use the "
+                "get_full_data_quality_report tool to retrieve the technical metrics. "
+                "Then, provide a professional summary of the data quality and suitability "
+                "for forecasting."
                 f"Provide a concise summary of the data quality.{ai_instruction}"
             )
         })
         summary = str(result.get("output", "Validation complete."))
+        reasoning_steps = [
+            {"thought": a.log, "observation": str(o)} for a, o in result.get("intermediate_steps", [])
+        ]
     except Exception as exc:
         logger.warning("Validation agent LLM call failed: %s", exc)
         summary = f"Validation complete. Issues found: {len(issues)}. " + " ".join(issues)
+        reasoning_steps = [{
+            "thought": f"Validation agent failed: {str(exc)}",
+            "observation": "Proceeding with heuristic-based validation summary."
+        }]
 
     logger.info("Validation complete. Issues: %s", issues)
 
@@ -164,4 +138,5 @@ def run_validation_agent(
         frequency_alias=freq,
         issues=issues,
         summary=summary,
+        reasoning_steps=reasoning_steps,
     )

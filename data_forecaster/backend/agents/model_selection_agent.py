@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from typing import Any
 from langchain.agents import AgentExecutor, create_react_agent
 from langchain_core.prompts import PromptTemplate
 from langchain_core.tools import tool
-from langchain_groq import ChatGroq
+from langchain_google_genai import ChatGoogleGenerativeAI
 
-from core.config import GROQ_API_KEY
+from core.config import GEMINI_MODEL
 from core.logging_config import get_logger
 from schemas import ModelSelectionResult, StatisticalResult
 
@@ -30,7 +31,7 @@ Final Answer: the final answer to the original input question
 Begin!
 
 Question: {input}
-Thought:{agent_scratchpad}"""
+Thought: {agent_scratchpad}"""
 )
 
 _MODELS = ("ARIMA", "SARIMA", "Holt-Winters")
@@ -111,28 +112,20 @@ def run_model_selection_agent(stat_result: StatisticalResult) -> ModelSelectionR
         evaluate_arima_suitability,
         evaluate_sarima_suitability,
     ]
-    llm = ChatGroq(model="llama-3.3-70b-versatile", groq_api_key=GROQ_API_KEY, temperature=0)
+    llm = ChatGoogleGenerativeAI(model=GEMINI_MODEL, temperature=0)
     agent = create_react_agent(llm, tools_list, _REACT_PROMPT)
     executor = AgentExecutor(
-        agent=agent, tools=tools_list, verbose=False,
+        agent=agent, tools=tools_list, verbose=False, return_intermediate_steps=True,
         max_iterations=5, handle_parsing_errors=True,
     )
 
-    context = (
-        f"Statistical analysis results:\n"
-        f"- ADF stationary: {stat_result.is_stationary_adf} (p={stat_result.adf_p_value:.4f})\n"
-        f"- KPSS stationary: {stat_result.is_stationary_kpss} (p={stat_result.kpss_p_value:.4f})\n"
-        f"- Trend detected: {stat_result.has_trend} (slope={stat_result.trend_slope:.6f})\n"
-        f"- Seasonal period: {stat_result.seasonal_period}\n"
-        f"- Dominant periodogram period: {stat_result.dominant_period:.2f}\n"
-    )
-
+    reasoning_steps: list[dict[str, Any]] = []
     try:
         result = executor.invoke({
             "input": (
-                f"{context}\n"
-                "Use all three evaluation tools to assess each model's suitability. "
-                "Then select the SINGLE best model from: ARIMA, SARIMA, Holt-Winters.\n\n"
+                "Evaluate the suitability of ARIMA, SARIMA, and Holt-Winters for the current dataset. "
+                "You MUST use all three evaluation tools to assess the models based on the underlying "
+                "statistical data before selecting the SINGLE best model.\n\n"
                 "Your Final Answer MUST follow this exact structure:\n"
                 "Selected model: <MODEL_NAME>\n\n"
                 "## Why <MODEL_NAME> was chosen\n"
@@ -150,6 +143,9 @@ def run_model_selection_agent(stat_result: StatisticalResult) -> ModelSelectionR
         })
         output = str(result.get("output", ""))
         logger.info("Model selection agent output: %s", output[:200])
+        reasoning_steps = [
+            {"thought": a.log, "observation": str(o)} for a, o in result.get("intermediate_steps", [])
+        ]
 
         # Parse selected model from output
         selected_model = fallback_model
@@ -177,6 +173,10 @@ def run_model_selection_agent(stat_result: StatisticalResult) -> ModelSelectionR
         hw_rej = hw_reason if selected_model != "Holt-Winters" else None
         arima_rej = arima_reason if selected_model != "ARIMA" else None
         sarima_rej = sarima_reason if selected_model != "SARIMA" else None
+        reasoning_steps = [{
+            "thought": f"Model selection agent failed: {str(exc)}",
+            "observation": f"Falling back to heuristic selection: {selected_model}"
+        }]
 
     logger.info("Selected model: %s", selected_model)
 
@@ -186,4 +186,5 @@ def run_model_selection_agent(stat_result: StatisticalResult) -> ModelSelectionR
         holt_winters_rejected_reason=hw_rej,
         arima_rejected_reason=arima_rej,
         sarima_rejected_reason=sarima_rej,
+        reasoning_steps=reasoning_steps,
     )
