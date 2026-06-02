@@ -15,7 +15,7 @@ st.set_page_config(page_title="Data Forecaster", layout="wide", page_icon="📈"
 st.title("📈 Data Forecaster")
 
 # ── Session state initialisation ──────────────────────────────────────────────
-for key in ("upload_info", "analysis_result", "error", "_running"):
+for key in ("upload_info", "analysis_result", "error", "_running", "_job_id", "_job_progress", "_job_step"):
     if key not in st.session_state:
         st.session_state[key] = None
 
@@ -135,15 +135,21 @@ with st.sidebar:
 
 if run_btn and info:
     st.session_state._running = True
+    st.session_state._job_id = None
+    st.session_state._job_progress = 0
+    st.session_state._job_step = "Submitting job…"
     st.rerun()
 
 if st.session_state._running and info:
-    spinner_msg = (
-        f"Running pipeline with {forced_model} model…"
-        if forced_model
-        else "Running 5-agent pipeline — this may take a minute…"
-    )
-    with st.spinner(spinner_msg):
+    # ── Progress display ──────────────────────────────────────────────────────
+    pct = st.session_state._job_progress or 0
+    step_text = st.session_state._job_step or "Processing…"
+    st.progress(pct / 100, text=f"{step_text} ({pct}%)")
+
+    job_id = st.session_state._job_id
+
+    if job_id is None:
+        # ── Submit the job ────────────────────────────────────────────────────
         try:
             resp = requests.post(
                 f"{BACKEND_URL}/analyze",
@@ -154,17 +160,53 @@ if st.session_state._running and info:
                     "value_col": value_col,
                     "forced_model": forced_model,
                 },
-                timeout=600,
+                timeout=30,
             )
-            if resp.status_code == 200:
-                st.session_state.analysis_result = resp.json()
-                st.session_state.error = None
+            if resp.status_code == 202:
+                st.session_state._job_id = resp.json()["job_id"]
+                st.session_state._job_progress = 0
+                st.session_state._job_step = "Queued — waiting for an available slot…"
             else:
-                st.session_state.error = resp.json().get("detail", "Analysis failed.")
+                st.session_state.error = resp.json().get("detail", "Failed to submit job.")
+                st.session_state._running = False
         except Exception as exc:
             st.session_state.error = str(exc)
-        finally:
             st.session_state._running = False
+        st.rerun()
+    else:
+        # ── Poll for status ───────────────────────────────────────────────────
+        import time as _time
+        try:
+            resp = requests.get(f"{BACKEND_URL}/jobs/{job_id}", timeout=10)
+            if resp.status_code == 200:
+                job = resp.json()
+                st.session_state._job_progress = job["progress"]
+                st.session_state._job_step = job["step"]
+
+                if job["status"] == "done":
+                    st.session_state.analysis_result = job["result"]
+                    st.session_state.error = None
+                    st.session_state._running = False
+                    st.session_state._job_id = None
+                    st.rerun()
+                elif job["status"] == "error":
+                    st.session_state.error = job.get("error", "Analysis failed.")
+                    st.session_state._running = False
+                    st.session_state._job_id = None
+                    st.rerun()
+                else:
+                    # pending or running — poll again after a short delay
+                    _time.sleep(1.5)
+                    st.rerun()
+            else:
+                st.session_state.error = "Failed to poll job status."
+                st.session_state._running = False
+                st.session_state._job_id = None
+                st.rerun()
+        except Exception as exc:
+            st.session_state.error = str(exc)
+            st.session_state._running = False
+            st.session_state._job_id = None
             st.rerun()
 
 if st.session_state.error and not st.session_state.analysis_result:

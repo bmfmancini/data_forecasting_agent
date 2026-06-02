@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from typing import Callable
 import pandas as pd
 
 from agents.data_validation_agent import run_validation_agent
@@ -43,8 +44,13 @@ def run_pipeline(
     forecast_horizon: int,
     forced_model: str | None = None,
     chroma_persist_dir: str = "./chroma_db",
+    progress_callback: Callable[[int, str], None] | None = None,
 ) -> AnalysisResponse:
     """Execute the full 5-agent pipeline and return the complete AnalysisResponse."""
+
+    def _progress(pct: int, step: str) -> None:
+        if progress_callback:
+            progress_callback(pct, step)
 
     logger.info(
         "Pipeline start: file_id=%s date_col=%s value_col=%s freq=%s horizon=%d",
@@ -56,16 +62,21 @@ def run_pipeline(
 
     # ── Agent 1: Data Validation ──────────────────────────────────────────────
     logger.info("Agent 1: Data Validation")
+    _progress(5, "Validating data…")
     validation_result = run_validation_agent(df, date_col, value_col, freq)
+    _progress(15, "Data validation complete")
 
     # ── Agent 2: Statistical Analysis ────────────────────────────────────────
     logger.info("Agent 2: Statistical Analysis")
+    _progress(20, "Running statistical analysis…")
     time.sleep(3)
     stat_result = run_statistical_agent(series, seasonal_period)
+    _progress(35, "Statistical analysis complete")
 
     # ── Agent 3: Model Selection ──────────────────────────────────────────────
     if forced_model:
         logger.info("Agent 3: Model Selection skipped — user forced model: %s", forced_model)
+        _progress(40, f"Model manually set to {forced_model}")
         from schemas import ModelSelectionResult
         model_selection = ModelSelectionResult(
             selected_model=forced_model,
@@ -76,24 +87,31 @@ def run_pipeline(
         )
     else:
         logger.info("Agent 3: Model Selection")
+        _progress(40, "Selecting forecasting model…")
         time.sleep(3)
         model_selection = run_model_selection_agent(stat_result)
+    _progress(55, f"Model selected: {model_selection.selected_model}")
 
     # ── Agent 4: Forecasting ──────────────────────────────────────────────────
     logger.info("Agent 4: Forecasting")
+    _progress(60, "Running forecast…")
     time.sleep(3)
     forecast_result, all_metrics = run_forecasting_agent(
         series, model_selection, stat_result, forecast_horizon, freq
     )
+    _progress(75, "Forecast complete")
 
     # ── Agent 5: Report Generation ────────────────────────────────────────────
     logger.info("Agent 5: Report Generation")
+    _progress(80, "Generating report…")
     time.sleep(5)
     rag_kb = get_rag_kb(chroma_persist_dir)
     report = run_report_agent(validation_result, stat_result, model_selection, forecast_result, rag_kb)
+    _progress(92, "Report complete")
 
     # ── Visualizations ────────────────────────────────────────────────────────
     logger.info("Generating visualizations")
+    _progress(95, "Generating visualizations…")
     sp = stat_result.seasonal_period or seasonal_period
 
     chart_historical = plot_historical(series)
@@ -118,6 +136,7 @@ def run_pipeline(
     chart_model_comparison = plot_model_comparison(all_metrics)
 
     logger.info("Pipeline complete: file_id=%s", file_id)
+    _progress(100, "Analysis complete")
 
     return AnalysisResponse(
         file_id=file_id,

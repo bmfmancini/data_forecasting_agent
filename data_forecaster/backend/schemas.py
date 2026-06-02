@@ -80,3 +80,17 @@ class AnalysisResponse(BaseModel):
     chart_acf_pacf: str          # base64 PNG
     chart_forecast: dict
     chart_model_comparison: dict
+
+
+class JobSubmitResponse(BaseModel):
+    job_id: str
+    status: str  # "pending"
+
+
+class JobStatusResponse(BaseModel):
+    job_id: str
+    status: str  # "pending" | "running" | "done" | "error"
+    progress: int  # 0–100
+    step: str
+    result: Optional[dict] = None
+    error: Optional[str] = None
