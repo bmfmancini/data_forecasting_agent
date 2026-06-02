@@ -1,15 +1,22 @@
 from __future__ import annotations
 
+import json
+import os
 from typing import Any
 
 import pandas as pd
 
+from core.logging_config import get_logger
 from schemas import PreflightDecision, PreflightResponse
 
 
-AGGREGATION_OPTIONS = ["sum", "mean", "latest"]
-MISSING_OPTIONS = ["interpolate", "forward-fill", "drop"]
-FREQUENCY_OPTIONS = ["D", "W", "MS", "QS", "YS"]
+logger = get_logger(__name__)
+
+AI_DECIDE = "let AI decide"
+AGGREGATION_OPTIONS = [AI_DECIDE, "sum", "mean", "latest"]
+MISSING_OPTIONS = [AI_DECIDE, "interpolate", "forward-fill", "drop"]
+FREQUENCY_OPTIONS = [AI_DECIDE, "D", "W", "MS", "QS", "YS"]
+SHORT_SERIES_OPTIONS = [AI_DECIDE, "continue", "stop"]
 
 
 def run_preflight_checks(
@@ -35,10 +42,10 @@ def run_preflight_checks(
     warnings: list[str] = []
     decisions: list[PreflightDecision] = []
     defaults: dict[str, Any] = {
-        "duplicate_strategy": "mean",
-        "missing_strategy": "interpolate",
-        "frequency": detected_frequency,
-        "continue_short_series": True,
+        "duplicate_strategy": AI_DECIDE,
+        "missing_strategy": AI_DECIDE,
+        "frequency": AI_DECIDE,
+        "continue_short_series": AI_DECIDE,
     }
 
     if duplicate_ts:
@@ -46,9 +53,9 @@ def run_preflight_checks(
         decisions.append(PreflightDecision(
             key="duplicate_strategy",
             label="Duplicate timestamp handling",
-            message="Choose how repeated timestamps should be combined before forecasting.",
+            message="Choose how repeated timestamps should be combined before forecasting, or let AI decide from the data.",
             options=AGGREGATION_OPTIONS,
-            default="mean",
+            default=AI_DECIDE,
         ))
 
     if missing_values:
@@ -56,9 +63,9 @@ def run_preflight_checks(
         decisions.append(PreflightDecision(
             key="missing_strategy",
             label="Missing value handling",
-            message="Choose how missing values should be handled before modeling.",
+            message="Choose how missing values should be handled before modeling, or let AI decide from the data.",
             options=MISSING_OPTIONS,
-            default="interpolate",
+            default=AI_DECIDE,
         ))
 
     if missing_ts or not is_regular:
@@ -66,9 +73,9 @@ def run_preflight_checks(
         decisions.append(PreflightDecision(
             key="frequency",
             label="Forecast frequency",
-            message="Choose the regular frequency to use for the forecast output.",
+            message="Choose the regular frequency to use for the forecast output, or let AI decide from the timestamp pattern.",
             options=FREQUENCY_OPTIONS,
-            default=detected_frequency if detected_frequency in FREQUENCY_OPTIONS else "MS",
+            default=AI_DECIDE,
         ))
 
     if usable_observations < 20:
@@ -78,9 +85,9 @@ def run_preflight_checks(
         decisions.append(PreflightDecision(
             key="continue_short_series",
             label="Short series confirmation",
-            message="Confirm that you want to continue with a short time series.",
-            options=["continue", "stop"],
-            default="continue",
+            message="Confirm whether to continue with a short time series, or let AI decide.",
+            options=SHORT_SERIES_OPTIONS,
+            default=AI_DECIDE,
         ))
 
     if forecast_horizon > max(usable_observations, 1):
@@ -123,9 +130,18 @@ def prepare_series_frame(
     """Apply preflight choices and return a clean two-column time series frame."""
     options = options or {}
     selected = _selected_frame(df, date_col, value_col)
-    frequency = options.get("frequency") or _infer_frequency(selected.set_index(date_col))
-    duplicate_strategy = options.get("duplicate_strategy", "mean")
-    missing_strategy = options.get("missing_strategy", "interpolate")
+    inferred_frequency = _infer_frequency(selected.set_index(date_col))
+    resolved_options = _resolve_ai_options(
+        selected, date_col, value_col, options, inferred_frequency
+    )
+    if resolved_options.get("continue_short_series") == "stop":
+        raise ValueError("Analysis stopped because the selected series is too short.")
+
+    frequency = _resolve_frequency(resolved_options.get("frequency"), inferred_frequency)
+    duplicate_strategy = _resolve_duplicate_strategy(
+        resolved_options.get("duplicate_strategy"), value_col
+    )
+    missing_strategy = _resolve_missing_strategy(resolved_options.get("missing_strategy"))
 
     series = selected.set_index(date_col)[value_col].sort_index()
 
@@ -175,6 +191,128 @@ def _handle_missing(series: pd.Series, strategy: str) -> pd.Series:
     if strategy == "forward-fill":
         return series.ffill().bfill()
     return series.interpolate(method="time").ffill().bfill()
+
+
+def _resolve_frequency(choice: str | None, inferred_frequency: str) -> str:
+    if not choice or choice == AI_DECIDE:
+        return inferred_frequency
+    return choice
+
+
+def _resolve_missing_strategy(choice: str | None) -> str:
+    if not choice or choice == AI_DECIDE:
+        return "interpolate"
+    return choice
+
+
+def _resolve_duplicate_strategy(choice: str | None, value_col: str) -> str:
+    if choice and choice != AI_DECIDE:
+        return choice
+
+    name = value_col.lower()
+    additive_terms = (
+        "sales", "revenue", "amount", "total", "count", "units", "quantity",
+        "qty", "volume", "demand", "orders", "passengers",
+    )
+    point_in_time_terms = (
+        "inventory", "stock", "balance", "level", "price", "rate", "ratio",
+        "temperature", "temp", "score", "index",
+    )
+
+    if any(term in name for term in additive_terms):
+        return "sum"
+    if any(term in name for term in point_in_time_terms):
+        return "latest"
+    return "mean"
+
+
+def _resolve_ai_options(
+    selected: pd.DataFrame,
+    date_col: str,
+    value_col: str,
+    options: dict,
+    inferred_frequency: str,
+) -> dict:
+    if not any(value == AI_DECIDE for value in options.values()):
+        return options
+
+    heuristic_options = {
+        "duplicate_strategy": _resolve_duplicate_strategy(
+            options.get("duplicate_strategy"), value_col
+        ),
+        "missing_strategy": _resolve_missing_strategy(options.get("missing_strategy")),
+        "frequency": _resolve_frequency(options.get("frequency"), inferred_frequency),
+        "continue_short_series": "continue",
+    }
+
+    try:
+        from langchain_groq import ChatGroq
+    except ImportError:
+        return {**options, **heuristic_options}
+
+    try:
+        groq_api_key = os.getenv("GROQ_API_KEY")
+        if not groq_api_key:
+            return {**options, **heuristic_options}
+
+        series = selected.set_index(date_col)[value_col]
+        payload = {
+            "value_column": value_col,
+            "row_count": len(selected),
+            "usable_observations": int(series.dropna().shape[0]),
+            "duplicate_timestamps": int(selected[date_col].duplicated().sum()),
+            "missing_values": int(series.isna().sum()),
+            "inferred_frequency": inferred_frequency,
+            "requested_ai_decisions": [
+                key for key, value in options.items() if value == AI_DECIDE
+            ],
+        }
+        llm = ChatGroq(
+            model="llama-3.3-70b-versatile",
+            groq_api_key=groq_api_key,
+            temperature=0,
+        )
+        response = llm.invoke(
+            "Choose preprocessing options for a univariate time-series forecast. "
+            "Return only valid JSON with keys duplicate_strategy, missing_strategy, "
+            "frequency, and continue_short_series. Valid duplicate_strategy values: "
+            "sum, mean, latest. Valid missing_strategy values: interpolate, "
+            "forward-fill, drop. Valid frequency values: D, W, MS, QS, YS. "
+            "Valid continue_short_series values: continue, stop. "
+            f"Dataset summary: {json.dumps(payload)}"
+        )
+        content = getattr(response, "content", str(response))
+        llm_options = json.loads(content)
+        return {
+            **options,
+            "duplicate_strategy": _valid_or_default(
+                llm_options.get("duplicate_strategy"),
+                ["sum", "mean", "latest"],
+                heuristic_options["duplicate_strategy"],
+            ),
+            "missing_strategy": _valid_or_default(
+                llm_options.get("missing_strategy"),
+                ["interpolate", "forward-fill", "drop"],
+                heuristic_options["missing_strategy"],
+            ),
+            "frequency": _valid_or_default(
+                llm_options.get("frequency"),
+                ["D", "W", "MS", "QS", "YS"],
+                heuristic_options["frequency"],
+            ),
+            "continue_short_series": _valid_or_default(
+                llm_options.get("continue_short_series"),
+                ["continue", "stop"],
+                heuristic_options["continue_short_series"],
+            ),
+        }
+    except Exception as exc:
+        logger.warning("AI preflight option resolution failed; using heuristics: %s", exc)
+        return {**options, **heuristic_options}
+
+
+def _valid_or_default(value: Any, allowed: list[str], default: str) -> str:
+    return value if value in allowed else default
 
 
 def _infer_frequency(df: pd.DataFrame) -> str:

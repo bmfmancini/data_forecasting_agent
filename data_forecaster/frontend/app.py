@@ -95,9 +95,61 @@ for key in (
     "_job_step",
     "_user_prompt",
     "_preflight_options",
+    "_preflight_options_current",
+    "_preflight_signature",
+    "_show_preflight_fallback",
 ):
     if key not in st.session_state:
         st.session_state[key] = None
+
+
+_dialog = getattr(st, "dialog", None) or getattr(st, "experimental_dialog", None)
+
+
+def _preflight_defaults(preflight: dict) -> dict:
+    return {decision["key"]: decision["default"] for decision in preflight.get("decisions", [])}
+
+
+def _render_preflight_contents(preflight: dict, disabled: bool = False) -> dict:
+    if preflight.get("detected_frequency"):
+        st.caption(f"Selected-series frequency: **{preflight['detected_frequency']}**")
+
+    for message in preflight.get("issues", []):
+        st.info(message)
+    for message in preflight.get("warnings", []):
+        st.warning(message)
+
+    choices = dict(st.session_state.get("_preflight_options_current") or _preflight_defaults(preflight))
+    for decision in preflight.get("decisions", []):
+        key = decision["key"]
+        options = decision["options"]
+        default = choices.get(key, decision["default"])
+        default_index = options.index(default) if default in options else 0
+        choices[key] = st.selectbox(
+            decision["label"],
+            options=options,
+            index=default_index,
+            help=decision["message"],
+            disabled=disabled,
+            key=f"preflight_choice_{key}",
+        )
+    return choices
+
+
+def _render_preflight_dialog(preflight: dict, disabled: bool = False) -> bool:
+    choices = _render_preflight_contents(preflight, disabled=disabled)
+    if st.button("Apply Preflight Choices", disabled=disabled, use_container_width=True):
+        st.session_state._preflight_options_current = choices
+        st.rerun()
+    return False
+
+
+if _dialog:
+    @_dialog("Preflight Review")
+    def _preflight_dialog(preflight: dict, disabled: bool = False) -> None:
+        _render_preflight_dialog(preflight, disabled=disabled)
+else:
+    _preflight_dialog = None
 
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
@@ -221,8 +273,11 @@ with st.sidebar:
     preflight_blocks_run = False
 
     if info and date_col and value_col:
-        st.markdown("---")
-        st.subheader("Preflight Review")
+        signature = f"{info['file_id']}|{date_col}|{value_col}|{forecast_horizon}"
+        if st.session_state._preflight_signature != signature:
+            st.session_state._preflight_signature = signature
+            st.session_state._preflight_options_current = None
+
         try:
             resp = requests.post(
                 f"{BACKEND_URL}/preflight",
@@ -236,36 +291,42 @@ with st.sidebar:
             )
             if resp.status_code == 200:
                 preflight = resp.json()
-                preflight_options = {}
+                decisions = preflight.get("decisions", [])
+                saved_options = st.session_state.get("_preflight_options_current")
+                preflight_options = saved_options or _preflight_defaults(preflight)
 
-                if preflight["status"] == "ready":
-                    st.success("Ready to run.")
-                elif preflight["status"] == "warning":
-                    st.warning("Ready to run with cautions.")
-                else:
-                    st.warning("A few choices are needed before running.")
+                if preflight["status"] != "ready":
+                    st.markdown("---")
+                    st.subheader("Preflight Review")
 
-                if preflight.get("detected_frequency"):
-                    st.caption(f"Selected-series frequency: **{preflight['detected_frequency']}**")
+                    if preflight["status"] == "warning":
+                        st.warning("Ready to run with cautions.")
+                    elif saved_options:
+                        st.success("Preflight choices applied.")
+                    else:
+                        st.warning(f"{len(decisions)} preflight choice(s) need review.")
 
-                for message in preflight.get("issues", []):
-                    st.info(message)
-                for message in preflight.get("warnings", []):
-                    st.warning(message)
+                    if preflight.get("warnings") and not decisions:
+                        st.caption(f"{len(preflight['warnings'])} caution(s) found.")
 
-                for decision in preflight.get("decisions", []):
-                    key = decision["key"]
-                    options = decision["options"]
-                    default = decision["default"]
-                    default_index = options.index(default) if default in options else 0
-                    choice = st.selectbox(
-                        decision["label"],
-                        options=options,
-                        index=default_index,
-                        help=decision["message"],
+                    review_label = "Review Preflight Options" if decisions else "View Preflight Details"
+                    if st.button(
+                        review_label,
                         disabled=is_running,
-                    )
-                    preflight_options[key] = choice
+                        use_container_width=True,
+                    ):
+                        if _preflight_dialog:
+                            _preflight_dialog(preflight, disabled=is_running)
+                        else:
+                            st.session_state["_show_preflight_fallback"] = True
+
+                    if not _preflight_dialog and st.session_state.get("_show_preflight_fallback"):
+                        with st.expander("Preflight Review", expanded=True):
+                            choices = _render_preflight_contents(preflight, disabled=is_running)
+                            if st.button("Apply Preflight Choices", disabled=is_running, use_container_width=True):
+                                st.session_state._preflight_options_current = choices
+                                st.session_state["_show_preflight_fallback"] = False
+                                st.rerun()
 
                 if preflight_options.get("continue_short_series") == "stop":
                     preflight_blocks_run = True
@@ -479,42 +540,6 @@ if result:
         if result.get("chart_model_comparison"):
             fig = go.Figure(result["chart_model_comparison"])
             st.plotly_chart(fig, use_container_width=True)
-
-        st.subheader("Diagnostic Statistics")
-        s = result["statistical"]
-        diag_df = pd.DataFrame({
-            "Metric": [
-                "ADF Statistic", "ADF p-value", "ADF Result",
-                "KPSS Statistic", "KPSS p-value", "KPSS Result",
-                "Trend Detected", "Trend Slope",
-                "Seasonal Period", "Dominant Period",
-            ],
-            "Value": [
-                f"{s['adf_statistic']:.4f}",
-                f"{s['adf_p_value']:.4f}",
-                "Stationary" if s["is_stationary_adf"] else "Non-stationary",
-                f"{s['kpss_statistic']:.4f}",
-                f"{s['kpss_p_value']:.4f}",
-                "Stationary" if s["is_stationary_kpss"] else "Non-stationary",
-                "Yes" if s["has_trend"] else "No",
-                f"{s['trend_slope']:.6f}",
-                str(s["seasonal_period"]) if s.get("seasonal_period") else "None detected",
-                f"{s['dominant_period']:.2f}" if s.get("dominant_period") else "N/A",
-            ],
-            "Interpretation": [
-                "More negative = stronger evidence against unit root",
-                "< 0.05 → reject unit root (stationary)",
-                "ADF conclusion",
-                "Lower = more likely stationary",
-                "< 0.05 → reject stationarity (non-stationary)",
-                "KPSS conclusion",
-                "Significant linear trend present",
-                "Rate of change per period",
-                "Seasonal cycle length (periods per season)",
-                "Strongest frequency from periodogram",
-            ],
-        })
-        st.dataframe(diag_df, use_container_width=True, hide_index=True)
 
         st.subheader("Diagnostic Statistics")
         s = result["statistical"]
