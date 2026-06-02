@@ -8,7 +8,7 @@ from langchain_core.tools import tool
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_ollama import ChatOllama
 
-from core.config import GEMINI_MODEL, USE_OLLAMA, OLLAMA_BASE_URL, OLLAMA_MODEL
+from core.config import GEMINI_MODEL, USE_OLLAMA, OLLAMA_BASE_URL, OLLAMA_MODEL, OLLAMA_API_KEY
 from core.logging_config import get_logger
 from forecasting.arima_model import fit_arima
 from forecasting.holt_winters import fit_holt_winters
@@ -117,7 +117,12 @@ def run_forecasting_agent(
     # ── Run ReAct agent ───────────────────────────────────────────────────────
     tools_list = [run_holt_winters_tool, run_arima_tool, run_sarima_tool, compute_all_metrics_tool]
     if USE_OLLAMA:
-        llm = ChatOllama(model=OLLAMA_MODEL, base_url=OLLAMA_BASE_URL, temperature=0)
+        llm = ChatOllama(
+            model=OLLAMA_MODEL, 
+            base_url=OLLAMA_BASE_URL, 
+            temperature=0,
+            headers={"Authorization": f"Bearer {OLLAMA_API_KEY}"} if OLLAMA_API_KEY else None,
+        )
     else:
         llm = ChatGoogleGenerativeAI(model=GEMINI_MODEL, temperature=0)
 

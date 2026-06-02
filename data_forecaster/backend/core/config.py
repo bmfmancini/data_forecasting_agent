@@ -11,6 +11,7 @@ GEMINI_MAX_TOKENS: int = int(os.getenv("GEMINI_MAX_TOKENS", "8192"))
 USE_OLLAMA: bool = os.getenv("USE_OLLAMA", "False").lower() == "true"
 OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://host.docker.internal:11434")
 OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "llama3")
+OLLAMA_API_KEY: str | None = os.getenv("OLLAMA_API_KEY")
 
 MAX_UPLOAD_MB: int = int(os.getenv("MAX_UPLOAD_MB", "10"))
 MAX_UPLOAD_BYTES: int = MAX_UPLOAD_MB * 1024 * 1024

@@ -1,40 +1,16 @@
 from __future__ import annotations
 
 from typing import Any
-from langchain.agents import AgentExecutor, create_react_agent
-from langchain_core.prompts import PromptTemplate
-from langchain_core.tools import tool
+from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_ollama import ChatOllama
 
-from core.config import GEMINI_MAX_TOKENS, GEMINI_MODEL, GEMINI_TEMPERATURE, USE_OLLAMA, OLLAMA_BASE_URL, OLLAMA_MODEL
+from core.config import GEMINI_MAX_TOKENS, GEMINI_MODEL, GEMINI_TEMPERATURE, USE_OLLAMA, OLLAMA_BASE_URL, OLLAMA_MODEL, OLLAMA_API_KEY
 from core.logging_config import get_logger
 from rag.knowledge_base import RAGKnowledgeBase
 from schemas import ForecastResult, ModelSelectionResult, StatisticalResult, ValidationResult
 
 logger = get_logger(__name__)
-
-_REACT_PROMPT = PromptTemplate.from_template(
-    """Answer the following questions as best you can. You have access to the following tools:
-
-{tools}
-
-Use the following format:
-
-Question: the input question you must answer
-Thought: you should always think about what to do
-Action: the action to take, should be one of [{tool_names}]
-Action Input: the input to the action
-Observation: the result of the action
-... (this Thought/Action/Action Input/Observation can repeat N times)
-Thought: I now know the final answer
-Final Answer: the final answer to the original input question
-
-Begin!
-
-Question: {input}
-Thought: {agent_scratchpad}"""
-)
 
 _REPORT_SECTIONS = [
     "forecasting executive summary and business implications",
@@ -122,30 +98,21 @@ Forecast Results:
   - First 10 forecast values: {forecast_values_sample}
 """
 
-    # ── Tool definitions ──────────────────────────────────────────────────────
-    retrieved_context: list[str] = []
-
-    @tool
-    def retrieve_from_rag(query: str) -> str:
-        """Retrieve relevant methodology documentation from the knowledge base.
-        Provide a clear topic query such as 'ARIMA model assumptions' or
-        'stationarity testing interpretation'."""
+    # ── Pre-fetch RAG context in one batch to reduce LLM hits ────────────────
+    methodology_context = ""
+    for section in _REPORT_SECTIONS:
         try:
-            chunks = rag_kb.retrieve(query, k=2)
-            text = "\n---\n".join(chunks)
-            retrieved_context.append(text)
-            return text
+            chunks = rag_kb.retrieve(section, k=2)
+            methodology_context += f"\n--- Methodology for {section} ---\n" + "\n".join(chunks)
         except Exception as exc:
-            logger.warning("RAG retrieval failed for query '%s': %s", query, exc)
-            return f"RAG retrieval unavailable: {exc}"
+            logger.warning("RAG retrieval failed for section '%s': %s", section, exc)
 
-    # ── Run ReAct agent ───────────────────────────────────────────────────────
-    tools_list = [retrieve_from_rag]
     if USE_OLLAMA:
         llm = ChatOllama(
             model=OLLAMA_MODEL,
             base_url=OLLAMA_BASE_URL,
             temperature=GEMINI_TEMPERATURE,
+            headers={"Authorization": f"Bearer {OLLAMA_API_KEY}"} if OLLAMA_API_KEY else None,
         )
     else:
         llm = ChatGoogleGenerativeAI(
@@ -154,14 +121,7 @@ Forecast Results:
             max_output_tokens=GEMINI_MAX_TOKENS,
         )
 
-    agent = create_react_agent(llm, tools_list, _REACT_PROMPT)
-    executor = AgentExecutor(
-        agent=agent, tools=tools_list, verbose=False, return_intermediate_steps=True,
-        max_iterations=15, handle_parsing_errors=True, early_stopping_method="generate",
-    )
-
-    rag_queries = " ".join(f"'{q}'," for q in _REPORT_SECTIONS)
-    reasoning_steps: list[dict[str, Any]] = []
+    reasoning_steps: list[dict[str, Any]] = [{"thought": "Pre-retrieving methodology from RAG...", "observation": "Success"}]
 
     extra_instructions = (
         f"\n\nADDITIONAL USER INSTRUCTIONS:\n{user_prompt.strip()}\n"
@@ -176,55 +136,58 @@ Forecast Results:
         if auto_choices else ""
     )
 
+    prompt_template = ChatPromptTemplate.from_messages([
+        ("system", (
+            "You are a senior data scientist writing a formal forecast report for a C-suite executive (CEO level). "
+            "The report must be clear, authoritative, and business-oriented. "
+            "Use the provided methodology context to ensure analytical rigour."
+        )),
+        ("human", (
+            "DATA CONTEXT:\n{data_context}\n\n"
+            "METHODOLOGY CONTEXT:\n{rag_context}\n\n"
+            "{ai_logic_instruction}\n"
+            "Write the complete report with EXACTLY these 8 sections using Markdown headings (## level):\n\n"
+            "## 1. Executive Summary\n"
+            "A concise summary. State the bottom line: what the data shows now, "
+            "the headline forecast direction and magnitude, model accuracy, and one key risk or caveat.\n\n"
+            "## 2. What We Currently See — State of the Data\n"
+            "Describe the current state and historical pattern of the time series in plain business language. "
+            "Cover: overall trend direction and strength, whether seasonality exists, "
+            "data quality, and recent trajectory. Reference specific numbers.\n\n"
+            "## 3. Where We Think We Are Going — Forecast Outlook\n"
+            "Provide a narrative outlook. State projected first/last values, % change, "
+            "and describe uncertainty bands.\n\n"
+            "## 4. Techniques Applied\n"
+            "Explain cleaning, stationarity tests (ADF/KPSS), STL, and model selection using the Methodology Context.\n\n"
+            "## 5. Assumptions Made\n"
+            "State assumptions regarding stationarity, seasonality, and persistence.\n\n"
+            "## 6. Model Performance & Accuracy\n"
+            "Interpret error metrics (RMSE, MAE, MAPE) for an executive reader.\n\n"
+            "## 7. Risks & Limitations\n"
+            "Cover structural break risks and model-specific constraints.\n\n"
+            "## 8. Recommendations\n"
+            "Provide actionable recommendations based on results.\n\n"
+            "Write each section fully. Do not use placeholder text."
+            "{extra_instructions}"
+        ))
+    ])
+
     try:
-        result = executor.invoke({
-            "input": (
-                "You are a senior data scientist writing a formal forecast report for a C-suite executive (CEO level). "
-                "The report must be clear, authoritative, and business-oriented — avoid raw jargon, but do not hide analytical rigour. "
-                "CRITICAL: Use retrieve_from_rag to support your methodology explanations. Do not guess.\n\n"
-                f"DATA CONTEXT:\n{analysis_context}\n\n"
-                f"First, use the RAG tool to research relevant methodology topics: {rag_queries}{ai_logic_instruction}\n\n"
-                "Then write the complete report with EXACTLY these 8 sections using Markdown headings (## level):\n\n"
-                "## 1. Executive Summary\n"
-                "A concise summary. State the bottom line: what the data shows now, "
-                "the headline forecast direction and magnitude, model accuracy, and one key risk or caveat.\n\n"
-                "## 2. What We Currently See — State of the Data\n"
-                "Describe the current state and historical pattern of the time series in plain business language. "
-                "Cover: overall trend direction and strength, whether seasonality exists and what cycle length, "
-                "data quality (completeness, regularity, any anomalies), and what the recent trajectory looks like. "
-                "Reference specific numbers from the analysis.\n\n"
-                "## 3. Where We Think We Are Going — Forecast Outlook\n"
-                "Provide a narrative outlook covering the full forecast horizon. "
-                "State the projected first and last forecast values, the overall projected change (with percentage), "
-                "and describe the widening uncertainty bands as the horizon extends. "
-                "Characterise the confidence level in the forecast based on MAPE.\n\n"
-                "## 4. Techniques Applied\n"
-                "Explain the data cleaning, stationarity tests (ADF/KPSS), STL decomposition, and model selection. "
-                "Explain why the chosen model suits this specific data. Use RAG context.\n\n"
-                "## 5. Assumptions Made\n"
-                "State assumptions regarding stationarity, seasonality, and the persistence of historical patterns.\n\n"
-                "## 6. Model Performance & Accuracy\n"
-                "Interpret error metrics (RMSE, MAE, MAPE) for an executive reader. Compare against standard benchmarks.\n\n"
-                "## 7. Risks & Limitations\n"
-                "Cover structural break risks, forecast degradation, and model-specific constraints.\n\n"
-                "## 8. Recommendations\n"
-                "Provide actionable recommendations based on the trend and forecast results.\n\n"
-                "Write each section fully. Be specific — use the actual numbers from the analysis data above.\n"
-                f"Do not use placeholder text. The report must be ready to present to an executive audience."
-                f"{extra_instructions}"
-            )
+        # Invoke the LLM once with all the context needed
+        chain = prompt_template | llm
+        response = chain.invoke({
+            "data_context": analysis_context,
+            "rag_context": methodology_context,
+            "ai_logic_instruction": ai_logic_instruction,
+            "extra_instructions": extra_instructions
         })
-        report = str(result.get("output", ""))
-        reasoning_steps = [
-            {"thought": a.log, "observation": str(o)} for a, o in result.get("intermediate_steps", [])
-        ]
+        report = response.content
+        reasoning_steps.append({"thought": "Generating final report in a single pass...", "observation": "Complete"})
+
     except Exception as exc:
         logger.warning("Report agent LLM call failed: %s — generating fallback report.", exc)
         report = _fallback_report(validation, statistical, model_selection, forecast)
-        reasoning_steps = [{
-            "thought": f"Report agent failed: {str(exc)}",
-            "observation": "Generating fallback report and ending trace."
-        }]
+        reasoning_steps.append({"thought": f"Error: {exc}", "observation": "Fallback generated"})
 
     if not report.strip():
         report = _fallback_report(validation, statistical, model_selection, forecast)

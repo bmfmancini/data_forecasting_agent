@@ -7,7 +7,7 @@ from langchain_core.tools import tool
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_ollama import ChatOllama
 
-from core.config import GEMINI_MODEL, USE_OLLAMA, OLLAMA_BASE_URL, OLLAMA_MODEL
+from core.config import GEMINI_MODEL, USE_OLLAMA, OLLAMA_BASE_URL, OLLAMA_MODEL, OLLAMA_API_KEY
 from core.logging_config import get_logger
 from schemas import ModelSelectionResult, StatisticalResult
 
@@ -115,7 +115,12 @@ def run_model_selection_agent(stat_result: StatisticalResult) -> ModelSelectionR
     ]
 
     if USE_OLLAMA:
-        llm = ChatOllama(model=OLLAMA_MODEL, base_url=OLLAMA_BASE_URL, temperature=0)
+        llm = ChatOllama(
+            model=OLLAMA_MODEL, 
+            base_url=OLLAMA_BASE_URL, 
+            temperature=0,
+            headers={"Authorization": f"Bearer {OLLAMA_API_KEY}"} if OLLAMA_API_KEY else None,
+        )
     else:
         llm = ChatGoogleGenerativeAI(model=GEMINI_MODEL, temperature=0)
 

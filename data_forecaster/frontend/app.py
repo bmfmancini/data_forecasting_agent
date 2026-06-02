@@ -221,7 +221,7 @@ with st.sidebar:
                     else:
                         st.error(resp.json().get("detail", "Demo upload failed."))
                 except Exception as exc:
-                    st.error(f"Demo load error: {exc}")
+                    st.error(f"🌐 Backend Connection Error: {exc}. Verify BACKEND_URL and service names in docker-compose.")
 
     if not demo_clicked:
         st.session_state["_demo_loaded"] = False
