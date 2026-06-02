@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from contextlib import asynccontextmanager
+from typing import Any, AsyncIterator, cast
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,15 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import core.config as settings
 from core.logging_config import get_logger
 from orchestrator import run_pipeline
-from schemas import (
-    AnalysisResponse,
-    AnalyzeRequest,
-    JobStatusResponse,
-    JobSubmitResponse,
-    PreflightRequest,
-    PreflightResponse,
-    UploadResponse,
-)
+from schemas import AnalysisResponse, AnalyzeRequest, JobStatusResponse, JobSubmitResponse, UploadResponse, PreflightResponse
 from utils.data_parser import parse_upload
 from utils.preflight import run_preflight_checks
 
@@ -26,12 +19,12 @@ logger = get_logger(__name__)
 
 # ── In-memory stores ──────────────────────────────────────────────────────────
 # { file_id: { df, date_col, value_col, freq, filename } }
-_file_store: dict[str, dict] = {}
+_file_store: dict[str, dict[str, Any]] = {}
 # { job_id: { status, progress, step, request, result, error } }
-_job_store: dict[str, dict] = {}
+_job_store: dict[str, dict[str, Any]] = {}
 
 # ── Job queue & worker ────────────────────────────────────────────────────────
-_job_queue: asyncio.Queue | None = None
+_job_queue: asyncio.Queue[str] = cast(asyncio.Queue, None)
 
 
 def _update_job_progress(job_id: str, pct: int, step: str) -> None:
@@ -42,19 +35,13 @@ def _update_job_progress(job_id: str, pct: int, step: str) -> None:
         job["step"] = step
 
 
-def _dump_model(model: AnalysisResponse) -> dict:
-    if hasattr(model, "model_dump"):
-        return model.model_dump()
-    return model.dict()
-
-
 async def _job_worker() -> None:
     """Processes one job at a time from the FIFO queue."""
     while True:
-        job_id: str = await _job_queue.get()  # type: ignore[union-attr]
+        job_id: str = await _job_queue.get()
         job = _job_store.get(job_id)
         if job is None:
-            _job_queue.task_done()  # type: ignore[union-attr]
+            _job_queue.task_done()
             continue
 
         job["status"] = "running"
@@ -65,7 +52,7 @@ async def _job_worker() -> None:
             job["status"] = "error"
             job["step"] = "Error: uploaded file not found."
             job["error"] = f"File ID '{req['file_id']}' not found in store."
-            _job_queue.task_done()  # type: ignore[union-attr]
+            _job_queue.task_done()
             continue
 
         def _run_pipeline_sync() -> AnalysisResponse:
@@ -88,18 +75,18 @@ async def _job_worker() -> None:
             job["status"] = "done"
             job["progress"] = 100
             job["step"] = "Analysis complete."
-            job["result"] = _dump_model(result)
+            job["result"] = result.model_dump()
         except Exception as exc:
             logger.exception("Pipeline failed for job_id=%s file_id=%s", job_id, req["file_id"])
             job["status"] = "error"
             job["step"] = "Pipeline failed."
             job["error"] = str(exc)
         finally:
-            _job_queue.task_done()  # type: ignore[union-attr]
+            _job_queue.task_done()
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     global _job_queue
     _job_queue = asyncio.Queue()
     worker_task = asyncio.create_task(_job_worker())
@@ -124,7 +111,7 @@ app.add_middleware(
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @app.get("/health")
-def health() -> dict:
+def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
@@ -195,6 +182,24 @@ async def upload_file(file: UploadFile = File(...)) -> UploadResponse:
     )
 
 
+@app.post("/preflight", response_model=PreflightResponse)
+async def preflight_check(request: AnalyzeRequest) -> PreflightResponse:
+    stored = _file_store.get(request.file_id)
+    if not stored:
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    date_col = request.date_col or stored["date_col"]
+    value_col = request.value_col or stored["value_col"]
+    
+    try:
+        return run_preflight_checks(
+            stored["df"], date_col, value_col, request.forecast_horizon
+        )
+    except Exception as exc:
+        logger.exception("Preflight failed")
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 @app.post("/analyze", response_model=JobSubmitResponse, status_code=202)
 def analyze(request: AnalyzeRequest) -> JobSubmitResponse:
     logger.info(
@@ -231,28 +236,6 @@ def analyze(request: AnalyzeRequest) -> JobSubmitResponse:
     _job_queue.put_nowait(job_id)
     logger.info("Job enqueued: job_id=%s file_id=%s", job_id, request.file_id)
     return JobSubmitResponse(job_id=job_id, status="pending")
-
-
-@app.post("/preflight", response_model=PreflightResponse)
-def preflight(request: PreflightRequest) -> PreflightResponse:
-    logger.info(
-        "POST /preflight  file_id=%s date_col=%s value_col=%s horizon=%d",
-        request.file_id, request.date_col, request.value_col, request.forecast_horizon,
-    )
-
-    stored = _file_store.get(request.file_id)
-    if stored is None:
-        raise HTTPException(status_code=404, detail=f"File ID '{request.file_id}' not found.")
-
-    try:
-        return run_preflight_checks(
-            stored["df"],
-            request.date_col,
-            request.value_col,
-            request.forecast_horizon,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @app.get("/jobs/{job_id}", response_model=JobStatusResponse)

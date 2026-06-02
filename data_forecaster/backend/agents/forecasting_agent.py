@@ -44,7 +44,7 @@ def run_forecasting_agent(
     stat_result: StatisticalResult,
     forecast_horizon: int,
     freq: str,
-) -> tuple[ForecastResult, dict]:
+) -> tuple[ForecastResult, dict[str, dict[str, float]]]:
     """Run all three forecasting models, return ForecastResult for the selected model
     and an all-metrics dict for the comparison chart.
 
@@ -53,7 +53,7 @@ def run_forecasting_agent(
         all_metrics_dict: {"ARIMA": {"RMSE": x, "MAE": y, "MAPE": z}, ...}
     """
     seasonal_period = stat_result.seasonal_period or 12
-    results_store: dict[str, dict] = {}
+    results_store: dict[str, dict[str, Any]] = {}
 
     # ── Tool definitions ──────────────────────────────────────────────────────
 

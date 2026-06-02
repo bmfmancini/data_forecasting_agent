@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Optional
+import warnings
+from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
@@ -14,7 +15,7 @@ from core.logging_config import get_logger
 logger = get_logger(__name__)
 
 
-def run_adf_test(series: pd.Series) -> dict:
+def run_adf_test(series: pd.Series) -> dict[str, Any]:
     """Augmented Dickey-Fuller test for stationarity.
 
     Returns:
@@ -45,14 +46,13 @@ def run_adf_test(series: pd.Series) -> dict:
     }
 
 
-def run_kpss_test(series: pd.Series) -> dict:
+def run_kpss_test(series: pd.Series) -> dict[str, Any]:
     """KPSS test for stationarity (null = stationary).
 
     Returns:
         statistic, p_value, is_stationary, interpretation
     """
     values = series.dropna().astype(float).values
-    import warnings
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         result = kpss(values, regression="c", nlags="auto")
@@ -79,7 +79,7 @@ def run_kpss_test(series: pd.Series) -> dict:
     }
 
 
-def run_stl_decomposition(series: pd.Series, period: int = 12) -> dict:
+def run_stl_decomposition(series: pd.Series, period: int = 12) -> dict[str, list[float]]:
     """STL decomposition into trend, seasonal, and residual components.
 
     Returns:
@@ -102,7 +102,7 @@ def run_stl_decomposition(series: pd.Series, period: int = 12) -> dict:
     }
 
 
-def compute_acf_pacf(series: pd.Series, lags: int = 40) -> dict:
+def compute_acf_pacf(series: pd.Series, lags: int = 40) -> dict[str, list[float] | list[int]]:
     """Compute ACF and PACF values.
 
     Returns:
@@ -122,7 +122,7 @@ def compute_acf_pacf(series: pd.Series, lags: int = 40) -> dict:
     }
 
 
-def run_periodogram(series: pd.Series) -> dict:
+def run_periodogram(series: pd.Series) -> dict[str, Any]:
     """Compute periodogram and identify dominant period.
 
     Returns:
@@ -147,7 +147,7 @@ def run_periodogram(series: pd.Series) -> dict:
     }
 
 
-def detect_trend(series: pd.Series) -> dict:
+def detect_trend(series: pd.Series) -> dict[str, Any]:
     """Detect linear trend using OLS regression on time index.
 
     Returns:

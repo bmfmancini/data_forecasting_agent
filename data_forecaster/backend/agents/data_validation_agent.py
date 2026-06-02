@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import Any
 import pandas as pd
 from langchain.agents import AgentExecutor, create_react_agent
 from langchain_core.prompts import PromptTemplate
@@ -36,7 +37,7 @@ Thought:{agent_scratchpad}"""
 
 
 def run_validation_agent(
-    df: pd.DataFrame, date_col: str, value_col: str, freq: str
+    df: pd.DataFrame, date_col: str, value_col: str, freq: str, preflight_options: dict[str, Any] | None = None
 ) -> ValidationResult:
     """Run the data validation ReAct agent and return a ValidationResult."""
 
@@ -129,13 +130,20 @@ def run_validation_agent(
         max_iterations=6, handle_parsing_errors=True,
     )
 
+    auto_mode = any(v == "Let AI Decide" for v in (preflight_options or {}).values())
+    ai_instruction = (
+        "\nNOTE: The user has selected 'Let AI Decide' for data quality remediation. "
+        "Evaluate if the current state of the data is optimal for forecasting and "
+        "specifically justify why the applied cleaning steps are the best path forward."
+        if auto_mode else ""
+    )
+
     try:
         result = executor.invoke({
             "input": (
                 "Use all available tools to thoroughly validate this time series dataset. "
-                "Check for missing timestamps, duplicates, missing values, irregular intervals, "
-                "detect the frequency, and assess the dataset size. "
-                "Provide a concise summary of the data quality."
+                "Check for missing timestamps, duplicates, missing values, irregular intervals, frequency, and size. "
+                f"Provide a concise summary of the data quality.{ai_instruction}"
             )
         })
         summary = str(result.get("output", "Validation complete."))

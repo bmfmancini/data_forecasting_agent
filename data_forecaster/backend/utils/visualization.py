@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import json
 from io import BytesIO
-from typing import Optional
+from typing import Any, Optional
 
 import matplotlib
 matplotlib.use("Agg")
@@ -19,7 +19,7 @@ from schemas import ForecastResult
 logger = get_logger(__name__)
 
 
-def plot_historical(series: pd.Series) -> dict:
+def plot_historical(series: pd.Series) -> dict[str, Any]:
     """Line chart of the historical time series."""
     dates = _index_to_str(series)
     fig = go.Figure(
@@ -38,7 +38,7 @@ def plot_historical(series: pd.Series) -> dict:
     return _fig_to_dict(fig)
 
 
-def plot_stl(series: pd.Series, stl_data: dict, seasonal_period: int) -> dict:
+def plot_stl(series: pd.Series, stl_data: dict[str, list[float]], seasonal_period: int) -> dict[str, Any]:
     """4-panel STL decomposition chart: observed, trend, seasonal, residual."""
     dates = _index_to_str(series)
     fig = make_subplots(
@@ -97,7 +97,7 @@ def plot_acf_pacf(acf_values: list, pacf_values: list, lags: list) -> str:
     return img_b64
 
 
-def plot_forecast(series: pd.Series, forecast_result: ForecastResult) -> dict:
+def plot_forecast(series: pd.Series, forecast_result: ForecastResult) -> dict[str, Any]:
     """Historical series + forecast line + 95% CI ribbon."""
     hist_dates = _index_to_str(series)
     fc_dates = forecast_result.forecast_dates or [str(i) for i in range(len(forecast_result.forecast))]
@@ -140,7 +140,7 @@ def plot_forecast(series: pd.Series, forecast_result: ForecastResult) -> dict:
     return _fig_to_dict(fig)
 
 
-def plot_model_comparison(all_metrics: dict) -> dict:
+def plot_model_comparison(all_metrics: dict[str, dict[str, float]]) -> dict[str, Any]:
     """Grouped bar chart comparing RMSE, MAE, MAPE across all fitted models."""
     if not all_metrics:
         return {}
@@ -174,5 +174,5 @@ def _index_to_str(series: pd.Series) -> list[str]:
         return [str(i) for i in series.index]
 
 
-def _fig_to_dict(fig: go.Figure) -> dict:
+def _fig_to_dict(fig: go.Figure) -> dict[str, Any]:
     return json.loads(fig.to_json())

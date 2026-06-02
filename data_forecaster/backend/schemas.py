@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from typing import Optional
-from pydantic import BaseModel
+from typing import Any, Optional
+from pydantic import BaseModel, Field
 
 
 class UploadResponse(BaseModel):
@@ -14,30 +14,13 @@ class UploadResponse(BaseModel):
     detected_frequency: Optional[str] = None
 
 
-class AnalyzeRequest(BaseModel):
-    file_id: str
-    forecast_horizon: int
-    date_col: Optional[str] = None
-    value_col: Optional[str] = None
-    forced_model: Optional[str] = None  # "Holt-Winters" | "ARIMA" | "SARIMA" | None (auto)
-    user_prompt: Optional[str] = None   # Extra instructions appended to the report prompt
-    preflight_options: Optional[dict] = None
-
-
-class PreflightRequest(BaseModel):
-    file_id: str
-    date_col: str
-    value_col: str
-    forecast_horizon: int
-
-
 class PreflightDecision(BaseModel):
     key: str
     label: str
     message: str
     options: list[str]
-    default: str
-    required: bool = True
+    default: Any
+    required: bool = False
 
 
 class PreflightResponse(BaseModel):
@@ -52,7 +35,17 @@ class PreflightResponse(BaseModel):
     issues: list[str]
     warnings: list[str]
     decisions: list[PreflightDecision]
-    defaults: dict
+    defaults: dict[str, Any]
+
+
+class AnalyzeRequest(BaseModel):
+    file_id: str
+    forecast_horizon: int
+    date_col: Optional[str] = None
+    value_col: Optional[str] = None
+    forced_model: Optional[str] = None  # "Holt-Winters" | "ARIMA" | "SARIMA" | None (auto)
+    user_prompt: Optional[str] = None   # Extra instructions appended to the report prompt
+    preflight_options: Optional[dict[str, Any]] = Field(default_factory=dict)
 
 
 class ValidationResult(BaseModel):

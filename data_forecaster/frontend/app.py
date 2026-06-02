@@ -4,6 +4,7 @@ import base64
 import json
 import os
 import re
+from typing import Any
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -106,11 +107,11 @@ for key in (
 _dialog = getattr(st, "dialog", None) or getattr(st, "experimental_dialog", None)
 
 
-def _preflight_defaults(preflight: dict) -> dict:
+def _preflight_defaults(preflight: dict[str, Any]) -> dict[str, Any]:
     return {decision["key"]: decision["default"] for decision in preflight.get("decisions", [])}
 
 
-def _render_preflight_contents(preflight: dict, disabled: bool = False) -> dict:
+def _render_preflight_contents(preflight: dict[str, Any], disabled: bool = False) -> dict[str, Any]:
     if preflight.get("detected_frequency"):
         st.caption(f"Selected-series frequency: **{preflight['detected_frequency']}**")
 
@@ -136,7 +137,7 @@ def _render_preflight_contents(preflight: dict, disabled: bool = False) -> dict:
     return choices
 
 
-def _render_preflight_dialog(preflight: dict, disabled: bool = False) -> bool:
+def _render_preflight_dialog(preflight: dict[str, Any], disabled: bool = False) -> bool:
     choices = _render_preflight_contents(preflight, disabled=disabled)
     if st.button("Apply Preflight Choices", disabled=disabled, use_container_width=True):
         st.session_state._preflight_options_current = choices
@@ -146,7 +147,7 @@ def _render_preflight_dialog(preflight: dict, disabled: bool = False) -> bool:
 
 if _dialog:
     @_dialog("Preflight Review")
-    def _preflight_dialog(preflight: dict, disabled: bool = False) -> None:
+    def _preflight_dialog(preflight: dict[str, Any], disabled: bool = False) -> None:
         _render_preflight_dialog(preflight, disabled=disabled)
 else:
     _preflight_dialog = None

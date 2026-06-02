@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import Any
 from langchain.agents import AgentExecutor, create_react_agent
 from langchain_core.prompts import PromptTemplate
 from langchain_core.tools import tool
@@ -52,6 +53,7 @@ def run_report_agent(
     forecast: ForecastResult,
     rag_kb: RAGKnowledgeBase,
     user_prompt: str | None = None,
+    preflight_options: dict[str, Any] | None = None,
 ) -> str:
     """Use the LLM with RAG context to write a 6-section analyst report."""
 
@@ -75,6 +77,12 @@ def run_report_agent(
     else:
         trend_direction = "flat"
 
+    # Identify where the AI was asked to make the decision
+    auto_choices = [k for k, v in (preflight_options or {}).items() if v == "Let AI Decide"]
+    ai_decision_context = ""
+    if auto_choices:
+        ai_decision_context = f"\nAI-DRIVEN REMEDIATION ACTIVE FOR: {', '.join(auto_choices)}\n"
+
     analysis_context = f"""
 ANALYSIS RESULTS SUMMARY
 =========================
@@ -87,6 +95,7 @@ Data Quality:
   - Detected frequency: {validation.frequency}
   - Issues: {'; '.join(validation.issues) if validation.issues else 'None'}
   - Validation summary: {validation.summary}
+  {ai_decision_context}
 
 Statistical Analysis:
   - ADF stationary: {statistical.is_stationary_adf} (p={statistical.adf_p_value:.4f}, statistic={statistical.adf_statistic:.4f})
@@ -157,6 +166,13 @@ Forecast Results:
         if user_prompt and user_prompt.strip() else ""
     )
 
+    ai_logic_instruction = (
+        "\nWhere 'Let AI Decide' was selected, you must assume full responsibility for the decision. "
+        "Explain the statistical rationale for why the chosen data treatment (aggregation, interpolation, etc.) "
+        "was the most robust choice to preserve signal and minimize forecast bias."
+        if auto_choices else ""
+    )
+
     try:
         result = executor.invoke({
             "input": (
@@ -164,7 +180,7 @@ Forecast Results:
                 "The report must be clear, authoritative, and business-oriented — avoid raw jargon, but do not hide analytical rigour. "
                 "Use the retrieve_from_rag tool to gather methodology context before writing each relevant section.\n\n"
                 f"Here is the full analysis data:\n{analysis_context}\n\n"
-                f"First, call retrieve_from_rag for each of these topics: {rag_queries}\n\n"
+                f"First, call retrieve_from_rag for each of these topics: {rag_queries}{ai_logic_instruction}\n\n"
                 "Then write the complete report with EXACTLY these 8 sections using Markdown headings (## level):\n\n"
                 "## 1. Executive Summary\n"
                 "A concise 3-5 sentence brief suitable for a CEO. State the bottom line: what the data shows now, "

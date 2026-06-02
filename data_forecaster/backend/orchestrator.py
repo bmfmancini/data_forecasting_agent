@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import time
-from typing import Callable
+from typing import Any, Callable
 import pandas as pd
 
 from agents.data_validation_agent import run_validation_agent
@@ -11,7 +10,7 @@ from agents.report_generation_agent import run_report_agent
 from agents.statistical_analysis_agent import run_statistical_agent
 from core.logging_config import get_logger
 from rag.knowledge_base import RAGKnowledgeBase
-from schemas import AnalysisResponse
+from schemas import AnalysisResponse, ModelSelectionResult
 from utils.preflight import prepare_series_frame
 from utils.statistical import compute_acf_pacf, run_stl_decomposition
 from utils.visualization import (
@@ -45,7 +44,7 @@ def run_pipeline(
     forecast_horizon: int,
     forced_model: str | None = None,
     user_prompt: str | None = None,
-    preflight_options: dict | None = None,
+    preflight_options: dict[str, Any] | None = None,
     chroma_persist_dir: str = "./chroma_db",
     progress_callback: Callable[[int, str], None] | None = None,
 ) -> AnalysisResponse:
@@ -70,13 +69,12 @@ def run_pipeline(
     # ── Agent 1: Data Validation ──────────────────────────────────────────────
     logger.info("Agent 1: Data Validation")
     _progress(5, "Validating data…")
-    validation_result = run_validation_agent(df, date_col, value_col, freq)
+    validation_result = run_validation_agent(df, date_col, value_col, freq, preflight_options=preflight_options)
     _progress(15, "Data validation complete")
 
     # ── Agent 2: Statistical Analysis ────────────────────────────────────────
     logger.info("Agent 2: Statistical Analysis")
     _progress(20, "Running statistical analysis…")
-    time.sleep(3)
     stat_result = run_statistical_agent(series, seasonal_period)
     _progress(35, "Statistical analysis complete")
 
@@ -84,7 +82,6 @@ def run_pipeline(
     if forced_model:
         logger.info("Agent 3: Model Selection skipped — user forced model: %s", forced_model)
         _progress(40, f"Model manually set to {forced_model}")
-        from schemas import ModelSelectionResult
         model_selection = ModelSelectionResult(
             selected_model=forced_model,
             explanation=f"Model manually selected by user: {forced_model}.",
@@ -95,14 +92,12 @@ def run_pipeline(
     else:
         logger.info("Agent 3: Model Selection")
         _progress(40, "Selecting forecasting model…")
-        time.sleep(3)
         model_selection = run_model_selection_agent(stat_result)
     _progress(55, f"Model selected: {model_selection.selected_model}")
 
     # ── Agent 4: Forecasting ──────────────────────────────────────────────────
     logger.info("Agent 4: Forecasting")
     _progress(60, "Running forecast…")
-    time.sleep(3)
     forecast_result, all_metrics = run_forecasting_agent(
         series, model_selection, stat_result, forecast_horizon, freq
     )
@@ -111,9 +106,16 @@ def run_pipeline(
     # ── Agent 5: Report Generation ────────────────────────────────────────────
     logger.info("Agent 5: Report Generation")
     _progress(80, "Generating report…")
-    time.sleep(5)
     rag_kb = get_rag_kb(chroma_persist_dir)
-    report = run_report_agent(validation_result, stat_result, model_selection, forecast_result, rag_kb, user_prompt=user_prompt)
+    report = run_report_agent(
+        validation_result,
+        stat_result,
+        model_selection,
+        forecast_result,
+        rag_kb,
+        user_prompt=user_prompt,
+        preflight_options=preflight_options,
+    )
     _progress(92, "Report complete")
 
     # ── Visualizations ────────────────────────────────────────────────────────
