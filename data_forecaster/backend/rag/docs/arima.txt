@@ -1,0 +1,51 @@
+ARIMA (AutoRegressive Integrated Moving Average) Methodology
+
+ARIMA is one of the most widely used statistical models for time series forecasting. It generalises
+two simpler models — AR (AutoRegressive) and MA (Moving Average) — and adds differencing to handle
+non-stationary series.
+
+Model Notation: ARIMA(p, d, q)
+
+- p (AutoRegressive order): the number of lagged values of the series included as predictors.
+  Chosen by inspecting the Partial AutoCorrelation Function (PACF). Significant spikes at lags 1..p
+  with a sharp cut-off suggest an AR(p) component.
+
+- d (Integration order): the number of times the series must be differenced to achieve stationarity.
+  A series is stationary when its mean, variance, and autocorrelation structure are constant over
+  time. The Augmented Dickey-Fuller (ADF) test and KPSS test are the standard tools to determine d.
+  Typically d=0 (already stationary), d=1 (first difference), or d=2 (second difference).
+
+- q (Moving Average order): the number of lagged forecast errors included in the model.
+  Chosen by inspecting the AutoCorrelation Function (ACF). Significant spikes at lags 1..q with a
+  sharp cut-off suggest an MA(q) component.
+
+Model Assumptions:
+1. Residuals should be white noise (zero mean, constant variance, no autocorrelation).
+2. The series must be made stationary before fitting (handled by differencing d times).
+3. ARIMA does not model seasonality — use SARIMA for seasonal data.
+
+Parameter Selection:
+Modern practice uses pmdarima's auto_arima() function, which performs a stepwise search over a grid
+of (p, d, q) values and selects the combination that minimises the AIC (Akaike Information Criterion)
+or BIC (Bayesian Information Criterion). AIC penalises model complexity to prevent overfitting.
+
+When to use ARIMA:
+- Series with no clear seasonality.
+- Short to medium forecast horizons (days to weeks).
+- After differencing confirms non-stationarity can be removed.
+- When ADF test rejects the unit-root hypothesis after d differencing steps.
+
+Confidence Intervals:
+ARIMA produces prediction intervals that widen as the forecast horizon increases, reflecting
+accumulating uncertainty. 95% intervals are standard.
+
+Evaluation Metrics:
+- RMSE (Root Mean Squared Error): penalises large errors heavily.
+- MAE (Mean Absolute Error): average absolute deviation; interpretable in original units.
+- MAPE (Mean Absolute Percentage Error): scale-independent; suitable for comparing across datasets.
+
+Limitations:
+- Assumes linear relationships between past and future values.
+- Sensitive to outliers, which inflate error variance.
+- Does not capture seasonal cycles — SARIMA or Holt-Winters should be used instead.
+- Requires a sufficient history (at least 30–50 observations recommended).

@@ -1,0 +1,66 @@
+Forecasting Best Practices
+
+1. Understand the Data Before Modelling
+   Always begin with exploratory data analysis (EDA):
+   - Plot the raw series to identify trend, seasonality, and outliers.
+   - Compute descriptive statistics (mean, std, min, max, skewness).
+   - Check for missing values and irregular time intervals.
+   - Inspect the ACF and PACF to identify autocorrelation structure.
+
+2. Validate Data Quality First
+   Forecasting models amplify data quality problems. Before fitting:
+   - Ensure timestamps are unique and regularly spaced.
+   - Handle missing values (forward-fill, interpolation, or explicit exclusion).
+   - Flag and investigate outliers — do not remove without justification.
+   - Confirm the series has sufficient history (≥ 2 seasonal cycles for seasonal models).
+
+3. Test for Stationarity
+   Most classical models (ARIMA, SARIMA) require a stationary series:
+   - Use the ADF test (null hypothesis: unit root present → non-stationary).
+   - Use the KPSS test (null hypothesis: series is stationary).
+   - Apply differencing until stationarity is achieved; record the order d.
+   - Holt-Winters does not require stationarity but still benefits from stable variance.
+
+4. Decompose the Series
+   STL (Seasonal and Trend decomposition using Loess) separates a series into:
+   - Trend: long-term direction of change.
+   - Seasonal: repeating periodic patterns.
+   - Residual: irregular noise after removing trend and seasonality.
+   Use decomposition to confirm which components are present before model selection.
+
+5. Select the Appropriate Model
+   - No seasonality, stationary after differencing → ARIMA
+   - Clear seasonality (confirmed by periodogram and ACF) → SARIMA or Holt-Winters
+   - Short series with limited history → Holt-Winters (fewer parameters)
+   - Long series with complex autocorrelation → SARIMA
+
+6. Use Information Criteria for Model Selection
+   Compare competing models using AIC or BIC:
+   - AIC = 2k − 2ln(L)   where k = number of parameters, L = likelihood
+   - BIC = k·ln(n) − 2ln(L)   where n = number of observations
+   BIC penalises complexity more heavily and is preferred when n is large.
+   Lower AIC/BIC indicates a better model.
+
+7. Validate with Out-of-Sample Testing
+   Reserve the last 10–20% of the series as a test set:
+   - Fit the model on the training set.
+   - Generate forecasts for the test period.
+   - Compute RMSE, MAE, and MAPE against actuals.
+   Never evaluate a model on the same data used to fit it.
+
+8. Report Uncertainty
+   Always accompany point forecasts with confidence/prediction intervals:
+   - 95% intervals are standard; 80% intervals give a narrower, more likely range.
+   - Intervals widen with horizon — communicate this to stakeholders.
+   - Multiplicative error models (Holt-Winters) produce asymmetric intervals.
+
+9. Document Assumptions and Limitations
+   Every forecast report should state:
+   - The model selected and why.
+   - Key assumptions (stationarity, seasonal stability, linearity).
+   - Limitations (horizon beyond which accuracy degrades, sensitivity to outliers).
+   - Data quality issues discovered during validation.
+
+10. Iterate and Re-evaluate
+    Forecasting is an iterative process. Re-fit models as new data arrives, monitor residuals for
+    structural breaks, and update the seasonal period if the data frequency changes.
