@@ -225,13 +225,31 @@ def chat_with_data(
     # 2. Prepare Data Summary for the LLM
     # Truncate statistical summary for wide datasets to avoid LLM context overflow
     stats_dict = df.describe().iloc[:, :20].to_dict()
-    
+
+    # ── Enhanced Data Visibility ─────────────────────────────────────────────
+    # Instead of just stats, we provide a "sorted snapshot" so the LLM can 
+    # see specific dates for peaks and troughs.
+    data_snapshots = ""
+    try:
+        date_cols = df.select_dtypes(include=['datetime', 'datetimetz']).columns.tolist()
+        num_cols = df.select_dtypes(include=['number']).columns.tolist()
+        if date_cols and num_cols:
+            main_date = date_cols[0]
+            val_col = num_cols[0]
+            
+            top_5 = df.nlargest(5, val_col)[[main_date, val_col]].to_string(index=False)
+            bottom_5 = df.nsmallest(5, val_col)[[main_date, val_col]].to_string(index=False)
+            
+            data_snapshots = f"\nHIGHEST 5 RECORDS (Sorted by {val_col}):\n{top_5}\n"
+            data_snapshots += f"\nLOWEST 5 RECORDS (Sorted by {val_col}):\n{bottom_5}\n"
+    except Exception as exc:
+        logger.warning("Failed to generate data highlights for chat: %s", exc)
+
     data_summary = f"""
     Dataset Stats:
     - Rows: {len(df)}
-    - Columns: {df.columns.tolist()}
-    - Missing Values: {df.isnull().sum().to_dict()}
-    - Statistical Summary (first 20 cols): {stats_dict}
+    - Statistical Summary: {stats_dict}
+    {data_snapshots}
     """
 
     # 3. Setup LLM based on configuration
