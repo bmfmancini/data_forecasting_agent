@@ -1,7 +1,13 @@
 from __future__ import annotations
 
 from typing import Any, Callable
+import json
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_ollama import ChatOllama
+import core.config as settings
 import pandas as pd
+import re
 
 from agents.data_validation_agent import run_validation_agent
 from agents.forecasting_agent import run_forecasting_agent
@@ -166,6 +172,111 @@ def run_pipeline(
         chart_model_comparison=chart_model_comparison,
     )
 
+def index_analysis_results(
+    file_id: str,
+    analysis_result: AnalysisResponse,
+    chroma_persist_dir: str
+) -> None:
+    """
+    Requirement 1: Store the output results in the agent's memory.
+    Summarizes and indexes the analysis results into the RAG knowledge base.
+    """
+    logger.info("Indexing analysis results for file_id=%s", file_id)
+    rag_kb = get_rag_kb(chroma_persist_dir)
+    
+    # Create a summary document for the vector store
+    summary = (
+        f"Forecasting Analysis Results for {file_id}:\n"
+        f"Summary Report: {analysis_result.report}\n"
+        f"Model Selection: {analysis_result.model_selection.selected_model}\n"
+        f"Statistical Insights: {analysis_result.statistical.model_dump_json()}\n"
+    )
+    
+    # Persist the summary to the RAG knowledge base
+    if hasattr(rag_kb, "add_texts"):
+        rag_kb.add_texts(
+            texts=[summary],
+            metadatas=[{"file_id": file_id, "type": "analysis_result"}]
+        )
+    else:
+        logger.warning("RAGKnowledgeBase does not support direct text indexing. Result memory not persisted.")
+
+def chat_with_data(
+    query: str,
+    df: pd.DataFrame,
+    file_id: str,
+    chroma_persist_dir: str
+) -> dict[str, Any]:
+    """
+    Requirement 2: Data Explorer - Allow user to prompt the agent with questions about data.
+    """
+    logger.info("Data Explorer query for file_id=%s: %s", file_id, query)
+    
+    # 1. Retrieve Analysis Memory from RAG
+    rag_kb = get_rag_kb(chroma_persist_dir)
+    memory_context = ""
+    try:
+        # Search for previous analysis results stored during the pipeline run
+        chunks = rag_kb.retrieve(query, k=3)
+        memory_context = "\n".join(chunks)
+    except Exception as exc:
+        logger.warning("RAG retrieval failed for chat: %s", exc)
+
+    # 2. Prepare Data Summary for the LLM
+    data_summary = f"""
+    Dataset Stats:
+    - Rows: {len(df)}
+    - Columns: {df.columns.tolist()}
+    - Missing Values: {df.isnull().sum().to_dict()}
+    - Statistical Summary: {df.describe().to_dict()}
+    """
+
+    # 3. Setup LLM based on configuration
+    if settings.USE_OLLAMA:
+        llm = ChatOllama(model=settings.OLLAMA_MODEL, base_url=settings.OLLAMA_BASE_URL, temperature=0)
+    else:
+        llm = ChatGoogleGenerativeAI(model=settings.GEMINI_MODEL, google_api_key=settings.GEMINI_API_KEY, temperature=0)
+
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", (
+            "You are an expert Data Science Assistant. You have access to a summary of the uploaded data "
+            "and the results of a forecasting analysis stored in memory.\n\n"
+            "Instructions:\n"
+            "1. Use the provided context to answer questions about forecasting results.\n"
+            "2. Use the data summary to answer questions about the dataset structure or values.\n"
+            "3. If the user asks for a visualization (e.g., 'pie chart'), return a valid JSON object "
+            "containing 'answer', 'visualization_type': 'pie', and 'visualization_data' with 'labels' and 'values'.\n"
+            "4. Be concise and professional.\n\n"
+            "Context from Memory (RAG):\n{analysis_context}\n\n"
+            "Data Summary:\n{data_summary}"
+        )),
+        ("human", "{query}")
+    ])
+
+    try:
+        chain = prompt | llm
+        response = chain.invoke({
+            "analysis_context": memory_context,
+            "data_summary": data_summary,
+            "query": query
+        })
+        
+        content = response.content
+        
+        # Handle potential JSON visualization responses from LLM
+        if "visualization_type" in content:
+            # Strip markdown code blocks if present
+            clean_content = re.sub(r"```json\s*|\s*```", "", content).strip()
+            try:
+                return json.loads(clean_content)
+            except json.JSONDecodeError:
+                pass
+        
+        return {"answer": content}
+
+    except Exception as exc:
+        logger.exception("LLM Chat failed")
+        return {"answer": f"I encountered an error while processing your request: {str(exc)}"}
 
 def _freq_to_period(freq: str) -> int:
     f = (freq or "").upper().lstrip("-")

@@ -3,19 +3,30 @@ from __future__ import annotations
 import asyncio
 import uuid
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator, cast
+from typing import Any, AsyncIterator, Optional, cast
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 import core.config as settings
 from core.logging_config import get_logger
-from orchestrator import run_pipeline
+from orchestrator import run_pipeline, chat_with_data, index_analysis_results
 from schemas import AnalysisResponse, AnalyzeRequest, JobStatusResponse, JobSubmitResponse, UploadResponse, PreflightResponse
 from utils.data_parser import parse_upload
 from utils.preflight import run_preflight_checks
 
 logger = get_logger(__name__)
+
+# ── Chat Schemas ──────────────────────────────────────────────────────────────
+class ChatRequest(BaseModel):
+    file_id: str
+    query: str
+
+class ChatResponse(BaseModel):
+    answer: str
+    visualization_data: Optional[dict[str, Any]] = None
+    visualization_type: Optional[str] = None
 
 # ── In-memory stores ──────────────────────────────────────────────────────────
 # { file_id: { df, date_col, value_col, freq, filename } }
@@ -76,6 +87,14 @@ async def _job_worker() -> None:
             job["progress"] = 100
             job["step"] = "Analysis complete."
             job["result"] = result.model_dump()
+
+            # Requirement: Store the output results in the agent's memory
+            await asyncio.to_thread(
+                index_analysis_results,
+                file_id=req["file_id"],
+                analysis_result=result,
+                chroma_persist_dir=settings.CHROMA_PERSIST_DIR
+            )
         except Exception as exc:
             logger.exception("Pipeline failed for job_id=%s file_id=%s", job_id, req["file_id"])
             job["status"] = "error"
@@ -251,3 +270,24 @@ def get_job_status(job_id: str) -> JobStatusResponse:
         result=job.get("result"),
         error=job.get("error"),
     )
+
+@app.post("/chat", response_model=ChatResponse)
+async def chat_explorer(request: ChatRequest) -> ChatResponse:
+    """Allows users to chat with the agent about the uploaded data and results."""
+    stored = _file_store.get(request.file_id)
+    if not stored:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    try:
+        # Delegate to orchestrator to query both the data and the indexed memory
+        response = await asyncio.to_thread(
+            chat_with_data,
+            query=request.query,
+            df=stored["df"],
+            file_id=request.file_id,
+            chroma_persist_dir=settings.CHROMA_PERSIST_DIR
+        )
+        return ChatResponse(**response)
+    except Exception as exc:
+        logger.exception("Chat exploration failed")
+        raise HTTPException(status_code=500, detail=str(exc))
