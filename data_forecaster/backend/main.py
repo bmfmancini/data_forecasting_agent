@@ -183,6 +183,7 @@ async def upload_file(file: UploadFile = File(...)) -> UploadResponse:
     # ── Store & return ────────────────────────────────────────────────────────
     if len(_file_store) >= MAX_FILES:
         # Evict oldest file to maintain memory stability
+        # Evict oldest file to maintain memory stability and prevent OOM restarts
         oldest_file = next(iter(_file_store))
         _file_store.pop(oldest_file)
 
@@ -214,7 +215,7 @@ async def upload_file(file: UploadFile = File(...)) -> UploadResponse:
 async def preflight_check(request: AnalyzeRequest) -> PreflightResponse:
     stored = _file_store.get(request.file_id)
     if not stored:
-        raise HTTPException(status_code=404, detail="File not found")
+        raise HTTPException(status_code=404, detail="Session expired or data cleared from memory. Please re-upload your file.")
     
     date_col = request.date_col or stored["date_col"]
     value_col = request.value_col or stored["value_col"]
@@ -290,7 +291,7 @@ async def chat_explorer(request: ChatRequest) -> ChatResponse:
     """Allows users to chat with the agent about the uploaded data and results."""
     stored = _file_store.get(request.file_id)
     if not stored:
-        raise HTTPException(status_code=404, detail="File not found")
+        raise HTTPException(status_code=404, detail="Chat session lost: the associated data is no longer in the server memory. Please re-run the analysis.")
 
     try:
         # Delegate to orchestrator to query both the data and the indexed memory
