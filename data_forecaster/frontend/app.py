@@ -342,7 +342,7 @@ if result:
     tab_report, tab_forecast, tab_model, tab_stats, tab_quality, tab_trace, tab_overview, tab_chat = st.tabs([
         "📄 Report",
         "🔮 Forecast",
-        "🤖 Model Selection",
+        "🤖 Forecast Model Selection",
         "📐 Statistical Analysis",
         "🔍 Data Quality",
         "🕵️ AI Reasoning Trace",
