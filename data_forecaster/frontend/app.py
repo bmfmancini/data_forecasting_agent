@@ -179,9 +179,7 @@ with st.sidebar:
         disabled=not info,
         help="Appended to the AI report prompt so it can tailor the analysis to your needs.",
     )
-
-    st.markdown("---")
-    show_advanced = st.toggle("🕵️ Advanced Mode", value=False, help="Show AI reasoning traces and internal thoughts for each step.")
+    show_advanced = True
 
     is_running = st.session_state._running is True
     preflight = None

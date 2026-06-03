@@ -20,4 +20,4 @@ def render_trace_tab(result):
     with st.expander("5. Report Generation Agent", expanded=True):
         render_reasoning(result.get("report_reasoning", []))
         
-    st.info("💡 Advanced Mode (toggle in sidebar) also shows these traces inline within each specific analysis tab.")
+    st.info("💡 These reasoning traces are also shown inline within each specific analysis tab.")
