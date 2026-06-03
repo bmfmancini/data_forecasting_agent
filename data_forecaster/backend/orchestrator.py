@@ -223,12 +223,15 @@ def chat_with_data(
         logger.warning("RAG retrieval failed for chat: %s", exc)
 
     # 2. Prepare Data Summary for the LLM
+    # Truncate statistical summary for wide datasets to avoid LLM context overflow
+    stats_dict = df.describe().iloc[:, :20].to_dict()
+    
     data_summary = f"""
     Dataset Stats:
     - Rows: {len(df)}
     - Columns: {df.columns.tolist()}
     - Missing Values: {df.isnull().sum().to_dict()}
-    - Statistical Summary: {df.describe().to_dict()}
+    - Statistical Summary (first 20 cols): {stats_dict}
     """
 
     # 3. Setup LLM based on configuration

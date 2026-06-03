@@ -29,6 +29,10 @@ class ChatResponse(BaseModel):
     visualization_type: Optional[str] = None
 
 # ── In-memory stores ──────────────────────────────────────────────────────────
+# Bounds for in-memory storage to prevent OOM restarts
+MAX_FILES = 50
+MAX_JOBS = 100
+
 # { file_id: { df, date_col, value_col, freq, filename } }
 _file_store: dict[str, dict[str, Any]] = {}
 # { job_id: { status, progress, step, request, result, error } }
@@ -177,6 +181,11 @@ async def upload_file(file: UploadFile = File(...)) -> UploadResponse:
         raise HTTPException(status_code=500, detail=f"Failed to parse file: {exc}")
 
     # ── Store & return ────────────────────────────────────────────────────────
+    if len(_file_store) >= MAX_FILES:
+        # Evict oldest file to maintain memory stability
+        oldest_file = next(iter(_file_store))
+        _file_store.pop(oldest_file)
+
     file_id = str(uuid.uuid4())
     _file_store[file_id] = {
         "df": df,
@@ -234,6 +243,11 @@ def analyze(request: AnalyzeRequest) -> JobSubmitResponse:
 
     date_col = request.date_col or stored["date_col"]
     value_col = request.value_col or stored["value_col"]
+
+    if len(_job_store) >= MAX_JOBS:
+        # Simple eviction of oldest job
+        oldest_key = next(iter(_job_store))
+        _job_store.pop(oldest_key)
 
     job_id = str(uuid.uuid4())
     _job_store[job_id] = {
