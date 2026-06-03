@@ -5,91 +5,27 @@ import json
 import os
 import re
 from typing import Any
+import time as _time
+import io
 
 import pandas as pd
 import plotly.graph_objects as go
-import requests
 import streamlit as st
 from dotenv import load_dotenv
 
+from api_service import ForecastingAPI
+from utils.pdf_utils import report_to_pdf
+from utils.ui_utils import render_reasoning, preflight_defaults, render_preflight_contents, render_preflight_dialog_content
+from tabs.overview import render_overview_tab
+from tabs.quality import render_quality_tab
+from tabs.stats import render_stats_tab
+from tabs.model import render_model_tab
+from tabs.forecast import render_forecast_tab
+from tabs.report import render_report_tab
+from tabs.trace import render_trace_tab
+from tabs.chat import render_chat_tab
+
 load_dotenv()
-
-
-def _report_to_pdf(report_md: str, title: str = "Forecast Report") -> bytes:
-    """Render a markdown report string to PDF bytes using fpdf2."""
-    from fpdf import FPDF
-
-    def _sanitize(text: str) -> str:
-        """Drop chars outside Latin-1 so core fonts don't crash."""
-        return text.encode("latin-1", errors="replace").decode("latin-1")
-
-    def _strip_inline(text: str) -> str:
-        """Remove bold/italic/code markers, keep text content."""
-        text = re.sub(r"\*\*(.*?)\*\*", r"\1", text)
-        text = re.sub(r"\*(.*?)\*", r"\1", text)
-        text = re.sub(r"`(.*?)`", r"\1", text)
-        return text
-
-    def _cell(pdf: FPDF, h: int, text: str) -> None:
-        """Reset x to left margin then render a multi_cell."""
-        pdf.set_x(pdf.l_margin)
-        pdf.multi_cell(0, h, text)
-
-    pdf = FPDF()
-    pdf.set_margins(20, 20, 20)
-    pdf.add_page()
-    pdf.set_auto_page_break(auto=True, margin=20)
-
-    # Cover title
-    pdf.set_font("Helvetica", "B", 20)
-    pdf.set_x(pdf.l_margin)
-    pdf.multi_cell(0, 12, _sanitize(title), align="C")
-    pdf.ln(6)
-
-    for raw_line in report_md.splitlines():
-        line = raw_line.rstrip()
-        if line.startswith("### "):
-            pdf.ln(3)
-            pdf.set_font("Helvetica", "B", 13)
-            _cell(pdf, 7, _sanitize(_strip_inline(line[4:])))
-            pdf.ln(1)
-        elif line.startswith("## "):
-            pdf.ln(4)
-            pdf.set_font("Helvetica", "B", 15)
-            _cell(pdf, 8, _sanitize(_strip_inline(line[3:])))
-            pdf.ln(2)
-        elif line.startswith("# "):
-            pdf.ln(5)
-            pdf.set_font("Helvetica", "B", 17)
-            _cell(pdf, 9, _sanitize(_strip_inline(line[2:])))
-            pdf.ln(2)
-        elif re.match(r"^[-*] ", line):
-            pdf.set_font("Helvetica", "", 11)
-            _cell(pdf, 6, _sanitize("  - " + _strip_inline(line[2:])))
-        elif re.match(r"^\d+\. ", line):
-            pdf.set_font("Helvetica", "", 11)
-            _cell(pdf, 6, _sanitize("  " + _strip_inline(line)))
-        elif re.match(r"^-{3,}$", line) or re.match(r"^\*{3,}$", line):
-            pdf.ln(2)
-            pdf.set_draw_color(180, 180, 180)
-            y = pdf.get_y()
-            pdf.line(pdf.l_margin, y, pdf.w - pdf.r_margin, y)
-            pdf.ln(4)
-        elif line == "":
-            pdf.ln(3)
-        else:
-            pdf.set_font("Helvetica", "", 11)
-            _cell(pdf, 6, _sanitize(_strip_inline(line)))
-
-    try:
-        pdf_output_result = pdf.output(dest='S')
-    except TypeError:
-        pdf_output_result = pdf.output()
-
-    if isinstance(pdf_output_result, str):
-        # If fpdf.output() unexpectedly returns a string, encode it to bytes
-        return pdf_output_result.encode("latin-1", errors="replace")
-    return pdf_output_result
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 
@@ -121,65 +57,8 @@ _dialog = getattr(st, "dialog", None) or getattr(st, "experimental_dialog", None
 if st.session_state.chat_history is None:
     st.session_state.chat_history = []
 
-def _preflight_defaults(preflight: dict[str, Any]) -> dict[str, Any]:
-    return {decision["key"]: decision["default"] for decision in preflight.get("decisions", [])}
-
-
-def _render_preflight_contents(preflight: dict[str, Any], disabled: bool = False) -> dict[str, Any]:
-    if preflight.get("detected_frequency"):
-        st.caption(f"Selected-series frequency: **{preflight['detected_frequency']}**")
-
-    for message in preflight.get("issues", []):
-        st.info(message)
-    for message in preflight.get("warnings", []):
-        st.warning(message)
-
-    choices = dict(st.session_state.get("_preflight_options_current") or _preflight_defaults(preflight))
-    for decision in preflight.get("decisions", []):
-        key = decision["key"]
-        options = decision["options"]
-        default = choices.get(key, decision["default"])
-        default_index = options.index(default) if default in options else 0
-        choices[key] = st.selectbox(
-            decision["label"],
-            options=options,
-            index=default_index,
-            help=decision["message"],
-            disabled=disabled,
-            key=f"preflight_choice_{key}",
-        )
-    return choices
-
-
-def _render_reasoning(steps: list[dict[str, Any]]) -> None:
-    """Helper to render agent reasoning traces in an expander."""
-    if not steps:
-        st.info("No detailed reasoning trace captured for this step.")
-        return
-    
-    for i, step in enumerate(steps):
-        with st.container():
-            st.markdown(f"**Step {i+1}**")
-            # Capture the thought/log. If 'thought' is missing, try 'thought_log' or 'log'
-            thought = (step.get("thought") or step.get("log") or "").strip()
-            
-            # Remove the "Thought:" prefix if the LLM included it in the log
-            if thought.lower().startswith("thought:"):
-                thought = thought[8:].strip()
-            
-            if thought:
-                st.caption(thought)
-                
-            if step.get("observation"):
-                st.info(f"Observation: {step['observation']}")
-
-
 def _render_preflight_dialog(preflight: dict[str, Any], disabled: bool = False) -> bool:
-    choices = _render_preflight_contents(preflight, disabled=disabled)
-    if st.button("Apply Preflight Choices", disabled=disabled, use_container_width=True):
-        st.session_state._preflight_options_current = choices
-        st.rerun()
-    return False
+    return render_preflight_dialog_content(preflight, disabled)
 
 
 if _dialog:
@@ -217,10 +96,8 @@ with st.sidebar:
         if _demo_bytes:
             with st.spinner("Loading demo data…"):
                 try:
-                    resp = requests.post(
-                        f"{BACKEND_URL}/upload",
-                        files={"file": ("sample_airline_passengers.csv", _demo_bytes, "text/csv")},
-                        timeout=60,
+                    resp = ForecastingAPI.upload_file(
+                        "sample_airline_passengers.csv", _demo_bytes, "text/csv"
                     )
                     if resp.status_code == 200:
                         st.session_state.upload_info = resp.json()
@@ -243,10 +120,8 @@ with st.sidebar:
     ):
         with st.spinner("Uploading…"):
             try:
-                resp = requests.post(
-                    f"{BACKEND_URL}/upload",
-                    files={"file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)},
-                    timeout=60,
+                resp = ForecastingAPI.upload_file(
+                    uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type
                 )
                 if resp.status_code == 200:
                     st.session_state.upload_info = resp.json()
@@ -320,21 +195,17 @@ with st.sidebar:
             st.session_state._preflight_options_current = None
 
         try:
-            resp = requests.post(
-                f"{BACKEND_URL}/preflight",
-                json={
-                    "file_id": info["file_id"],
-                    "forecast_horizon": forecast_horizon,
-                    "date_col": date_col,
-                    "value_col": value_col,
-                },
-                timeout=15,
+            resp = ForecastingAPI.get_preflight(
+                info["file_id"],
+                forecast_horizon,
+                date_col,
+                value_col
             )
             if resp.status_code == 200:
                 preflight = resp.json()
                 decisions = preflight.get("decisions", [])
                 saved_options = st.session_state.get("_preflight_options_current")
-                preflight_options = saved_options or _preflight_defaults(preflight)
+                preflight_options = saved_options or preflight_defaults(preflight)
 
                 if preflight["status"] != "ready":
                     st.markdown("---")
@@ -363,7 +234,7 @@ with st.sidebar:
 
                     if not _preflight_dialog and st.session_state.get("_show_preflight_fallback"):
                         with st.expander("Preflight Review", expanded=True):
-                            choices = _render_preflight_contents(preflight, disabled=is_running)
+                            choices = render_preflight_contents(preflight, disabled=is_running)
                             if st.button("Apply Preflight Choices", disabled=is_running, use_container_width=True):
                                 st.session_state._preflight_options_current = choices
                                 st.session_state["_show_preflight_fallback"] = False
@@ -405,19 +276,17 @@ if st.session_state._running and info:
     if job_id is None:
         # ── Submit the job ────────────────────────────────────────────────────
         try:
-            resp = requests.post(
-                f"{BACKEND_URL}/analyze",
-                json={
-                    "file_id": info["file_id"],
-                    "forecast_horizon": forecast_horizon,
-                    "date_col": date_col,
-                    "value_col": value_col,
-                    "forced_model": forced_model,
-                    "user_prompt": st.session_state.get("_user_prompt"),
-                    "preflight_options": st.session_state.get("_preflight_options"),
-                },
-                timeout=30,
-            )
+            payload = {
+                "file_id": info["file_id"],
+                "forecast_horizon": forecast_horizon,
+                "date_col": date_col,
+                "value_col": value_col,
+                "forced_model": forced_model,
+                "user_prompt": st.session_state.get("_user_prompt"),
+                "preflight_options": st.session_state.get("_preflight_options"),
+            }
+            resp = ForecastingAPI.submit_analysis(payload)
+            
             if resp.status_code == 202:
                 st.session_state._job_id = resp.json()["job_id"]
                 st.session_state._job_progress = 0
@@ -433,7 +302,7 @@ if st.session_state._running and info:
         # ── Poll for status ───────────────────────────────────────────────────
         import time as _time
         try:
-            resp = requests.get(f"{BACKEND_URL}/jobs/{job_id}", timeout=10)
+            resp = ForecastingAPI.get_job_status(job_id)
             if resp.status_code == 200:
                 job = resp.json()
                 st.session_state._job_progress = job["progress"]
@@ -485,268 +354,35 @@ if result:
 
     # ── Tab 1: Overview ───────────────────────────────────────────────────────
     with tab_overview:
-        st.subheader("Dataset Preview")
-        if info:
-            try:
-                file_bytes = uploaded_file.getvalue() if uploaded_file else None
-                if file_bytes:
-                    import io
-                    if uploaded_file.name.endswith(".csv"):
-                        preview_df = pd.read_csv(io.BytesIO(file_bytes)).head(20)
-                    else:
-                        preview_df = pd.read_excel(io.BytesIO(file_bytes)).head(20)
-                    st.dataframe(preview_df, use_container_width=True)
-            except Exception:
-                st.info("Preview unavailable.")
-
-        st.subheader("Historical Time Series")
-        if result.get("chart_historical"):
-            fig = go.Figure(result["chart_historical"], skip_invalid=True)
-            st.plotly_chart(fig, use_container_width=True)
+        render_overview_tab(info, result, uploaded_file)
 
     # ── Tab 2: Data Quality ───────────────────────────────────────────────────
     with tab_quality:
-        v = result["validation"]
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Total Rows", v["row_count"])
-        col2.metric("Missing Timestamps", v["missing_timestamps"])
-        col3.metric("Duplicate Timestamps", v["duplicate_timestamps"])
-        col4.metric("Missing Values", v["missing_values"])
-
-        st.markdown(f"**Frequency detected:** `{v['frequency']}`")
-        st.markdown(f"**Regular intervals:** {'✅ Yes' if v['is_regular'] else '⚠️ No'}")
-
-        if v["issues"]:
-            st.warning("**Issues found:**\n" + "\n".join(f"- {i}" for i in v["issues"]))
-        else:
-            st.success("No data quality issues detected.")
-
-        if show_advanced:
-            with st.expander("🕵️ View Data Validation Reasoning", expanded=False):
-                _render_reasoning(v.get("reasoning_steps", []))
-
-        st.markdown("**Validation Summary:**")
-        st.write(v["summary"])
+        render_quality_tab(result, show_advanced)
 
     # ── Tab 3: Statistical Analysis ───────────────────────────────────────────
     with tab_stats:
-        s = result["statistical"]
-
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("### Stationarity Tests")
-            adf_status = "✅ Stationary" if s["is_stationary_adf"] else "⚠️ Non-stationary"
-            kpss_status = "✅ Stationary" if s["is_stationary_kpss"] else "⚠️ Non-stationary"
-            st.markdown(f"**ADF Test:** {adf_status}  \np-value = `{s['adf_p_value']:.4f}`, statistic = `{s['adf_statistic']:.4f}`")
-            st.markdown(f"**KPSS Test:** {kpss_status}  \np-value = `{s['kpss_p_value']:.4f}`, statistic = `{s['kpss_statistic']:.4f}`")
-
-        with col2:
-            st.markdown("### Trend & Seasonality")
-            trend_status = "✅ Detected" if s["has_trend"] else "➖ Not detected"
-            st.markdown(f"**Trend:** {trend_status} (slope=`{s['trend_slope']:.6f}`)")
-            st.markdown(f"**Seasonal period:** `{s['seasonal_period']}`")
-            st.markdown(f"**Dominant periodogram period:** `{s['dominant_period']:.2f}`")
-
-        if show_advanced:
-            with st.expander("🕵️ View Statistical Analysis Reasoning", expanded=False):
-                _render_reasoning(s.get("reasoning_steps", []))
-
-        st.markdown("**Statistical Summary:**")
-        st.write(s["summary"])
-
-        st.subheader("STL Decomposition")
-        if result.get("chart_stl"):
-            fig = go.Figure(result["chart_stl"], skip_invalid=True)
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("STL chart unavailable.")
-
-        st.subheader("ACF / PACF")
-        if result.get("chart_acf_pacf"):
-            img_bytes = base64.b64decode(result["chart_acf_pacf"])
-            st.image(img_bytes, use_column_width=True)
-        else:
-            st.info("ACF/PACF chart unavailable.")
+        render_stats_tab(result, show_advanced)
 
     # ── Tab 4: Model Selection ────────────────────────────────────────────────
     with tab_model:
-        m = result["model_selection"]
-        st.success(f"**Selected Model: {m['selected_model']}**")
-        st.markdown("**Rationale:**")
-        st.write(m["explanation"])
-
-        if show_advanced:
-            with st.expander("🕵️ View Model Selection Reasoning", expanded=False):
-                _render_reasoning(m.get("reasoning_steps", []))
-
-        rejected = {
-            k: v for k, v in {
-                "Holt-Winters": m.get("holt_winters_rejected_reason"),
-                "ARIMA": m.get("arima_rejected_reason"),
-                "SARIMA": m.get("sarima_rejected_reason"),
-            }.items() if v
-        }
-        if rejected:
-            st.markdown("**Models not selected:**")
-            for model_name, reason in rejected.items():
-                st.markdown(f"- **{model_name}:** {reason}")
-
-        st.subheader("Model Comparison Metrics")
-        if result.get("chart_model_comparison"):
-            fig = go.Figure(result["chart_model_comparison"], skip_invalid=True)
-            st.plotly_chart(fig, use_container_width=True)
-
-        st.subheader("Diagnostic Statistics")
-        s = result["statistical"]
-        diag_df = pd.DataFrame({
-            "Metric": [
-                "ADF Statistic", "ADF p-value", "ADF Result",
-                "KPSS Statistic", "KPSS p-value", "KPSS Result",
-                "Trend Detected", "Trend Slope",
-                "Seasonal Period", "Dominant Period",
-            ],
-            "Value": [
-                f"{s['adf_statistic']:.4f}",
-                f"{s['adf_p_value']:.4f}",
-                "Stationary" if s["is_stationary_adf"] else "Non-stationary",
-                f"{s['kpss_statistic']:.4f}",
-                f"{s['kpss_p_value']:.4f}",
-                "Stationary" if s["is_stationary_kpss"] else "Non-stationary",
-                "Yes" if s["has_trend"] else "No",
-                f"{s['trend_slope']:.6f}",
-                str(s["seasonal_period"]) if s.get("seasonal_period") else "None detected",
-                f"{s['dominant_period']:.2f}" if s.get("dominant_period") else "N/A",
-            ],
-            "Interpretation": [
-                "More negative = stronger evidence against unit root",
-                "< 0.05 → reject unit root (stationary)",
-                "ADF conclusion",
-                "Lower = more likely stationary",
-                "< 0.05 → reject stationarity (non-stationary)",
-                "KPSS conclusion",
-                "Significant linear trend present",
-                "Rate of change per period",
-                "Seasonal cycle length (periods per season)",
-                "Strongest frequency from periodogram",
-            ],
-        })
-        st.dataframe(diag_df, use_container_width=True, hide_index=True)
+        render_model_tab(result, show_advanced)
 
     # ── Tab 5: Forecast ───────────────────────────────────────────────────────
     with tab_forecast:
-        f = result["forecast"]
-
-        col1, col2, col3 = st.columns(3)
-        col1.metric("RMSE", f"{f['rmse']:.4f}")
-        col2.metric("MAE", f"{f['mae']:.4f}")
-        col3.metric("MAPE", f"{f['mape']:.2f}%")
-
-        st.subheader("Forecast Chart")
-        if result.get("chart_forecast"):
-            fig = go.Figure(result["chart_forecast"], skip_invalid=True)
-            st.plotly_chart(fig, use_container_width=True)
-
-        st.subheader("Forecast Values")
-        fc_df = pd.DataFrame({
-            "Date": f["forecast_dates"],
-            "Forecast": [round(v, 4) for v in f["forecast"]],
-            "Lower CI (95%)": [round(v, 4) for v in f["lower_ci"]],
-            "Upper CI (95%)": [round(v, 4) for v in f["upper_ci"]],
-        })
-        st.dataframe(fc_df, use_container_width=True)
+        render_forecast_tab(result)
 
     # ── Tab 6: Report ─────────────────────────────────────────────────────────
     with tab_report:
-        report_text = result.get("report", "Report not available.")
-        try:
-            pdf_bytes = _report_to_pdf(report_text)
-            fname = f"forecast_report_{info['filename'].rsplit('.', 1)[0]}.pdf" if info else "forecast_report.pdf"
-            st.download_button(
-                label="⬇️ Download Report as PDF",
-                data=pdf_bytes,
-                file_name=fname,
-                mime="application/pdf",
-                use_container_width=True,
-            )
-        except Exception as _pdf_err:
-            st.warning(f"PDF export unavailable: {_pdf_err}")
-        st.markdown("---")
-        st.markdown(report_text)
+        render_report_tab(result, info)
 
     # ── Tab 7: AI Trace ───────────────────────────────────────────────────────
     with tab_trace:
-        st.subheader("🕵️ Full AI Reasoning Trace")
-        st.write("This log shows the internal 'monologue' and tool usage of the AI agents as they processed your request.")
-        
-        with st.expander("1. Data Validation Agent", expanded=True):
-            _render_reasoning(result["validation"].get("reasoning_steps", []))
-            
-        with st.expander("2. Statistical Analysis Agent", expanded=True):
-            _render_reasoning(result["statistical"].get("reasoning_steps", []))
-            
-        with st.expander("3. Model Selection Agent", expanded=True):
-            _render_reasoning(result["model_selection"].get("reasoning_steps", []))
-            
-        with st.expander("4. Forecasting Agent", expanded=True):
-            _render_reasoning(result["forecast"].get("reasoning_steps", []))
-            
-        with st.expander("5. Report Generation Agent", expanded=True):
-            _render_reasoning(result.get("report_reasoning", []))
-            
-        st.info("💡 Advanced Mode (toggle in sidebar) also shows these traces inline within each specific analysis tab.")
+        render_trace_tab(result)
 
     # ── Tab 8: Data Explorer ──────────────────────────────────────────────────
     with tab_chat:
-        st.subheader("💬 Data Explorer")
-        st.info("Ask questions about your data or the analysis results stored in my memory.")
-
-        # Display chat history
-        for message in st.session_state.chat_history:
-            with st.chat_message(message["role"]):
-                st.markdown(message["content"])
-                if message.get("viz"):
-                    viz = message["viz"]
-                    if viz["type"] == "pie":
-                        fig = go.Figure(data=[go.Pie(labels=viz["data"]["labels"], values=viz["data"]["values"])])
-                        st.plotly_chart(fig, use_container_width=True)
-
-        # Chat input
-        if prompt := st.chat_input("How many datapoints are missing?"):
-            # Add user message to history
-            st.session_state.chat_history.append({"role": "user", "content": prompt})
-            with st.chat_message("user"):
-                st.markdown(prompt)
-
-            # Call backend /chat
-            with st.chat_message("assistant"):
-                try:
-                    with st.spinner("Thinking..."):
-                        resp = requests.post(
-                            f"{BACKEND_URL}/chat",
-                            json={"file_id": info["file_id"], "query": prompt},
-                            timeout=60
-                        )
-                        if resp.status_code == 200:
-                            data = resp.json()
-                            answer = data["answer"]
-                            st.markdown(answer)
-                            
-                            viz_payload = None
-                            if data.get("visualization_type") == "pie":
-                                viz_data = data["visualization_data"]
-                                fig = go.Figure(data=[go.Pie(labels=viz_data["labels"], values=viz_data["values"])])
-                                st.plotly_chart(fig, use_container_width=True)
-                                viz_payload = {"type": "pie", "data": viz_data}
-
-                            st.session_state.chat_history.append({
-                                "role": "assistant", 
-                                "content": answer,
-                                "viz": viz_payload
-                            })
-                        else:
-                            st.error(f"Error: {resp.json().get('detail', 'Failed to get response.')}")
-                except Exception as e:
-                    st.error(f"Connection error: {e}")
+        render_chat_tab(info)
 
 else:
     st.info("Upload a time series file and click **Run Analysis** to get started.")
