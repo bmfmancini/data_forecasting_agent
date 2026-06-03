@@ -4,8 +4,17 @@ import numpy as np
 import pandas as pd
 
 # Compatibility shim: pmdarima 2.0.x uses sklearn's force_all_finite which was
-# removed in scikit-learn 1.6. 
-# Recommended: Move this to a central compatibility module or pin scikit-learn<1.6
+# removed in scikit-learn 1.6. Translate it to ensure_all_finite.
+import sklearn.utils.validation as _skval  # noqa: E402
+if not hasattr(_skval, "_patched_for_pmdarima"):
+    _orig = _skval.check_array
+    def _patched(*args, **kwargs):  # noqa: E306
+        if "force_all_finite" in kwargs:
+            kwargs.setdefault("ensure_all_finite", kwargs.pop("force_all_finite"))
+        return _orig(*args, **kwargs)
+    _skval.check_array = _patched
+    _skval._patched_for_pmdarima = True
+
 import pmdarima as pm
 
 from core.logging_config import get_logger
@@ -40,7 +49,7 @@ def fit_arima(series: pd.Series, forecast_horizon: int) -> dict:
         mape = float(np.mean(np.abs((test.values - test_fc) / (test.values + 1e-8))) * 100)
     except Exception as exc:
         logger.warning("ARIMA metrics failed: %s", exc)
-        rmse = mae = mape = float("nan")
+        rmse = mae = mape = 0.0
 
     # ── Full-series fit for forecast ─────────────────────────────────────────
     full_model = pm.auto_arima(

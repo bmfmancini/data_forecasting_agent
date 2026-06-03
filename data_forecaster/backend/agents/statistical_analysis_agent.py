@@ -27,6 +27,24 @@ def run_statistical_agent(series: pd.Series, seasonal_period: int = 12) -> Stati
     """Run statistical analysis ReAct agent and return a StatisticalResult."""
 
     # ── Compute all stats directly ────────────────────────────────────────────
+    # Handle constant series to avoid ValueError in statsmodels (adfuller)
+    if series.nunique() <= 1:
+        logger.warning("Input series is constant. Skipping statistical tests.")
+        return StatisticalResult(
+            is_stationary_adf=True,
+            adf_statistic=0.0,
+            adf_p_value=0.0,
+            is_stationary_kpss=True,
+            kpss_statistic=0.0,
+            kpss_p_value=1.0,
+            has_trend=False,
+            trend_slope=0.0,
+            seasonal_period=seasonal_period,
+            dominant_period=0.0,
+            summary="The provided time series is constant (all values are identical). It is statistically stationary with no detectable trend or seasonal patterns.",
+            reasoning_steps=[{"thought": "Checking series variance...", "observation": "Series is constant. Bypassing ADF/KPSS tests."}],
+        )
+
     adf = run_adf_test(series)
     kpss_res = run_kpss_test(series)
     trend = detect_trend(series)

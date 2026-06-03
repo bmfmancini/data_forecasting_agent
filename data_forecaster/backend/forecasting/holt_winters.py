@@ -57,7 +57,7 @@ def fit_holt_winters(series: pd.Series, forecast_horizon: int) -> dict:
         mape = float(np.mean(np.abs((test.values - test_fc.values) / (test.values + 1e-8))) * 100)
     except Exception as exc:
         logger.warning("Holt-Winters metrics failed: %s", exc)
-        rmse = mae = mape = float("nan")
+        rmse = mae = mape = 0.0
 
     # ── Full-series fit for forecast ─────────────────────────────────────────
     full_fit = ExponentialSmoothing(

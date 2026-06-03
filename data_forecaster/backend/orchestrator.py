@@ -284,6 +284,7 @@ def chat_with_data(
         logger.exception("LLM Chat failed")
         return {"answer": f"I encountered an error while processing your request: {str(exc)}"}
 
+
 def _freq_to_period(freq: str) -> int:
     f = (freq or "").upper().lstrip("-")
     if f.startswith("MS") or f.startswith("M"):

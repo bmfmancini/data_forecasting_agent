@@ -64,7 +64,7 @@ def fit_sarima(
         mape = float(np.mean(np.abs((test.values - test_fc) / (test.values + 1e-8))) * 100)
     except Exception as exc:
         logger.warning("SARIMA metrics failed: %s", exc)
-        rmse = mae = mape = float("nan")
+        rmse = mae = mape = 0.0
 
     # ── Full-series fit for forecast ─────────────────────────────────────────
     full_model = pm.auto_arima(
