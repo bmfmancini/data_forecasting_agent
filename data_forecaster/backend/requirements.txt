@@ -3,7 +3,7 @@
 
 uvicorn[standard]>=0.29.0  # ASGI server
 fastapi>=0.111.0           # Web framework
-python-multipart>=0.0.9    # Multipart form data parsing
+python-multipart>=0.0.27    # Multipart form data parsing
 pydantic>=2.0.0            # Data validation and settings management
 numpy>=1.26.0              # Numerical computing
 pandas>=2.2.0              # Data manipulation
@@ -15,10 +15,10 @@ matplotlib>=3.9.0          # Plotting library
 plotly>=5.22.0             # Interactive charting
 chromadb>=0.5.0            # Vector database
 sentence-transformers>=3.0.0  # Sentence embeddings
-langchain>=0.2.0           # LLM framework
+langchain>=0.3.30           # LLM framework
 langchain-google-genai>=1.0.0  # Google Generative AI integration
 langchain-ollama>=0.1.0    # Ollama integration
 langchain-groq>=0.1.0      # Groq integration
-langchain-community>=0.2.0 # Community integrations
+langchain-community>=0.3.27 # Community integrations
 openpyxl>=3.1.0            # Excel file support
-python-dotenv>=1.0.0       # Environment variable management
+python-dotenv>=1.2.2       # Environment variable management
