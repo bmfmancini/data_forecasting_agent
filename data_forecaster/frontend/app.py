@@ -1,11 +1,13 @@
+"""
+Main application file for the Time Series Data Forecaster Agent.
+This Streamlit application provides a user interface for time series forecasting.
+"""
+
 from __future__ import annotations
 
 import base64
-import json
 import os
-import re
 from typing import Any
-import time as _time
 import io
 
 import pandas as pd
@@ -32,8 +34,8 @@ BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 st.set_page_config(page_title="Time Series Data Forecaster Agent", layout="wide", page_icon="📈")
 st.title("📈 Time Series Data Forecaster Agent")
 
-# ── Session state initialisation ──────────────────────────────────────────────
-for key in (
+# Initialize session state variables
+SESSION_KEYS = [
     "upload_info",
     "analysis_result",
     "error",
@@ -47,7 +49,9 @@ for key in (
     "_preflight_signature",
     "_show_preflight_fallback",
     "chat_history",
-):
+]
+
+for key in SESSION_KEYS:
     if key not in st.session_state:
         st.session_state[key] = None
 

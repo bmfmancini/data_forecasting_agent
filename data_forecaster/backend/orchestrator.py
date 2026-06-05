@@ -113,9 +113,9 @@ def run_pipeline(
     if (preflight_options or {}).get("outlier_strategy") == "Let AI Decide":
         if "iqr_clip" in stat_result.recommended_remediation:
             logger.info("Agent decided to APPLY IQR clipping.")
-            from utils.statistical import detect_outliers_iqr
-            outlier_info = detect_outliers_iqr(series)
-            series = series.clip(lower=outlier_info["lower_bound"], upper=outlier_info["upper_bound"])
+            from utils.statistical import apply_iqr_clipping
+            series = apply_iqr_clipping(series)
+            logger.info("IQR clipping applied successfully.")
         else:
             logger.info("Agent decided to SKIP IQR clipping (likely determined outliers are signal).")
 
@@ -126,6 +126,10 @@ def run_pipeline(
             stat_result.summary += "\n\n(Note: A Box-Cox transformation was applied to stabilize variance based on agent recommendation.)"
         except Exception as e:
             logger.warning("Box-Cox application failed: %s", e)
+
+    if "change_point_analysis" in stat_result.recommended_remediation:
+        logger.info("Agent detected significant change points. Adding note to analysis.")
+        stat_result.summary += "\n\n(Note: Change point analysis detected structural breaks. Consider segmenting the data for improved forecasting accuracy.)"
 
     # ── Agent 3: Model Selection ──────────────────────────────────────────────
     if forced_model:

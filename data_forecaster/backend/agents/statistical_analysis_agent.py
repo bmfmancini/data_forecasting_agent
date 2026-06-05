@@ -22,6 +22,7 @@ from utils.statistical import (
     detect_outliers_iqr,
     run_white_noise_test,
     check_variance_stability,
+    detect_change_points,
 )
 
 logger = get_logger(__name__)
@@ -76,6 +77,7 @@ def run_statistical_agent(
 
     # ── Build Statistical Profile ─────────────────────────────────────────────
     stl = run_stl_decomposition(series, period=inferred_period or 12)
+    change_points = detect_change_points(series)
     acf_data = compute_acf_pacf(series)
     conf_bound = 1.96 / np.sqrt(len(series))
     sig_acf = [i for i, v in enumerate(acf_data["acf_values"][1:], 1) if abs(v) > conf_bound]
@@ -95,6 +97,7 @@ def run_statistical_agent(
         f"- Variance Stability: {var_stability['interpretation']}\n"
         f"- Dominant Period: {periodogram['dominant_period']:.2f}\n"
         f"- STL Seasonal Range: {max(stl['seasonal']) - min(stl['seasonal']):.2f}\n"
+        f"- Change Points: {change_points['interpretation']}\n"
         f"- Significant ACF Lags: {sig_acf[:5]}"
     )
 
@@ -118,8 +121,10 @@ def run_statistical_agent(
             "1. Identify the likely DOMAIN (e.g. Retail, Network, Finance) from statistics and metadata if not specified.\n"
             "2. Should IQR clipping be applied? If the domain is 'Network Traffic' or 'IoT', keep outliers as they are likely signal (bursts).\n"
             "3. Should Box-Cox transformation be used to stabilize variance?\n"
-            "4. Is the series too 'noisy' for reliable forecasting?\n\n"
+            "4. Are there structural breaks (change points) that might affect forecasting accuracy?\n"
+            "5. Is the series too 'noisy' for reliable forecasting?\n\n"
             "If you recommend a method, include the keyword 'APPLY_IQR' or 'APPLY_BOXCOX' in your response. "
+            "If change points are significant, include 'CHANGE_POINTS_DETECTED' in your response. "
             "Start your response with 'DOMAIN: <Detected Domain>'."
         ))
     ])
@@ -138,6 +143,8 @@ def run_statistical_agent(
             recommended_remediation.append("iqr_clip")
         if "APPLY_BOXCOX" in summary:
             recommended_remediation.append("box_cox")
+        if "CHANGE_POINTS_DETECTED" in summary:
+            recommended_remediation.append("change_point_analysis")
             
         reasoning_steps = [
             {"thought": "Running ADF, KPSS, and STL in Python...", "observation": profile},

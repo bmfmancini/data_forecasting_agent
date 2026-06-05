@@ -263,3 +263,120 @@ def apply_boxcox(series: pd.Series) -> tuple[pd.Series, float]:
     vals = series.values + (abs(series.min()) + 1 if series.min() <= 0 else 0)
     transformed, lam = boxcox(vals)
     return pd.Series(transformed, index=series.index), float(lam)
+
+
+def apply_iqr_clipping(series: pd.Series, multiplier: float = 1.5) -> pd.Series:
+    """
+    Applies IQR clipping (Winsorization) to remove outliers from a time series.
+    
+    Args:
+        series: The time series to clip
+        multiplier: IQR multiplier (default 1.5, can be adjusted for more/less aggressive clipping)
+        
+    Returns:
+        pd.Series: The clipped time series
+    """
+    q1 = series.quantile(0.25)
+    q3 = series.quantile(0.75)
+    iqr = q3 - q1
+    lower_bound = q1 - multiplier * iqr
+    upper_bound = q3 + multiplier * iqr
+    
+    # Clip values to within the bounds
+    clipped_series = series.clip(lower=lower_bound, upper=upper_bound)
+    
+    logger.debug(
+        "IQR clipping applied: %.2f%% of values clipped",
+        (len(series) - len(clipped_series[clipped_series == series])) / len(series) * 100
+    )
+    
+    return clipped_series
+
+
+def detect_change_points(series: pd.Series, method: str = "cusum", threshold: float = None) -> dict[str, Any]:
+    """
+    Detects change points in a time series using various methods.
+    
+    Args:
+        series: The time series to analyze
+        method: Change point detection method ('cusum', 'rolling_mean', or 'fft')
+        threshold: Threshold for change detection (auto-calculated if None)
+        
+    Returns:
+        dict with keys: change_points, method_used, threshold, interpretation
+    """
+    series = series.dropna()
+    change_points = []
+    
+    if len(series) < 10:
+        return {
+            "change_points": [],
+            "method_used": method,
+            "threshold": None,
+            "interpretation": "Series too short for change point detection."
+        }
+    
+    if method == "cusum":
+        # Cumulative Sum method
+        if threshold is None:
+            threshold = 2 * series.std()
+        
+        # Calculate cumulative sum of deviations from mean
+        mean_val = series.mean()
+        cusum = np.cumsum(series - mean_val)
+        
+        # Find points where CUSUM exceeds threshold
+        for i in range(len(cusum)):
+            if abs(cusum[i]) > threshold:
+                change_points.append(series.index[i])
+                
+    elif method == "rolling_mean":
+        # Rolling mean comparison method
+        if threshold is None:
+            threshold = series.std()
+            
+        # Calculate rolling means with different window sizes
+        window1 = max(3, len(series) // 10)
+        window2 = max(5, len(series) // 5)
+        
+        rolling1 = series.rolling(window=window1, center=True).mean()
+        rolling2 = series.rolling(window=window2, center=True).mean()
+        
+        # Find points where the difference exceeds threshold
+        diff = abs(rolling1 - rolling2)
+        for i in range(len(diff)):
+            if diff.iloc[i] > threshold:
+                change_points.append(series.index[i])
+                
+    elif method == "fft":
+        # Frequency domain method
+        if threshold is None:
+            threshold = 0.1 * series.std()
+            
+        # Apply FFT and look for frequency changes
+        # This is a simplified approach - real implementation would be more complex
+        # For now, we'll use a variance-based approach on rolling windows
+        window = max(10, len(series) // 4)
+        rolling_var = series.rolling(window=window, center=True).var()
+        
+        # Find points where variance changes significantly
+        mean_var = rolling_var.mean()
+        for i in range(len(rolling_var)):
+            if rolling_var.iloc[i] > (mean_var + threshold):
+                change_points.append(series.index[i])
+    
+    # Remove duplicates and sort
+    change_points = sorted(list(set(change_points)))
+    
+    interpretation = (
+        f"Detected {len(change_points)} change points using {method} method. "
+        f"Change points: {change_points[:5]}{'...' if len(change_points) > 5 else ''}. "
+        f"{'Consider structural break analysis if change points are significant.' if len(change_points) > 0 else 'No significant structural breaks detected.'}"
+    )
+    
+    return {
+        "change_points": change_points,
+        "method_used": method,
+        "threshold": threshold,
+        "interpretation": interpretation
+    }

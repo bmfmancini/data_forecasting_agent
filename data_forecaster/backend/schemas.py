@@ -90,6 +90,7 @@ class ModelSelectionResult(BaseModel):
     holt_winters_rejected_reason: Optional[str] = None
     arima_rejected_reason: Optional[str] = None
     sarima_rejected_reason: Optional[str] = None
+    ewma_rejected_reason: Optional[str] = None
     reasoning_steps: list[dict[str, Any]] = Field(default_factory=list)
 
 

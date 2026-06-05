@@ -11,6 +11,7 @@ from core.logging_config import get_logger
 from forecasting.arima_model import fit_arima
 from forecasting.holt_winters import fit_holt_winters
 from forecasting.sarima_model import fit_sarima
+from forecasting.ewma_model import fit_ewma
 from schemas import ForecastResult, ModelSelectionResult, StatisticalResult
 
 logger = get_logger(__name__)
@@ -38,6 +39,7 @@ def run_forecasting_agent(
         ("Holt-Winters", fit_holt_winters, {}),
         ("ARIMA", fit_arima, {}),
         ("SARIMA", fit_sarima, {"seasonal_period": seasonal_period}),
+        ("EWMA", fit_ewma, {}),
     ]:
         try:
             results_store[name] = fn(series, forecast_horizon, **kwargs)
