@@ -13,7 +13,7 @@ OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://host.docker.internal
 OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "llama3")
 OLLAMA_API_KEY: str | None = os.getenv("OLLAMA_API_KEY")
 
-MAX_UPLOAD_MB: int = int(os.getenv("MAX_UPLOAD_MB", "10"))
+MAX_UPLOAD_MB: int = int(os.getenv("MAX_UPLOAD_MB", "100"))
 MAX_UPLOAD_BYTES: int = MAX_UPLOAD_MB * 1024 * 1024
 
 ALLOWED_EXTENSIONS: list[str] = os.getenv(

@@ -8,10 +8,11 @@ from langchain_ollama import ChatOllama
 from core.config import GEMINI_MODEL, USE_OLLAMA, OLLAMA_BASE_URL, OLLAMA_MODEL, OLLAMA_API_KEY
 from core.logging_config import get_logger
 from schemas import ModelSelectionResult, StatisticalResult
+from prompts.model_selection_prompt import MODEL_SELECTION_PROMPT
 
 logger = get_logger(__name__)
 
-_MODELS = ("ARIMA", "SARIMA", "Holt-Winters")
+_MODELS = ("ARIMA", "SARIMA", "Holt-Winters", "EWMA")
 
 
 def run_model_selection_agent(stat_result: StatisticalResult) -> ModelSelectionResult:
@@ -63,20 +64,55 @@ def run_model_selection_agent(stat_result: StatisticalResult) -> ModelSelectionR
         points.append("SARIMA requires more data than ARIMA (at least 2 full seasonal cycles).")
         return "SARIMA Assessment:\n" + "\n".join(f"- {p}" for p in points)
 
-    suitability_summary = f"{get_hw_suitability()}\n\n{get_arima_suitability()}\n\n{get_sarima_suitability()}"
+    def get_ewma_suitability():
+        points = []
+        if stat_result.has_trend:
+            points.append(f"Trend detected (slope={stat_result.trend_slope:.4f}) — EWMA will lag behind trend changes.")
+        else:
+            points.append("No significant trend — EWMA performs well on stable series.")
+        if stat_result.outlier_ratio > 0.05:
+            points.append(f"High outlier ratio ({stat_result.outlier_ratio:.1%}) — EWMA is sensitive to outliers.")
+        else:
+            points.append("Low outlier count — EWMA will be robust.")
+        if stat_result.is_white_noise:
+            points.append("Series appears random — EWMA may be as good as complex models.")
+        points.append("EWMA is simple, fast, and works well for short-term forecasts with stable patterns.")
+        points.append("Best for real-time applications where simplicity and speed are priorities.")
+        return "EWMA Assessment:\n" + "\n".join(f"- {p}" for p in points)
+
+    suitability_summary = f"{get_hw_suitability()}\n\n{get_arima_suitability()}\n\n{get_sarima_suitability()}\n\n{get_ewma_suitability()}"
 
     # ── Heuristic fallback selection (used if LLM fails) ─────────────────────
     sp = stat_result.seasonal_period or 1
+    # Heuristic for model selection based on statistical properties
     if sp > 1:
+        # Strong seasonality detected
         fallback_model = "SARIMA"
         hw_reason = "Strong seasonality makes SARIMA/Holt-Winters preferable."
         arima_reason = "Seasonal pattern detected; plain ARIMA ignores seasonality."
         sarima_reason = None
+        ewma_reason = "Seasonal patterns present; EWMA does not capture seasonality."
+    elif stat_result.has_trend and abs(stat_result.trend_slope) > 0.1:
+        # Strong trend present
+        fallback_model = "Holt-Winters"
+        hw_reason = None
+        arima_reason = "Trend present but Holt-Winters handles it more naturally."
+        sarima_reason = "No strong seasonality confirmed; SARIMA may overfit."
+        ewma_reason = "Strong trend present; EWMA will lag behind trend changes."
+    elif stat_result.is_white_noise:
+        # Random series
+        fallback_model = "EWMA"
+        hw_reason = "Series appears random; simple EWMA may suffice."
+        arima_reason = "Series is random noise; complex models may overfit."
+        sarima_reason = "No patterns detected; SARIMA would overfit."
+        ewma_reason = None
     else:
+        # Default case
         fallback_model = "ARIMA"
-        hw_reason = "No clear seasonal pattern detected."
+        hw_reason = "No clear seasonal pattern or strong trend detected."
         arima_reason = None
         sarima_reason = "No seasonal period confirmed; SARIMA would overfit."
+        ewma_reason = "Series has patterns that ARIMA can better capture."
 
     # ── LLM Setup ────────────────────────────────────────────────────────────
     if USE_OLLAMA:
@@ -89,25 +125,7 @@ def run_model_selection_agent(stat_result: StatisticalResult) -> ModelSelectionR
     else:
         llm = ChatGoogleGenerativeAI(model=GEMINI_MODEL, temperature=0)
 
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", "You are an expert in time series model selection. Choose the best model based on statistical assessments."),
-        ("human", (
-            "Evaluate the suitability of ARIMA, SARIMA, and Holt-Winters based on these assessments:\n\n"
-            "{suitability}\n\n"
-            "Select the SINGLE best model and provide a detailed rationale.\n"
-            "Your output MUST follow this exact structure:\n"
-            "Selected model: <MODEL_NAME>\n\n"
-            "## Why <MODEL_NAME> was chosen\n"
-            "<Detailed explanation referencing metrics>\n\n"
-            "## Model Assessment Summary\n"
-            "- **ARIMA**: <suitability detail> — Suitability: High/Medium/Low\n"
-            "- **SARIMA**: <suitability detail> — Suitability: High/Medium/Low\n"
-            "- **Holt-Winters**: <suitability detail> — Suitability: High/Medium/Low\n\n"
-            "## Why other models were not chosen\n"
-            "- **<Rejected Model 1>**: <reason>\n"
-            "- **<Rejected Model 2>**: <reason>"
-        ))
-    ])
+    prompt = MODEL_SELECTION_PROMPT
 
     try:
         chain = prompt | llm
@@ -137,6 +155,9 @@ def run_model_selection_agent(stat_result: StatisticalResult) -> ModelSelectionR
         hw_rej = None if selected_model == "Holt-Winters" else "Not selected based on LLM reasoning."
         arima_rej = None if selected_model == "ARIMA" else "Not selected based on LLM reasoning."
         sarima_rej = None if selected_model == "SARIMA" else "Not selected based on LLM reasoning."
+        ewma_rej = None if selected_model == "EWMA" else "Not selected based on LLM reasoning."
+        sarima_rej = None if selected_model == "SARIMA" else "Not selected based on LLM reasoning."
+        ewma_rej = None if selected_model == "EWMA" else "Not selected based on LLM reasoning."
 
     except Exception as exc:
         logger.warning("Model selection agent LLM call failed: %s — using heuristic.", exc)
@@ -145,6 +166,7 @@ def run_model_selection_agent(stat_result: StatisticalResult) -> ModelSelectionR
         hw_rej = hw_reason if selected_model != "Holt-Winters" else None
         arima_rej = arima_reason if selected_model != "ARIMA" else None
         sarima_rej = sarima_reason if selected_model != "SARIMA" else None
+        ewma_rej = ewma_reason if selected_model != "EWMA" else None
         reasoning_steps = [{
             "thought": f"Model selection agent failed: {str(exc)}",
             "observation": f"Falling back to heuristic selection: {selected_model}"
@@ -158,5 +180,6 @@ def run_model_selection_agent(stat_result: StatisticalResult) -> ModelSelectionR
         holt_winters_rejected_reason=hw_rej,
         arima_rejected_reason=arima_rej,
         sarima_rejected_reason=sarima_rej,
+        ewma_rejected_reason=ewma_rej,
         reasoning_steps=reasoning_steps,
     )

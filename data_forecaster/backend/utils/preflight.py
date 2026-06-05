@@ -5,11 +5,22 @@ from typing import Any
 import pandas as pd
 
 from schemas import PreflightDecision, PreflightResponse
+from utils.statistical import detect_outliers_iqr
 
 
 AGGREGATION_OPTIONS = ["Let AI Decide", "sum", "mean", "latest"]
 MISSING_OPTIONS = ["Let AI Decide", "interpolate", "forward-fill", "drop"]
 FREQUENCY_OPTIONS = ["Let AI Decide", "D", "W", "MS", "QS", "YS"]
+OUTLIER_OPTIONS = ["None", "Let AI Decide", "Clip (Winsorize)", "Remove"]
+DOMAIN_OPTIONS = [
+    "Skip / Let AI Guess", 
+    "General / Unknown", 
+    "Retail / Sales", 
+    "Network Traffic / IoT", 
+    "Finance / Stock", 
+    "Weather / Climate",
+    "Other (Custom)"
+]
 
 
 def run_preflight_checks(
@@ -31,6 +42,9 @@ def run_preflight_checks(
     detected_frequency = _infer_frequency(selected.set_index(date_col))
     usable_observations = int(series.dropna().shape[0])
 
+    # Detect outliers for preflight report
+    outlier_info = detect_outliers_iqr(series.dropna())
+
     issues: list[str] = []
     warnings: list[str] = []
     decisions: list[PreflightDecision] = []
@@ -38,6 +52,8 @@ def run_preflight_checks(
         "duplicate_strategy": "Let AI Decide",
         "missing_strategy": "Let AI Decide",
         "frequency": "Let AI Decide",
+        "data_domain": "Skip / Let AI Guess",
+        "outlier_strategy": "Let AI Decide",
         "continue_short_series": "continue",
     }
 
@@ -69,6 +85,26 @@ def run_preflight_checks(
             message="Choose the regular frequency to use for the forecast output.",
             options=FREQUENCY_OPTIONS,
             default="Let AI Decide",
+        ))
+
+    decisions.append(PreflightDecision(
+        key="data_domain",
+        label="Data Domain Context",
+        message="What is the domain of this data? This helps the AI choose the best cleaning strategy.",
+        options=DOMAIN_OPTIONS,
+        default="Skip / Let AI Guess",
+        required=True,
+        allow_custom=True
+    ))
+
+    if outlier_info["count"] > 0:
+        warnings.append(f"Detected {outlier_info['count']} potential outliers.")
+        decisions.append(PreflightDecision(
+            key="outlier_strategy",
+            label="Outlier Handling",
+            message=f"Detected {outlier_info['count']} outliers. How should they be treated?",
+            options=OUTLIER_OPTIONS,
+            default="Let AI Decide"
         ))
 
     if usable_observations < 20:
@@ -144,6 +180,18 @@ def prepare_series_frame(
 
     if frequency:
         series = series.asfreq(frequency)
+
+    # Apply Outlier Strategy
+    outlier_strategy = options.get("outlier_strategy", "None")
+    if outlier_strategy == "Let AI Decide":
+        outlier_strategy = "Clip (Winsorize)"  # AI default preference
+        
+    if outlier_strategy != "None":
+        outlier_info = detect_outliers_iqr(series)
+        if outlier_strategy == "Clip (Winsorize)":
+            series = series.clip(lower=outlier_info["lower_bound"], upper=outlier_info["upper_bound"])
+        elif outlier_strategy == "Remove":
+            series.loc[(series < outlier_info["lower_bound"]) | (series > outlier_info["upper_bound"])] = None
 
     series = _handle_missing(series, missing_strategy)
     series = series.dropna()

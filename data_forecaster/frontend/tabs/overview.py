@@ -1,10 +1,25 @@
+"""
+Overview tab module for the Time Series Data Forecaster Agent.
+Displays dataset preview and historical time series visualization.
+"""
+
 import streamlit as st
 import pandas as pd
 import io
 import plotly.graph_objects as go
 
-def render_overview_tab(info, result, uploaded_file):
+def render_overview_tab(info: dict, result: dict, uploaded_file) -> None:
+    """
+    Render the overview tab with dataset preview and historical time series.
+    
+    Args:
+        info: Dictionary containing file information
+        result: Dictionary containing analysis results
+        uploaded_file: Uploaded file object
+    """
     st.subheader("Dataset Preview")
+    
+    # Display dataset preview
     if info:
         try:
             file_bytes = uploaded_file.getvalue() if uploaded_file else None
@@ -18,6 +33,8 @@ def render_overview_tab(info, result, uploaded_file):
             st.info("Preview unavailable.")
 
     st.subheader("Historical Time Series")
+    
+    # Display historical time series chart
     if result.get("chart_historical"):
         fig = go.Figure(result["chart_historical"], skip_invalid=True)
         st.plotly_chart(fig, use_container_width=True)

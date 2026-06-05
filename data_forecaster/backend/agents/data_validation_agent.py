@@ -9,6 +9,7 @@ from langchain_ollama import ChatOllama
 from core.config import GEMINI_MODEL, USE_OLLAMA, OLLAMA_BASE_URL, OLLAMA_MODEL, OLLAMA_API_KEY
 from core.logging_config import get_logger
 from schemas import ValidationResult
+from prompts.data_validation_prompt import DATA_VALIDATION_PROMPT
 
 logger = get_logger(__name__)
 
@@ -72,14 +73,7 @@ def run_validation_agent(
         f"- Regularity: {'Regular' if is_regular else 'Irregular'}"
     )
 
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", "You are a data validation expert. Summarize the data quality for forecasting."),
-        ("human", (
-            "Validate the current time series dataset based on these metrics:\n\n"
-            "{report}\n\n"
-            "Provide a professional summary of the data quality and suitability for forecasting.{ai_instruction}"
-        ))
-    ])
+    prompt = DATA_VALIDATION_PROMPT
 
     try:
         chain = prompt | llm

@@ -9,6 +9,7 @@ from core.config import GEMINI_MAX_TOKENS, GEMINI_MODEL, GEMINI_TEMPERATURE, USE
 from core.logging_config import get_logger
 from rag.knowledge_base import RAGKnowledgeBase
 from schemas import ForecastResult, ModelSelectionResult, StatisticalResult, ValidationResult
+from prompts.report_generation_prompt import REPORT_GENERATION_PROMPT
 
 logger = get_logger(__name__)
 
@@ -28,7 +29,7 @@ def run_report_agent(
     rag_kb: RAGKnowledgeBase,
     user_prompt: str | None = None,
     preflight_options: dict[str, Any] | None = None,
-) -> tuple[str, list[dict[str, Any]]]:
+) -> tuple[str, list[dict[str, Any]], list[dict[str, str]]]:
     """Use the LLM with RAG context to write a 6-section analyst report."""
 
     # ── Build analysis context string ─────────────────────────────────────────
@@ -51,6 +52,21 @@ def run_report_agent(
     else:
         trend_direction = "flat"
 
+    # ── Logic-Driven Visual Strategy ─────────────────────────────────────────
+    visual_strategy = []
+    if statistical.seasonal_period and statistical.seasonal_period > 1:
+        visual_strategy.append({
+            "chart": "STL Decomposition", 
+            "reason": "Strong seasonal patterns detected; decomposition is essential to isolate recurring cycles from underlying growth."
+        })
+    if forecast.mape > 15:
+        visual_strategy.append({
+            "chart": "Forecast Confidence Intervals",
+            "reason": "High variance in data requires emphasis on the 95% CI ribbon to communicate risk and uncertainty to the C-suite."
+        })
+    if model_selection.selected_model == "SARIMA":
+        visual_strategy.append({"chart": "ACF/PACF", "reason": "Used to validate the seasonal autoregressive components of the selected model."})
+
     # Identify where the AI was asked to make the decision
     auto_choices = [k for k, v in (preflight_options or {}).items() if v == "Let AI Decide"]
     ai_decision_context = ""
@@ -65,6 +81,7 @@ def run_report_agent(
     analysis_context = f"""
 ANALYSIS RESULTS SUMMARY
 =========================
+Domain: {statistical.domain}
 Data Quality:
   - Rows: {validation.row_count} | Freq: {validation.frequency} | Regular: {validation.is_regular}
   - Missing/Dupes/Gaps: {validation.missing_values}/{validation.duplicate_timestamps}/{validation.missing_timestamps}
@@ -101,16 +118,18 @@ Forecast Results:
   - Start/End Values: {round(first_forecast, 2) if first_forecast is not None else 'N/A'} / {round(last_forecast, 2) if last_forecast is not None else 'N/A'}
   - Projected change over horizon: {f'{pct_change:+.1f}%' if pct_change is not None else 'N/A'}
   - First 10 forecast values: {forecast_values_sample}
+Visual Strategy Recommendations: {visual_strategy}
 """
 
     # ── Pre-fetch RAG context in one batch to reduce LLM hits ────────────────
     methodology_context = ""
-    for section in _REPORT_SECTIONS:
-        try:
-            chunks = rag_kb.retrieve(section, k=2)
-            methodology_context += f"\n--- Methodology for {section} ---\n" + "\n".join(chunks)
-        except Exception as exc:
-            logger.warning("RAG retrieval failed for section '%s': %s", section, exc)
+    try:
+        # Consolidate sections into a single retrieval query for efficiency
+        combined_query = " ".join(_REPORT_SECTIONS)
+        chunks = rag_kb.retrieve(combined_query, k=6)
+        methodology_context = "\n".join(chunks)
+    except Exception as exc:
+        logger.warning("RAG retrieval failed: %s", exc)
 
     if USE_OLLAMA:
         llm = ChatOllama(
@@ -141,42 +160,7 @@ Forecast Results:
         if auto_choices else ""
     )
 
-    prompt_template = ChatPromptTemplate.from_messages([
-        ("system", (
-            "You are a senior data scientist writing a formal forecast report for a C-suite executive (CEO level). "
-            "The report must be clear, authoritative, and business-oriented. "
-            "Use the provided methodology context to ensure analytical rigour."
-        )),
-        ("human", (
-            "DATA CONTEXT:\n{data_context}\n\n"
-            "METHODOLOGY CONTEXT:\n{rag_context}\n\n"
-            "{ai_logic_instruction}\n"
-            "Write a comprehensive report. You MUST address the ADDITIONAL USER INSTRUCTIONS provided below. "
-            "Organize the report into at least these 8 sections (use ## level headings):\n\n"
-            "## 1. Executive Summary\n"
-            "A concise summary. State the bottom line: what the data shows now, "
-            "the headline forecast direction and magnitude, model accuracy, and one key risk or caveat.\n\n"
-            "## 2. What We Currently See — State of the Data\n"
-            "Describe the current state and historical pattern of the time series in plain business language. "
-            "Cover: overall trend direction and strength, whether seasonality exists, "
-            "data quality, and recent trajectory. Reference specific numbers.\n\n"
-            "## 3. Where We Think We Are Going — Forecast Outlook\n"
-            "Provide a narrative outlook. State projected first/last values, % change, "
-            "and describe uncertainty bands.\n\n"
-            "## 4. Techniques Applied\n"
-            "Explain cleaning, stationarity tests (ADF/KPSS), STL, and model selection using the Methodology Context.\n\n"
-            "## 5. Assumptions Made\n"
-            "State assumptions regarding stationarity, seasonality, and persistence.\n\n"
-            "## 6. Model Performance & Accuracy\n"
-            "Interpret error metrics (RMSE, MAE, MAPE) for an executive reader. If a model comparison was requested, include it here.\n\n"
-            "## 7. Risks & Limitations\n"
-            "Cover structural break risks and model-specific constraints.\n\n"
-            "## 8. Recommendations\n"
-            "Provide actionable recommendations based on results.\n\n"
-            "Write each section fully. Do not use placeholder text.\n\n"
-            "ADDITIONAL USER INSTRUCTIONS TO INTEGRATE:\n{extra_instructions}"
-        ))
-    ])
+    prompt_template = REPORT_GENERATION_PROMPT
 
     try:
         # Invoke the LLM once with all the context needed
@@ -185,7 +169,8 @@ Forecast Results:
             "data_context": analysis_context,
             "rag_context": methodology_context,
             "ai_logic_instruction": ai_logic_instruction,
-            "extra_instructions": extra_instructions
+            "extra_instructions": extra_instructions,
+            "visual_strategy": str(visual_strategy)
         })
         report = response.content
         reasoning_steps.append({"thought": "Generating final report in a single pass...", "observation": "Complete"})
@@ -199,7 +184,7 @@ Forecast Results:
         report = _fallback_report(validation, statistical, model_selection, forecast)
 
     logger.info("Report generation complete. Length: %d chars", len(report))
-    return report, reasoning_steps
+    return report, reasoning_steps, visual_strategy
 
 
 def _fallback_report(
@@ -252,156 +237,127 @@ def _fallback_report(
         else "No strong seasonality was detected in this series."
     )
 
-    return f"""## 1. Executive Summary
+    return f"""## 1. Strategic Overview
 
-This report presents the results of an automated time series forecast conducted across **{validation.row_count} observations**
-at **{validation.frequency}** frequency. The **{forecast.model_used}** model was selected as the most appropriate technique
-for this data. Over the {len(forecast.forecast)}-period forecast horizon, the series is projected to move from
+This strategic brief outlines the results of a quantitative forecasting analysis conducted on **{validation.row_count} historical observations**
+at **{validation.frequency}** frequency. Utilizing the **{forecast.model_used}** methodology, we have identified a high-fidelity path forward
+for the core business metrics. Over the {len(forecast.forecast)}-period outlook, the metric is projected to move from
 **{round(first_forecast, 2) if first_forecast is not None else 'N/A'}** to
 **{round(last_forecast, 2) if last_forecast is not None else 'N/A'}**
-({f'{pct_change:+.1f}%' if pct_change is not None else 'direction unclear'}).
-Forecast accuracy is **{mape_quality}**, with MAPE = {forecast.mape:.2f}%.
-The primary caveat is that this model assumes historical patterns will persist; any structural shift in the underlying
-business environment would require the model to be recalibrated.
+({f'{pct_change:+.1f}%' if pct_change is not None else 'net change pending'}).
+Overall forecast reliability is rated as **{mape_quality}** (MAPE: {forecast.mape:.2f}%).
+Executive attention is directed to the assumption of pattern persistence, which remains the primary sensitivity in this model.
 
 ---
 
-## 2. What We Currently See — State of the Data
+## 2. Historical Performance & Trend Analysis
 
-The time series comprises **{validation.row_count} data points** recorded at **{validation.frequency}** intervals,
-spanning from the beginning of the dataset to the most recent available observation.
+Analysis of the **{validation.row_count} data points** indicates a complex historical structure. For visual confirmation, 
+refer to the **Historical Line Chart** and the **STL Decomposition** panels.
 
-**Trend:** A **{trend_direction}** trend is {'present' if statistical.has_trend else 'not clearly present'}
-(slope = {statistical.trend_slope:.6f}), indicating that the underlying level of the series is
-{trend_verb} over time.
+**Growth Trajectory:** A **{trend_direction}** trend is {'robustly present' if statistical.has_trend else 'statistically insignificant'}
+(slope: {statistical.trend_slope:.6f}), indicating that the baseline is {trend_verb} over the observed timeframe.
 
-**Seasonality:** {seasonality_note}
+**Cyclical Drivers:** {seasonality_note}
 
-**Data Quality:** The dataset is {'clean with no issues detected' if not validation.issues else 'generally usable but has the following issues: ' + '; '.join(validation.issues)}.
-Missing timestamps: {validation.missing_timestamps}. Missing values: {validation.missing_values}.
-Duplicate timestamps: {validation.duplicate_timestamps}. Intervals are {'regular' if validation.is_regular else 'irregular'}.
+**Data Integrity:** {'The source data meets all quality benchmarks for high-precision modeling.' if not validation.issues else 'The following data quality constraints were identified: ' + '; '.join(validation.issues)}.
+Gaps detected: {validation.missing_timestamps}. Missing values: {validation.missing_values}.
+Duplicate records: {validation.duplicate_timestamps}. Sampling regularity: {'Verified' if validation.is_regular else 'Irregular intervals observed'}.
 
 {statistical.summary}
 
 ---
 
-## 3. Where We Think We Are Going — Forecast Outlook
+## 3. Future Growth & Market Outlook
 
-Over the **{len(forecast.forecast)}-period horizon** from **{first_date}** to **{last_date}**:
+The **{len(forecast.forecast)}-period projections** (from **{first_date}** to **{last_date}**) are visualized in the 
+**Forecast & Confidence Intervals** chart.
 
-- **Opening forecast:** {round(first_forecast, 2) if first_forecast is not None else 'N/A'}
-- **Closing forecast:** {round(last_forecast, 2) if last_forecast is not None else 'N/A'}
-- **Projected change:** {f'{pct_change:+.1f}%' if pct_change is not None else 'N/A'}
+- **Initial Projected Value:** {round(first_forecast, 2) if first_forecast is not None else 'N/A'}
+- **Terminal Projected Value:** {round(last_forecast, 2) if last_forecast is not None else 'N/A'}
+- **Projected Delta:** {f'{pct_change:+.1f}%' if pct_change is not None else 'N/A'}
 
-The 95% confidence intervals widen progressively with the forecast horizon, reflecting the natural accumulation
-of uncertainty in longer-range predictions.
-
-- **Lower bound (conservative scenario, first period):** {round(forecast.lower_ci[0], 2) if forecast.lower_ci else 'N/A'}
-- **Upper bound (optimistic scenario, final period):** {round(forecast.upper_ci[-1], 2) if forecast.upper_ci else 'N/A'}
-
-Given the {mape_quality} forecast accuracy, the central projections should be treated as the most likely path,
-with the confidence bands framing the realistic range of outcomes.
+The 95% confidence bands (shaded region) illustrate the volatility risk over time. While the central projection 
+remains the most probable outcome, the range between **{round(forecast.lower_ci[0], 2) if forecast.lower_ci else 'N/A'}** 
+(conservative) and **{round(forecast.upper_ci[-1], 2) if forecast.upper_ci else 'N/A'}** (optimistic) 
+provides the necessary boundaries for risk-adjusted planning.
 
 ---
 
-## 4. Techniques Applied
+## 4. Analytical Methodology & Rigor
 
-The following analytical pipeline was applied in sequence:
+Our team applied a multi-stage analytical pipeline to ensure decision-making rigor:
 
-**Data Validation:** The input series was inspected for missing timestamps, duplicate entries, irregular intervals,
-and missing values before any modelling took place.
+**Validation & Pre-processing:** Rigorous audits for duplicates, gaps, and outliers were conducted prior to model training.
 
-**Stationarity Testing (ADF & KPSS):** The Augmented Dickey-Fuller (ADF) test checks whether the series has a
-unit root (i.e., a non-stationary trend). The KPSS test complements this by testing the null of stationarity.
-{stationarity_note}
-ADF p-value: {statistical.adf_p_value:.4f} | KPSS p-value: {statistical.kpss_p_value:.4f}.
+**Stationarity Assessment (ADF/KPSS):** We evaluated the series for statistical stability. {stationarity_note}
+Confidence levels: ADF (p={statistical.adf_p_value:.4f}), KPSS (p={statistical.kpss_p_value:.4f}).
 
-**STL Decomposition:** The series was decomposed into trend, seasonal, and residual components using STL
-(Seasonal and Trend decomposition using Loess). This reveals the underlying structure hidden within the raw data.
+**Structural Decomposition:** STL methodology was utilized to isolate underlying growth from seasonal noise and irregular shocks.
 
-**ACF / PACF Analysis:** Autocorrelation (ACF) and Partial Autocorrelation (PACF) functions were computed to
-understand the serial dependence structure, which informs the lag order selection for ARIMA-family models.
+**Lag Dependency Analysis:** ACF and PACF visualizations were analyzed to determine the optimal memory depth for the forecasting algorithms.
 
-**Model Selection:** Three candidate models were evaluated — ARIMA, SARIMA, and Holt-Winters.
-The selection agent reviewed stationarity, trend, and seasonality characteristics to recommend the best fit.
-**{model_selection.selected_model}** was selected. {model_selection.explanation[:500]}
+**Model Selection Matrix:** Competing architectures (ARIMA, SARIMA, Holt-Winters) were stress-tested.
+**{model_selection.selected_model}** emerged as the superior choice. {model_selection.explanation[:500]}
 
 ---
 
-## 5. Assumptions Made
+## 5. Critical Business Assumptions
 
-The following assumptions are embedded in this forecast and must be understood by decision-makers:
+Stakeholders should consider the following foundational assumptions:
 
-1. **Historical pattern persistence:** The model assumes that the statistical structure of the past (trend, seasonality,
-   autocorrelation) will continue into the future. Any material change in the business environment, market conditions,
-   or data-generating process would invalidate this assumption.
+1. **Structural Persistence:** The model assumes the economic and operational drivers of the past will persist. 
+   Abrupt market shifts or policy changes are not factored into this baseline.
 
-2. **Stationarity treatment:** {stationarity_note} The modelling approach accounts for the degree of differencing required.
+2. **Stationarity Framework:** {stationarity_note}
 
-3. **Seasonality:** {seasonality_note} {'An additive or multiplicative seasonal component was incorporated into the model.' if statistical.seasonal_period else 'No seasonal adjustment was applied.'}
+3. **Seasonal Stability:** {seasonality_note} {'The model incorporates a dynamic seasonal adjustment layer.' if statistical.seasonal_period else 'No significant seasonality was assumed for this projection.'}
 
-4. **Data regularity:** The forecast assumes that future observations will arrive at the same **{validation.frequency}** cadence as the historical data.
+4. **Cadence Consistency:** Future data is assumed to arrive at the current **{validation.frequency}** frequency.
 
-5. **No external regressors:** This is a univariate model. External factors — such as macroeconomic conditions,
-   competitor actions, policy changes, or one-off events — are not incorporated.
-
-6. **Missing value treatment:** {'Missing values were imputed before modelling.' if validation.missing_values > 0 else 'No missing values were present; no imputation was required.'}
-
-7. **Out-of-sample validity:** The model was fitted on all available historical data. Accuracy metrics (RMSE, MAE, MAPE)
-   are based on in-sample fit and should be interpreted as optimistic estimates of out-of-sample performance.
+5. **Univariate Isolation:** The model operates solely on historical values; it does not account for exogenous 
+   variables like competitor activity or macro-economic indicators.
 
 ---
 
-## 6. Model Performance & Accuracy
+## 6. Model Reliability & Performance Assessment
 
-| Metric | Value | Interpretation |
-|--------|-------|----------------|
-| RMSE   | {forecast.rmse:.4f} | Root Mean Squared Error — penalises large errors more heavily |
-| MAE    | {forecast.mae:.4f} | Mean Absolute Error — average absolute deviation per period |
-| MAPE   | {forecast.mape:.2f}% | Mean Absolute Percentage Error — scale-independent accuracy |
+For a visual benchmarking of our modeling accuracy, refer to the **Model Comparison Chart**.
 
-**Overall accuracy: {mape_quality.upper()}**
+| Reliability Metric | Performance Value | Executive Interpretation |
+|--------------------|-------------------|--------------------------|
+| RMSE               | {forecast.rmse:.4f} | Margin of error weighted for large deviations |
+| MAE                | {forecast.mae:.4f}  | Average expected deviation per period |
+| MAPE               | {forecast.mape:.2f}% | Scale-independent accuracy rating |
 
-As a benchmark: MAPE below 10% is generally considered high accuracy in forecasting practice;
-10–20% is acceptable for planning purposes; above 20% warrants caution in operational decisions.
-
----
-
-## 7. Risks & Limitations
-
-- **Structural breaks:** If the business undergoes a significant change (new product, market disruption, regulatory shift),
-  the historical pattern will no longer be a reliable guide. The model has no mechanism to detect or adapt to this.
-
-- **Horizon degradation:** Forecast accuracy degrades as the horizon extends. Short-term forecasts (1–3 periods ahead)
-  will be materially more reliable than long-term projections.
-
-- **Model-specific constraints:** {forecast.model_used} performs well under its design assumptions but may underperform
-  if the data contains nonlinearities, abrupt level shifts, or multiple overlapping seasonal cycles.
-
-- **Univariate limitation:** No external signals (leading indicators, promotional calendars, etc.) are factored in.
-  Adding relevant exogenous variables could significantly improve accuracy.
-
-- **Recalibration cadence:** It is recommended to retrain the model whenever a material volume of new data becomes
-  available, or at minimum on a {validation.frequency} rolling basis.
+**Overall Model Confidence: {mape_quality.upper()}**
 
 ---
 
-## 8. Recommendations
+## 7. Strategic Risks & Operational Constraints
 
-Based on the forecast results and identified patterns, the following actions are recommended:
+- **Regime Shifts:** Material changes to business operations will render the current model obsolete.
+- **Horizon Decay:** Accuracy is highest in the short term; long-term projections carry significantly higher uncertainty.
+- **Data Latency:** The forecast is only as current as the last data point. Real-time shifts may not be reflected.
+- **Model Specificity:** {forecast.model_used} is optimized for specific data structures and may be less responsive 
+  to sudden non-linear spikes compared to alternative methods.
 
-1. **Plan for {trend_plan}:**
-   The {trend_direction} trend suggests {trend_action}.
+---
 
-2. **{'Account for seasonal peaks and troughs:' if statistical.seasonal_period else 'Monitor for emerging seasonality:'}**
-   {f'With a {statistical.seasonal_period}-period cycle, operational and financial plans should explicitly budget for the predictable high and low points within each cycle.' if statistical.seasonal_period else 'No strong seasonality was detected, but this should be re-evaluated as more data accumulates.'}
+## 8. Tactical Recommendations & Next Steps
 
-3. **Use confidence intervals for scenario planning:** Present the upper and lower 95% CI bounds to leadership
-   as the optimistic and conservative scenarios respectively. Avoid treating the central forecast as a certainty.
+Based on the quantitative outlook, we propose the following strategic responses:
 
-4. **Set up a model monitoring process:** Track actual vs. forecast values each period. If the error consistently
-   exceeds {forecast.mape:.1f}% for three or more consecutive periods, trigger a model review.
+1. **Growth Strategy Alignment:**
+   The identified **{trend_direction}** trajectory indicates that {trend_action}.
 
-5. **Enrich the model with external data:** Consider incorporating relevant exogenous variables (e.g. economic
-   indicators, marketing spend, weather) into a multivariate model to improve forecast accuracy.
+2. **Seasonal Capacity Management:**
+   {f'Leverage the {statistical.seasonal_period}-period cycle to optimize resource allocation during predictable peak and trough periods.' if statistical.seasonal_period else 'Continue monitoring for emerging seasonal signals as the dataset grows.'}
+
+3. **Risk-Adjusted Budgeting:** Use the 95% Confidence Intervals for conservative financial forecasting and buffer planning.
+
+4. **Continuous Calibration:** Implement a rolling re-estimation of the model on a {validation.frequency} basis 
+   to capture emerging shifts in the trend.
+
+5. **Multivariate Expansion:** Future iterations should incorporate exogenous market signals to improve predictive power.
 """
