@@ -1,0 +1,89 @@
+ACF and PACF Interpretation for Time Series Model Selection
+
+The AutoCorrelation Function (ACF) and Partial AutoCorrelation Function (PACF) are
+the primary diagnostic tools for identifying the order of ARIMA and SARIMA models.
+Reading them correctly is essential for model selection.
+
+What is Autocorrelation?
+Autocorrelation measures the correlation between a time series and a lagged version
+of itself. At lag k, the ACF value r(k) is the Pearson correlation between y_t and
+y_{t-k} across all valid time points.
+
+Key property: for a wide-sense stationary process, the ACF is symmetric (r(k) = r(-k))
+and always achieves its maximum at lag 0, where r(0) = 1.
+
+What is the Partial Autocorrelation Function?
+The PACF at lag k measures the correlation between y_t and y_{t-k} after removing
+the linear effect of all intermediate lags 1 through k-1. It isolates the direct
+relationship at exactly lag k.
+
+Significance Bounds
+Both ACF and PACF plots display confidence bands (typically ±1.96/sqrt(n) for 95%
+confidence). Spikes that exceed these bounds are statistically significant.
+
+Important caveat: testing many lags simultaneously inflates the false positive rate.
+Expect approximately 5% of lags to appear significant by chance even in white noise.
+
+Pattern Recognition for AR, MA, and ARMA Models
+
+AR(p) process — AutoRegressive of order p:
+- ACF: decays exponentially or in a damped sinusoidal pattern (never cuts off sharply).
+- PACF: cuts off sharply after lag p (significant spikes at lags 1..p only).
+- Implication: the PACF directly indicates the AR order.
+
+MA(q) process — Moving Average of order q:
+- ACF: cuts off sharply after lag q (significant spikes at lags 1..q only).
+- PACF: decays exponentially (never cuts off sharply).
+- Implication: the ACF directly indicates the MA order.
+
+ARMA(p,q) process:
+- ACF: decays exponentially after lag q.
+- PACF: decays exponentially after lag p.
+- Neither cuts off sharply — use information criteria (AIC/BIC) instead of plots.
+
+Common ACF/PACF Patterns and Their Interpretations
+
+1. All spikes within bounds → white noise; no autocorrelation. Series may already
+   be well-modelled or no model is needed.
+
+2. ACF decays slowly (many significant lags, gradual decline) → non-stationary.
+   The series needs differencing before fitting ARIMA. This is the most common
+   pattern for economic and financial time series.
+
+3. Large negative ACF spike at lag 1, rest within bounds → over-differenced.
+   Reduce the differencing order.
+
+4. PACF spike at lag 1 only, ACF decay → AR(1) process. One autoregressive term.
+
+5. ACF spike at lag 1 only, PACF decay → MA(1) process. One moving average term.
+
+6. ACF and PACF both have significant spikes at multiples of s (seasonal period) →
+   seasonal component present. SARIMA or Holt-Winters is more appropriate than ARIMA.
+
+7. ACF spike at lag s, PACF spikes decaying at lags s, 2s, 3s → seasonal MA(1).
+
+8. PACF spike at lag s, ACF spikes decaying at lags s, 2s, 3s → seasonal AR(1).
+
+Using ACF/PACF with ARIMA
+After identifying d (differencing order) via ADF/KPSS:
+1. Compute ACF and PACF on the differenced series.
+2. Use the patterns above to identify candidate (p, q) pairs.
+3. Fit competing models and compare AIC/BIC. Lower is better; prefer parsimony.
+4. After fitting, check the residual ACF — it should show no significant spikes
+   (residuals should be white noise). If significant spikes remain, the model is
+   under-specified.
+
+Ljung-Box Test
+The Ljung-Box test is a formal statistical test for residual autocorrelation. It
+tests the joint null hypothesis that a group of autocorrelations up to lag h are
+all zero. A p-value > 0.05 means residuals are consistent with white noise —
+a necessary condition for a well-fitted model.
+
+Seasonality Detection via ACF
+If the ACF shows significant spikes repeating at regular intervals (lags s, 2s, 3s,
+etc.) the series has a seasonal component of period s. For monthly data this is
+typically s=12; for quarterly s=4; for weekly s=52 or s=7.
+
+The periodogram (spectral analysis) is an alternative tool for detecting seasonality:
+dominant peaks in the power spectrum correspond to cyclic frequencies, and their
+inverse gives the period in number of time steps.

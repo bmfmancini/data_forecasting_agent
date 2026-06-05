@@ -1,0 +1,78 @@
+Stationarity and Unit Root Testing in Time Series Analysis
+
+A time series is stationary when its statistical properties — mean, variance, and
+autocorrelation structure — do not change over time. Stationarity is a fundamental
+prerequisite for many forecasting models (ARIMA in particular) and must be assessed
+before model fitting.
+
+Types of Stationarity
+- Strict stationarity: the joint distribution of any set of observations is invariant
+  to time shifts. Rarely required in practice.
+- Wide-sense (weak) stationarity: only the first two moments (mean and autocovariance)
+  are time-invariant. This is the standard assumption in ARIMA modelling.
+- Trend-stationary: the series has a deterministic trend that can be removed by
+  regression, leaving a stationary residual.
+- Difference-stationary (unit root): the series requires differencing to become
+  stationary. One difference produces an I(1) series; two differences an I(2) series.
+
+The Augmented Dickey-Fuller (ADF) Test
+The ADF test checks for the presence of a unit root. The null hypothesis is that
+the series has a unit root (i.e. is non-stationary). Rejection of the null supports
+stationarity.
+
+Test statistic: a t-statistic from the regression:
+  delta(y_t) = alpha + beta*t + gamma*y_{t-1} + sum(delta_i * delta(y_{t-i})) + e_t
+
+Interpretation:
+- p-value < 0.05: reject the null — series is likely stationary.
+- p-value >= 0.05: fail to reject — series may have a unit root.
+- More negative ADF statistic = stronger evidence against unit root.
+
+The ADF test can be underpowered in small samples and may fail to detect
+near-unit-root processes. Always confirm with a complementary test.
+
+The KPSS Test (Kwiatkowski-Phillips-Schmidt-Shin)
+The KPSS test reverses the null hypothesis: the null is that the series IS stationary
+(around a deterministic trend). A significant result indicates non-stationarity.
+
+Interpretation:
+- p-value >= 0.05: fail to reject — series is consistent with stationarity.
+- p-value < 0.05: reject — series is likely non-stationary.
+
+Using ADF and KPSS Together
+Because the tests have opposing nulls, combining them reduces the risk of error:
+
+| ADF result      | KPSS result     | Conclusion                          |
+|-----------------|-----------------|-------------------------------------|
+| Stationary      | Stationary      | Series is stationary                |
+| Non-stationary  | Non-stationary  | Series has a unit root — difference |
+| Stationary      | Non-stationary  | Trend-stationary — detrend          |
+| Non-stationary  | Stationary      | Ambiguous — may be long-memory      |
+
+The most common outcome for economic/financial series is that both tests agree on
+non-stationarity, calling for first-order differencing (d=1 in ARIMA).
+
+Differencing to Achieve Stationarity
+- First difference: delta(y_t) = y_t - y_{t-1} — removes linear trends.
+- Second difference: removes quadratic trends. Rarely necessary; d > 2 is almost
+  never justified and risks over-differencing.
+- Seasonal differencing: y_t - y_{t-s} (s = seasonal period) removes seasonal unit roots.
+  Used in SARIMA as the D parameter.
+
+Over-differencing symptoms: ACF dominated by a large negative spike at lag 1 (MA(1)
+signature imposed by the differencing operation itself).
+
+Practical Decision Rule
+1. Plot the series — if it has a clear upward/downward trend, differencing is likely needed.
+2. Run ADF: p-value > 0.05 suggests non-stationarity.
+3. Run KPSS: p-value < 0.05 confirms non-stationarity.
+4. Apply first difference and retest. If both tests now support stationarity, d=1 is correct.
+5. If variance changes over time (heteroskedasticity), apply a log transformation first.
+
+Common Misconceptions
+- A stationary series does NOT mean the series is unpredictable — it means its
+  statistical structure is stable, which is exactly what forecasting models exploit.
+- Trending series are NOT automatically non-stationary in the unit-root sense; a
+  linear deterministic trend can be removed by regression rather than differencing.
+- The ADF and KPSS tests are sensitive to the choice of lag length. Use information
+  criteria (AIC or BIC) to select lags automatically.

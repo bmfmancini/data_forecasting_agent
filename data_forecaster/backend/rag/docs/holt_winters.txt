@@ -1,0 +1,54 @@
+Holt-Winters Exponential Smoothing Methodology
+
+Holt-Winters (also called Triple Exponential Smoothing) is a classical forecasting method that
+models three components of a time series: level, trend, and seasonality. It is intuitive,
+computationally efficient, and performs well on a broad range of business data.
+
+Components:
+1. Level (l_t): The smoothed estimate of the series value at time t.
+2. Trend (b_t): The smoothed estimate of the direction and rate of change.
+3. Seasonal (s_t): The smoothed periodic factor for each season.
+
+Seasonal Modes:
+- Additive: seasonal fluctuations are roughly constant in magnitude regardless of the level.
+  Appropriate when the seasonal swing does not grow with the series (e.g., temperature anomalies).
+- Multiplicative: seasonal fluctuations scale proportionally with the level.
+  Appropriate when the seasonal amplitude grows as the series grows (e.g., airline passengers).
+
+Smoothing Parameters:
+- alpha (α): level smoothing factor [0, 1]. High α gives more weight to recent observations.
+- beta (β): trend smoothing factor [0, 1]. High β makes the trend more responsive to changes.
+- gamma (γ): seasonal smoothing factor [0, 1]. Controls how fast the seasonal estimate adapts.
+
+These parameters are optimised during fitting by minimising the sum of squared errors (SSE).
+statsmodels ExponentialSmoothing performs this optimisation automatically.
+
+When to use Holt-Winters:
+- Series with a clear trend and stable seasonality.
+- When visual inspection shows repeating seasonal patterns of consistent shape.
+- When a simple, interpretable model is preferred over ARIMA/SARIMA.
+- Short to medium-term forecasts (1–2 seasonal cycles ahead).
+
+Advantages:
+- Requires no stationarity pre-processing.
+- Fast to fit even on long series.
+- Handles both additive and multiplicative seasonality natively.
+- Interpretable parameters with direct business meaning.
+
+Limitations:
+- Less flexible than ARIMA/SARIMA for complex autocorrelation structures.
+- Assumes the trend is linear (Damped Holt-Winters can handle non-linear trends).
+- Multiplicative mode requires strictly positive series values (cannot handle zeros/negatives).
+- Prediction intervals are approximate (derived analytically from the model error variance).
+
+Choosing Additive vs Multiplicative:
+- If the seasonal amplitude is roughly constant over time → Additive.
+- If the seasonal amplitude grows proportionally with the level → Multiplicative.
+- When uncertain, fit both and compare AIC.
+
+Evaluation Metrics: RMSE, MAE, MAPE (same framework as ARIMA — see arima.txt).
+
+Relationship to Other Methods:
+- Simple Exponential Smoothing is a special case with no trend and no seasonality.
+- Holt's Linear Trend method is a special case with trend but no seasonality.
+- Holt-Winters is the full three-component model used for trended, seasonal data.

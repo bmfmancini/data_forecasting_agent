@@ -1,0 +1,225 @@
+from __future__ import annotations
+
+from typing import Any
+
+import pandas as pd
+
+from schemas import PreflightDecision, PreflightResponse
+
+
+AGGREGATION_OPTIONS = ["Let AI Decide", "sum", "mean", "latest"]
+MISSING_OPTIONS = ["Let AI Decide", "interpolate", "forward-fill", "drop"]
+FREQUENCY_OPTIONS = ["Let AI Decide", "D", "W", "MS", "QS", "YS"]
+
+
+def run_preflight_checks(
+    df: pd.DataFrame,
+    date_col: str,
+    value_col: str,
+    forecast_horizon: int,
+) -> PreflightResponse:
+    """Inspect the selected series and return any user decisions needed."""
+    selected = _selected_frame(df, date_col, value_col)
+    series = selected.set_index(date_col)[value_col]
+    diffs = series.index.to_series().diff().dropna()
+    mode_diff = diffs.mode()[0] if len(diffs) > 0 else None
+
+    duplicate_ts = int(selected[date_col].duplicated().sum())
+    missing_values = int(series.isna().sum())
+    missing_ts = int((diffs > mode_diff * 1.5).sum()) if mode_diff is not None else 0
+    is_regular = bool(diffs.nunique() == 1) if len(diffs) > 0 else True
+    detected_frequency = _infer_frequency(selected.set_index(date_col))
+    usable_observations = int(series.dropna().shape[0])
+
+    issues: list[str] = []
+    warnings: list[str] = []
+    decisions: list[PreflightDecision] = []
+    defaults: dict[str, Any] = {
+        "duplicate_strategy": "Let AI Decide",
+        "missing_strategy": "Let AI Decide",
+        "frequency": "Let AI Decide",
+        "continue_short_series": "continue",
+    }
+
+    if duplicate_ts:
+        issues.append(f"{duplicate_ts} duplicate timestamp(s) found.")
+        decisions.append(PreflightDecision(
+            key="duplicate_strategy",
+            label="Duplicate timestamp handling",
+            message="Choose how repeated timestamps should be combined before forecasting.",
+            options=AGGREGATION_OPTIONS,
+            default="Let AI Decide",
+        ))
+
+    if missing_values:
+        issues.append(f"{missing_values} missing value(s) found in '{value_col}'.")
+        decisions.append(PreflightDecision(
+            key="missing_strategy",
+            label="Missing value handling",
+            message="Choose how missing values should be handled before modeling.",
+            options=MISSING_OPTIONS,
+            default="Let AI Decide",
+        ))
+
+    if missing_ts or not is_regular:
+        issues.append("Irregular intervals or timestamp gaps found.")
+        decisions.append(PreflightDecision(
+            key="frequency",
+            label="Forecast frequency",
+            message="Choose the regular frequency to use for the forecast output.",
+            options=FREQUENCY_OPTIONS,
+            default="Let AI Decide",
+        ))
+
+    if usable_observations < 20:
+        warnings.append(
+            f"Only {usable_observations} usable observation(s) are available; forecast reliability may be low."
+        )
+        decisions.append(PreflightDecision(
+            key="continue_short_series",
+            label="Short series confirmation",
+            message="Confirm that you want to continue with a short time series.",
+            options=["continue", "stop"],
+            default="continue",
+        ))
+
+    if forecast_horizon > max(usable_observations, 1):
+        warnings.append(
+            "The forecast horizon is longer than the usable historical series; uncertainty may be high."
+        )
+
+    if series.dropna().lt(0).any():
+        warnings.append("The selected value column contains negative values.")
+
+    if decisions:
+        status = "needs_input" if any(d.required for d in decisions) else "warning"
+    elif warnings:
+        status = "warning"
+    else:
+        status = "ready"
+
+    return PreflightResponse(
+        status=status,
+        detected_frequency=detected_frequency,
+        row_count=len(selected),
+        usable_observations=usable_observations,
+        duplicate_timestamps=duplicate_ts,
+        missing_values=missing_values,
+        missing_timestamps=missing_ts,
+        is_regular=is_regular,
+        issues=issues,
+        warnings=warnings,
+        decisions=decisions,
+        defaults=defaults,
+    )
+
+
+def prepare_series_frame(
+    df: pd.DataFrame,
+    date_col: str,
+    value_col: str,
+    options: dict[str, Any] | None = None,
+) -> tuple[pd.DataFrame, str]:
+    """Apply preflight choices and return a clean two-column time series frame."""
+    options = options or {}
+    selected = _selected_frame(df, date_col, value_col)
+    
+    # Resolve "auto" selections
+    frequency = options.get("frequency")
+    if not frequency or frequency == "Let AI Decide":
+        frequency = _infer_frequency(selected.set_index(date_col))
+        
+    duplicate_strategy = options.get("duplicate_strategy", "mean")
+    if duplicate_strategy == "Let AI Decide":
+        duplicate_strategy = "mean"
+        
+    missing_strategy = options.get("missing_strategy", "interpolate")
+    if missing_strategy == "Let AI Decide":
+        missing_strategy = "interpolate"
+
+    series = selected.set_index(date_col)[value_col].sort_index()
+
+    if series.index.has_duplicates:
+        series = _aggregate_duplicates(series, duplicate_strategy)
+
+    if frequency:
+        series = series.asfreq(frequency)
+
+    series = _handle_missing(series, missing_strategy)
+    series = series.dropna()
+
+    prepared = series.rename(value_col).reset_index()
+    prepared.columns = [date_col, value_col]
+    return prepared, frequency
+
+
+def _selected_frame(df: pd.DataFrame, date_col: str, value_col: str) -> pd.DataFrame:
+    if date_col == value_col:
+        raise ValueError("Date column and value column must be different.")
+    if date_col not in df.columns:
+        raise ValueError(f"Date column '{date_col}' was not found.")
+    if value_col not in df.columns:
+        raise ValueError(f"Value column '{value_col}' was not found.")
+
+    selected = df[[date_col, value_col]].copy()
+    selected[date_col] = pd.to_datetime(selected[date_col], errors="coerce")
+    selected[value_col] = pd.to_numeric(selected[value_col], errors="coerce")
+    selected = selected.dropna(subset=[date_col])
+    selected = selected.sort_values(date_col).reset_index(drop=True)
+    if selected.empty:
+        raise ValueError("No usable timestamps were found for the selected date column.")
+    return selected
+
+
+def _aggregate_duplicates(series: pd.Series, strategy: str) -> pd.Series:
+    if strategy == "sum":
+        return series.groupby(level=0).sum(min_count=1)
+    if strategy == "latest":
+        return series.groupby(level=0).last()
+    return series.groupby(level=0).mean()
+
+
+def _handle_missing(series: pd.Series, strategy: str) -> pd.Series:
+    if strategy == "drop":
+        return series.dropna()
+    if strategy == "forward-fill":
+        return series.ffill().bfill()
+    return series.interpolate(method="time").ffill().bfill()
+
+
+def _infer_frequency(df: pd.DataFrame) -> str:
+    try:
+        inferred = pd.infer_freq(df.index)
+        if inferred:
+            return _normalize_frequency(inferred)
+    except Exception:
+        pass
+
+    if len(df) >= 2:
+        deltas = df.index.to_series().diff().dropna()
+        median_days = deltas.dt.days.median()
+        if median_days <= 1:
+            return "D"
+        if median_days <= 7:
+            return "W"
+        if median_days <= 31:
+            return "MS"
+        if median_days <= 92:
+            return "QS"
+        return "YS"
+    return "MS"
+
+
+def _normalize_frequency(freq: str) -> str:
+    f = (freq or "").upper().lstrip("-")
+    if f.startswith("MS") or f.startswith("M"):
+        return "MS"
+    if f.startswith("QS") or f.startswith("Q"):
+        return "QS"
+    if f.startswith("W"):
+        return "W"
+    if f.startswith("D"):
+        return "D"
+    if f.startswith("YS") or f.startswith("Y") or f.startswith("A"):
+        return "YS"
+    return f

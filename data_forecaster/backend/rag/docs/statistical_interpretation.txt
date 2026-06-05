@@ -1,0 +1,86 @@
+Statistical Test Interpretation Guide
+
+1. Augmented Dickey-Fuller (ADF) Test
+
+Purpose: Tests whether a time series has a unit root (is non-stationary).
+Null hypothesis (H0): The series has a unit root — it is non-stationary.
+Alternative hypothesis (H1): The series is stationary.
+
+Interpretation:
+- p-value < 0.05 → Reject H0 → Series is stationary. No differencing needed.
+- p-value ≥ 0.05 → Fail to reject H0 → Series is non-stationary. Apply differencing.
+
+The ADF test statistic is negative; the more negative it is, the stronger the evidence against the
+unit root. Critical values are provided at 1%, 5%, and 10% significance levels.
+
+Practical note: The ADF test can be underpowered for short series. Combine with KPSS for robust
+stationarity assessment.
+
+2. KPSS Test (Kwiatkowski-Phillips-Schmidt-Shin)
+
+Purpose: Tests the null of stationarity (complementary to ADF).
+Null hypothesis (H0): The series is stationary (trend-stationary).
+Alternative hypothesis (H1): The series has a unit root.
+
+Interpretation:
+- p-value > 0.05 → Fail to reject H0 → Series is stationary.
+- p-value ≤ 0.05 → Reject H0 → Series is non-stationary.
+
+Combined ADF + KPSS interpretation:
+- ADF non-stationary AND KPSS non-stationary → Clearly non-stationary. Apply differencing.
+- ADF stationary AND KPSS stationary → Clearly stationary. Proceed with modelling.
+- ADF stationary AND KPSS non-stationary → Possible trend-stationarity. Examine further.
+- ADF non-stationary AND KPSS stationary → Possible near-unit root. May need differencing.
+
+3. STL Decomposition
+
+STL (Seasonal and Trend decomposition using Loess) decomposes a series: Y_t = T_t + S_t + R_t
+- T_t: trend component (smooth long-term movement)
+- S_t: seasonal component (repeating periodic pattern)
+- R_t: residual (irregular noise)
+
+Interpretation:
+- Large seasonal component relative to residual → strong seasonality → use seasonal model.
+- Monotonically increasing trend → use a model that handles trend (ARIMA d≥1, Holt-Winters).
+- Residuals with no clear pattern → model captures the signal well.
+- Residuals with remaining autocorrelation → model may be under-fit.
+
+4. ACF (AutoCorrelation Function)
+
+Plots the correlation of the series with itself at lag k.
+- Gradually decaying ACF → AR process or need for differencing.
+- Sharp cut-off at lag q (then zero) → MA(q) process.
+- Spikes at multiples of m → seasonal autocorrelation at period m.
+
+5. PACF (Partial AutoCorrelation Function)
+
+Plots the correlation between Y_t and Y_{t-k} after removing the effect of intermediate lags.
+- Sharp cut-off at lag p (then zero) → AR(p) process.
+- Gradually decaying PACF → MA process.
+
+Combined ACF/PACF rules:
+- ACF cuts off at q, PACF decays → MA(q)
+- PACF cuts off at p, ACF decays → AR(p)
+- Both decay gradually → ARMA(p,q) — use AIC/BIC to select p and q
+
+6. Periodogram (Spectral Analysis)
+
+Plots the power (variance explained) across frequencies.
+- Dominant frequency f → period m = 1/f (in observation units).
+- Sharp spike at f = 1/12 on monthly data → annual seasonality (m=12).
+- Use this to confirm the seasonal period before fitting SARIMA or Holt-Winters.
+
+7. Error Metrics
+
+RMSE = sqrt( mean( (actual - forecast)^2 ) )
+  - Penalises large errors heavily; same units as the series.
+  - Use when large errors are disproportionately costly.
+
+MAE = mean( |actual - forecast| )
+  - Average absolute deviation; robust to outliers.
+  - Use for a balanced view of typical forecast error.
+
+MAPE = mean( |actual - forecast| / |actual| ) × 100%
+  - Scale-independent percentage error.
+  - Undefined when actual = 0; use with caution for near-zero series.
+  - Values below 10% are generally considered good; below 5% excellent.

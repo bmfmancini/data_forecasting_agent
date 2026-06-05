@@ -1,0 +1,54 @@
+SARIMA (Seasonal AutoRegressive Integrated Moving Average) Methodology
+
+SARIMA extends ARIMA by adding explicit seasonal components, making it suitable for time series that
+exhibit periodic patterns — such as monthly sales, quarterly earnings, or hourly energy consumption.
+
+Model Notation: SARIMA(p, d, q)(P, D, Q)[m]
+
+Non-seasonal part (p, d, q): identical to ARIMA — captures short-range autocorrelation.
+
+Seasonal part (P, D, Q)[m]:
+- P (Seasonal AR order): number of seasonal autoregressive lags.
+- D (Seasonal differencing): number of seasonal differences applied. D=1 means subtracting the
+  value m periods ago, removing seasonal non-stationarity.
+- Q (Seasonal MA order): number of seasonal moving-average lags.
+- m (Seasonal period): number of observations per season. Common values:
+    m=12  monthly data with annual seasonality
+    m=4   quarterly data
+    m=7   daily data with weekly seasonality
+    m=52  weekly data with annual seasonality
+
+Identifying the Seasonal Period:
+1. Visual inspection — does the series repeat every m periods?
+2. Periodogram (spectral analysis) — dominant frequency corresponds to 1/m.
+3. Seasonal decomposition (STL) — isolates the seasonal component for visual confirmation.
+4. ACF — significant spikes at multiples of m indicate seasonal autocorrelation.
+
+Stationarity Requirements:
+Both seasonal and non-seasonal stationarity must be achieved:
+- Apply d ordinary differences for non-seasonal trends.
+- Apply D seasonal differences (lag m) for seasonal trends.
+After differencing, ADF and KPSS tests should confirm stationarity.
+
+Parameter Selection:
+pmdarima's auto_arima(seasonal=True, m=m) performs an efficient stepwise search over the full
+(p,d,q)(P,D,Q)[m] space, guided by AIC/BIC. Setting stepwise=True dramatically reduces computation.
+
+When to use SARIMA:
+- Series with a clear, stable seasonal pattern (e.g., airline passengers, retail sales).
+- When STL decomposition reveals a significant seasonal component.
+- When ACF shows spikes at lag m, 2m, 3m ...
+- When the periodogram has a dominant frequency at 1/m.
+
+Advantages over ARIMA:
+- Explicitly models seasonal patterns instead of treating them as noise.
+- Produces better long-range forecasts for seasonal series.
+- Confidence intervals account for seasonal uncertainty.
+
+Limitations:
+- Requires a long history (at least 2–3 full seasonal cycles, ideally more).
+- More parameters increase estimation complexity and risk of overfitting.
+- Assumes the seasonal pattern is stable — structural breaks reduce accuracy.
+- Computationally more expensive than plain ARIMA.
+
+Evaluation Metrics: RMSE, MAE, MAPE (same as ARIMA — see arima.txt).

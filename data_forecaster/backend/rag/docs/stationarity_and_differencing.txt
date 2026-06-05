@@ -1,0 +1,41 @@
+Stationarity and Differencing in Time Series Analysis
+
+Stationarity is a fundamental assumption for many forecasting models, including 
+ARIMA and SARIMA. A stationary time series is one whose statistical properties 
+(mean, variance, and autocorrelation) are constant over time.
+
+Types of Stationarity:
+1. Strict Stationarity: The entire distribution is invariant to time shifts.
+2. Weak (Trend) Stationarity: Mean and variance are constant, and autocovariance 
+   depends only on the lag, not the time.
+
+Testing for Stationarity:
+- Augmented Dickey-Fuller (ADF) Test: Tests the null hypothesis that a unit root 
+  is present (series is non-stationary). A p-value < 0.05 suggests stationarity.
+- KPSS Test: Tests the null hypothesis that the series is stationary. A 
+  p-value > 0.05 suggests stationarity.
+
+Interpreting Conflicting Results:
+- Stationary (ADF < 0.05, KPSS > 0.05): No action needed.
+- Non-stationary (ADF > 0.05, KPSS < 0.05): Series has a unit root; differencing 
+  is required.
+- Trend Stationary (ADF > 0.05, KPSS > 0.05): The series appears non-stationary 
+  due to a deterministic trend. Removing the trend makes it stationary.
+- Difference Stationary (ADF < 0.05, KPSS < 0.05): The series is stationary 
+  around a stochastic trend.
+
+Differencing:
+If a series is non-stationary, differencing is the primary tool to achieve 
+stationarity:
+- First-order differencing (d=1): y'_t = y_t - y_{t-1}. Effective for removing 
+  linear trends.
+- Second-order differencing (d=2): y''_t = y'_t - y'_{t-1}. Used when the trend 
+  is changing over time.
+- Seasonal differencing (D=1): y'_t = y_t - y_{t-m}, where m is the seasonal 
+  period. Effective for removing seasonal patterns.
+
+Over-differencing:
+Applying differencing to an already stationary series can introduce artificial 
+autocorrelation (moving average patterns) and increase forecast error. 
+Models should use the minimum degree of differencing necessary to achieve 
+a stable mean.
