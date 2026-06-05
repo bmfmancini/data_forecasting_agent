@@ -49,6 +49,19 @@ class AnalyzeRequest(BaseModel):
     preflight_options: Optional[dict[str, Any]] = Field(default_factory=dict)
 
 
+class ChatRequest(BaseModel):
+    """Request schema for the data explorer chat."""
+    file_id: str
+    query: str
+
+
+class ChatResponse(BaseModel):
+    """Response schema for the data explorer chat."""
+    answer: str
+    visualization_data: Optional[dict[str, Any]] = None
+    visualization_type: Optional[str] = None
+
+
 class ValidationResult(BaseModel):
     is_valid: bool
     row_count: int
