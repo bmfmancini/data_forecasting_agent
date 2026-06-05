@@ -14,11 +14,12 @@ from agents.forecasting_agent import run_forecasting_agent
 from agents.model_selection_agent import run_model_selection_agent
 from agents.report_generation_agent import run_report_agent
 from agents.statistical_analysis_agent import run_statistical_agent
+from utils.ingestion_manager import load_file_to_dataframe
 from core.logging_config import get_logger
 from rag.knowledge_base import RAGKnowledgeBase
 from schemas import AnalysisResponse, ModelSelectionResult
 from utils.preflight import prepare_series_frame
-from utils.statistical import compute_acf_pacf, run_stl_decomposition
+from utils.statistical import compute_acf_pacf, run_stl_decomposition, apply_boxcox
 from utils.visualization import (
     plot_acf_pacf,
     plot_forecast,
@@ -39,6 +40,24 @@ def get_rag_kb(persist_directory: str = "./chroma_db") -> RAGKnowledgeBase:
         _rag_kb = RAGKnowledgeBase(persist_directory=persist_directory)
         _rag_kb.load_documents()
     return _rag_kb
+
+
+def run_pipeline_from_file(
+    file_path: str,
+    date_col: str,
+    value_col: str,
+    freq: str,
+    forecast_horizon: int,
+    **kwargs
+) -> AnalysisResponse:
+    """
+    Entry point for Task 3: Ingests enterprise documents (CSV/Excel)
+    directly into the forecasting pipeline.
+    """
+    logger.info("Ingesting file for pipeline: %s", file_path)
+    df = load_file_to_dataframe(file_path)
+    file_id = file_path.split('/')[-1]
+    return run_pipeline(df, file_id, date_col, value_col, freq, forecast_horizon, **kwargs)
 
 
 def run_pipeline(
@@ -81,8 +100,36 @@ def run_pipeline(
     # ── Agent 2: Statistical Analysis ────────────────────────────────────────
     logger.info("Agent 2: Statistical Analysis")
     _progress(20, "Running statistical analysis…")
-    stat_result = run_statistical_agent(series, seasonal_period)
+    user_domain = (preflight_options or {}).get("data_domain", "Skip / Let AI Guess")
+    stat_result = run_statistical_agent(
+        series, 
+        seasonal_period, 
+        user_domain=user_domain
+    )
     _progress(35, "Statistical analysis complete")
+
+    # ── Agent-Driven Remediation ─────────────────────────────────────────────
+    # If the user selected 'Let AI Decide' in preflight, we follow the agent's recommendation
+    if (preflight_options or {}).get("outlier_strategy") == "Let AI Decide":
+        if "iqr_clip" in stat_result.recommended_remediation:
+            logger.info("Agent decided to APPLY IQR clipping.")
+            from utils.statistical import apply_iqr_clipping
+            series = apply_iqr_clipping(series)
+            logger.info("IQR clipping applied successfully.")
+        else:
+            logger.info("Agent decided to SKIP IQR clipping (likely determined outliers are signal).")
+
+    if "box_cox" in stat_result.recommended_remediation:
+        logger.info("Agent decided to APPLY Box-Cox transformation.")
+        try:
+            series, _ = apply_boxcox(series)
+            stat_result.summary += "\n\n(Note: A Box-Cox transformation was applied to stabilize variance based on agent recommendation.)"
+        except Exception as e:
+            logger.warning("Box-Cox application failed: %s", e)
+
+    if "change_point_analysis" in stat_result.recommended_remediation:
+        logger.info("Agent detected significant change points. Adding note to analysis.")
+        stat_result.summary += "\n\n(Note: Change point analysis detected structural breaks. Consider segmenting the data for improved forecasting accuracy.)"
 
     # ── Agent 3: Model Selection ──────────────────────────────────────────────
     if forced_model:
@@ -117,7 +164,7 @@ def run_pipeline(
     logger.info("Agent 5: Report Generation")
     _progress(80, "Generating report…")
     rag_kb = get_rag_kb(chroma_persist_dir)
-    report, report_reasoning = run_report_agent(
+    report, report_reasoning, visual_strategy = run_report_agent(
         validation_result,
         stat_result,
         model_selection,
@@ -165,6 +212,7 @@ def run_pipeline(
         forecast=forecast_result,
         report=report,
         report_reasoning=report_reasoning,
+        strategic_visual_recommendations=visual_strategy,
         chart_historical=chart_historical,
         chart_stl=chart_stl,
         chart_acf_pacf=chart_acf_pacf,

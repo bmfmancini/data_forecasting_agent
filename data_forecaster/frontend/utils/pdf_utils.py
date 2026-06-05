@@ -1,8 +1,22 @@
+"""
+PDF utility functions for the Time Series Data Forecaster Agent.
+Provides functionality to convert markdown reports to PDF format.
+"""
+
 import re
 from fpdf import FPDF
 
 def report_to_pdf(report_md: str, title: str = "Forecast Report") -> bytes:
-    """Render a markdown report string to PDF bytes using fpdf2."""
+    """
+    Render a markdown report string to PDF bytes using fpdf2.
+    
+    Args:
+        report_md: Markdown formatted report text
+        title: Title for the PDF document
+        
+    Returns:
+        PDF document as bytes
+    """
 
     def _sanitize(text: str) -> str:
         """Drop chars outside Latin-1 so core fonts don't crash."""

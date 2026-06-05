@@ -1,8 +1,18 @@
-import streamlit as st
-from typing import Any
+"""
+UI utility functions for the Time Series Data Forecaster Agent.
+Provides helper functions for rendering UI components and handling user interactions.
+"""
 
-def render_reasoning(steps: list[dict[str, Any]]) -> None:
-    """Helper to render agent reasoning traces in an expander."""
+import streamlit as st
+from typing import Any, Dict, List
+
+def render_reasoning(steps: List[Dict[str, Any]]) -> None:
+    """
+    Helper to render agent reasoning traces in an expander.
+    
+    Args:
+        steps: List of reasoning steps to display
+    """
     if not steps:
         st.info("No detailed reasoning trace captured for this step.")
         return
@@ -21,10 +31,29 @@ def render_reasoning(steps: list[dict[str, Any]]) -> None:
             if step.get("observation"):
                 st.info(f"Observation: {step['observation']}")
 
-def preflight_defaults(preflight: dict[str, Any]) -> dict[str, Any]:
+def preflight_defaults(preflight: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Extract default values from preflight decisions.
+    
+    Args:
+        preflight: Preflight dictionary containing decisions
+        
+    Returns:
+        Dictionary mapping decision keys to default values
+    """
     return {decision["key"]: decision["default"] for decision in preflight.get("decisions", [])}
 
-def render_preflight_contents(preflight: dict[str, Any], disabled: bool = False) -> dict[str, Any]:
+def render_preflight_contents(preflight: Dict[str, Any], disabled: bool = False) -> Dict[str, Any]:
+    """
+    Render preflight content and return user selections.
+    
+    Args:
+        preflight: Preflight dictionary containing decisions
+        disabled: Whether to disable UI elements
+        
+    Returns:
+        Dictionary of user selections
+    """
     if preflight.get("detected_frequency"):
         st.caption(f"Selected-series frequency: **{preflight['detected_frequency']}**")
 

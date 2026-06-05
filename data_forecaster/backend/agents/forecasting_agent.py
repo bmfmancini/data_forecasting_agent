@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -11,7 +12,9 @@ from core.logging_config import get_logger
 from forecasting.arima_model import fit_arima
 from forecasting.holt_winters import fit_holt_winters
 from forecasting.sarima_model import fit_sarima
+from forecasting.ewma_model import fit_ewma
 from schemas import ForecastResult, ModelSelectionResult, StatisticalResult
+from prompts.forecasting_prompt import FORECASTING_PROMPT
 
 logger = get_logger(__name__)
 
@@ -38,6 +41,7 @@ def run_forecasting_agent(
         ("Holt-Winters", fit_holt_winters, {}),
         ("ARIMA", fit_arima, {}),
         ("SARIMA", fit_sarima, {"seasonal_period": seasonal_period}),
+        ("EWMA", fit_ewma, {}),
     ]:
         try:
             results_store[name] = fn(series, forecast_horizon, **kwargs)
@@ -61,15 +65,7 @@ def run_forecasting_agent(
     else:
         llm = ChatGoogleGenerativeAI(model=GEMINI_MODEL, temperature=0)
 
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", "You are a forecasting expert. Review the performance of multiple models."),
-        ("human", (
-            "The pre-selected model is: {selected}.\n\n"
-            "Review these fitting results:\n"
-            "{summary}\n\n"
-            "Explain why the selected model is optimal or note if another model achieved better MAPE."
-        ))
-    ])
+    prompt = FORECASTING_PROMPT
 
     try:
         chain = prompt | llm

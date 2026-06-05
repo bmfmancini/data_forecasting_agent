@@ -54,6 +54,9 @@ def fit_sarima(
             seasonal=use_seasonal,
             m=seasonal_period,
             stepwise=True,
+            max_p=3, max_q=3,
+            max_P=2, max_Q=2,
+            max_order=10,
             error_action="ignore",
             suppress_warnings=True,
             information_criterion="aic",
@@ -66,16 +69,13 @@ def fit_sarima(
         logger.warning("SARIMA metrics failed: %s", exc)
         rmse = mae = mape = 0.0
 
-    # ── Full-series fit for forecast ─────────────────────────────────────────
-    full_model = pm.auto_arima(
-        series,
-        seasonal=use_seasonal,
-        m=seasonal_period,
-        stepwise=True,
-        error_action="ignore",
-        suppress_warnings=True,
-        information_criterion="aic",
-    )
+    # ── Full-series fit: Reuse parameters from train_model to avoid redundant search ─
+    full_model = pm.ARIMA(
+        order=train_model.order,
+        seasonal_order=train_model.seasonal_order,
+        suppress_warnings=True
+    ).fit(series)
+
     logger.info(
         "SARIMA selected order: %s seasonal_order: %s",
         full_model.order, full_model.seasonal_order,
