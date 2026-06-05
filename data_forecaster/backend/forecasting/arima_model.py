@@ -39,6 +39,7 @@ def fit_arima(series: pd.Series, forecast_horizon: int) -> dict:
             train,
             seasonal=False,
             stepwise=True,
+            max_p=5, max_q=5,
             error_action="ignore",
             suppress_warnings=True,
             information_criterion="aic",
@@ -51,15 +52,12 @@ def fit_arima(series: pd.Series, forecast_horizon: int) -> dict:
         logger.warning("ARIMA metrics failed: %s", exc)
         rmse = mae = mape = 0.0
 
-    # ── Full-series fit for forecast ─────────────────────────────────────────
-    full_model = pm.auto_arima(
-        series,
-        seasonal=False,
-        stepwise=True,
-        error_action="ignore",
-        suppress_warnings=True,
-        information_criterion="aic",
-    )
+    # ── Full-series fit: Reuse optimal order found during training ────────────
+    full_model = pm.ARIMA(
+        order=train_model.order,
+        suppress_warnings=True
+    ).fit(series)
+
     logger.info("ARIMA selected order: %s", full_model.order)
 
     forecast_values, conf_int = full_model.predict(

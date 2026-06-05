@@ -122,12 +122,13 @@ Visual Strategy Recommendations: {visual_strategy}
 
     # ── Pre-fetch RAG context in one batch to reduce LLM hits ────────────────
     methodology_context = ""
-    for section in _REPORT_SECTIONS:
-        try:
-            chunks = rag_kb.retrieve(section, k=2)
-            methodology_context += f"\n--- Methodology for {section} ---\n" + "\n".join(chunks)
-        except Exception as exc:
-            logger.warning("RAG retrieval failed for section '%s': %s", section, exc)
+    try:
+        # Consolidate sections into a single retrieval query for efficiency
+        combined_query = " ".join(_REPORT_SECTIONS)
+        chunks = rag_kb.retrieve(combined_query, k=6)
+        methodology_context = "\n".join(chunks)
+    except Exception as exc:
+        logger.warning("RAG retrieval failed: %s", exc)
 
     if USE_OLLAMA:
         llm = ChatOllama(

@@ -164,7 +164,7 @@ def run_pipeline(
     logger.info("Agent 5: Report Generation")
     _progress(80, "Generating report…")
     rag_kb = get_rag_kb(chroma_persist_dir)
-    report, report_reasoning = run_report_agent(
+    report, report_reasoning, visual_strategy = run_report_agent(
         validation_result,
         stat_result,
         model_selection,
@@ -212,6 +212,7 @@ def run_pipeline(
         forecast=forecast_result,
         report=report,
         report_reasoning=report_reasoning,
+        strategic_visual_recommendations=visual_strategy,
         chart_historical=chart_historical,
         chart_stl=chart_stl,
         chart_acf_pacf=chart_acf_pacf,

@@ -114,6 +114,7 @@ class AnalysisResponse(BaseModel):
     forecast: ForecastResult
     report: str
     report_reasoning: list[dict[str, Any]] = Field(default_factory=list)
+    strategic_visual_recommendations: list[dict[str, str]] = Field(default_factory=list)
     chart_historical: dict
     chart_stl: dict
     chart_acf_pacf: str          # base64 PNG
