@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Optional
+import re
 
 import numpy as np
 import pandas as pd
@@ -18,12 +19,19 @@ from utils.statistical import (
     run_kpss_test,
     run_periodogram,
     run_stl_decomposition,
+    detect_outliers_iqr,
+    run_white_noise_test,
+    check_variance_stability,
 )
 
 logger = get_logger(__name__)
 
 
-def run_statistical_agent(series: pd.Series, seasonal_period: int = 12) -> StatisticalResult:
+def run_statistical_agent(
+    series: pd.Series, 
+    seasonal_period: int = 12, 
+    user_domain: str = "General"
+) -> StatisticalResult:
     """Run statistical analysis ReAct agent and return a StatisticalResult."""
 
     # ── Compute all stats directly ────────────────────────────────────────────
@@ -49,6 +57,9 @@ def run_statistical_agent(series: pd.Series, seasonal_period: int = 12) -> Stati
     kpss_res = run_kpss_test(series)
     trend = detect_trend(series)
     periodogram = run_periodogram(series)
+    outliers = detect_outliers_iqr(series)
+    white_noise = run_white_noise_test(series)
+    var_stability = check_variance_stability(series)
 
     # Infer seasonal period: prefer explicit arg, validate against periodogram
     dom_period = periodogram["dominant_period"]
@@ -69,11 +80,19 @@ def run_statistical_agent(series: pd.Series, seasonal_period: int = 12) -> Stati
     conf_bound = 1.96 / np.sqrt(len(series))
     sig_acf = [i for i, v in enumerate(acf_data["acf_values"][1:], 1) if abs(v) > conf_bound]
     
+    # Treat 'Skip' or the generic 'Other' as a trigger for AI inference
+    is_inferred = user_domain in ["Skip / Let AI Guess", "Other (Custom)"]
+    domain_info = f"USER-SPECIFIED DOMAIN: {user_domain}" if not is_inferred else "DOMAIN: User skipped or requested inference (AI must infer domain from stats)"
+
     profile = (
+        f"{domain_info}\n"
         f"STATISTICAL PROFILE:\n"
         f"- ADF: {adf['interpretation']}\n"
         f"- KPSS: {kpss_res['interpretation']}\n"
         f"- Trend: {trend['interpretation']}\n"
+        f"- Outliers: {outliers['interpretation']}\n"
+        f"- Randomness: {white_noise['interpretation']}\n"
+        f"- Variance Stability: {var_stability['interpretation']}\n"
         f"- Dominant Period: {periodogram['dominant_period']:.2f}\n"
         f"- STL Seasonal Range: {max(stl['seasonal']) - min(stl['seasonal']):.2f}\n"
         f"- Significant ACF Lags: {sig_acf[:5]}"
@@ -95,14 +114,31 @@ def run_statistical_agent(series: pd.Series, seasonal_period: int = 12) -> Stati
         ("human", (
             "Perform a statistical analysis based on this profile:\n\n"
             "{profile}\n\n"
-            "Provide a concise qualitative summary of the series stationarity, trend strength, and seasonal patterns."
+            "Provide a concise qualitative summary. Your primary goal is to identify context and decide on remediation:\n\n"
+            "1. Identify the likely DOMAIN (e.g. Retail, Network, Finance) from statistics and metadata if not specified.\n"
+            "2. Should IQR clipping be applied? If the domain is 'Network Traffic' or 'IoT', keep outliers as they are likely signal (bursts).\n"
+            "3. Should Box-Cox transformation be used to stabilize variance?\n"
+            "4. Is the series too 'noisy' for reliable forecasting?\n\n"
+            "If you recommend a method, include the keyword 'APPLY_IQR' or 'APPLY_BOXCOX' in your response. "
+            "Start your response with 'DOMAIN: <Detected Domain>'."
         ))
     ])
 
+    recommended_remediation = []
+    domain_guess = user_domain if not is_inferred else "General / Unknown"
     try:
         chain = prompt | llm
         response = chain.invoke({"profile": profile})
         summary = response.content
+
+        if match := re.search(r"DOMAIN:\s*([^\n\.]+)", summary, re.IGNORECASE):
+            domain_guess = match.group(1).strip()
+
+        if "APPLY_IQR" in summary:
+            recommended_remediation.append("iqr_clip")
+        if "APPLY_BOXCOX" in summary:
+            recommended_remediation.append("box_cox")
+            
         reasoning_steps = [
             {"thought": "Running ADF, KPSS, and STL in Python...", "observation": profile},
             {"thought": "Generating qualitative interpretation...", "observation": "Complete"}
@@ -133,6 +169,12 @@ def run_statistical_agent(series: pd.Series, seasonal_period: int = 12) -> Stati
         kpss_p_value=kpss_res["p_value"],
         has_trend=trend["has_trend"],
         trend_slope=trend["slope"],
+        outlier_count=outliers["count"],
+        outlier_ratio=outliers["ratio"],
+        is_white_noise=white_noise["is_white_noise"],
+        white_noise_p_value=white_noise["p_value"],
+        recommended_remediation=recommended_remediation,
+        domain=domain_guess,
         seasonal_period=inferred_period,
         dominant_period=periodogram["dominant_period"],
         summary=summary,

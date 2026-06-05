@@ -21,6 +21,7 @@ class PreflightDecision(BaseModel):
     options: list[str]
     default: Any
     required: bool = False
+    allow_custom: bool = False
 
 
 class PreflightResponse(BaseModel):
@@ -71,6 +72,12 @@ class StatisticalResult(BaseModel):
     kpss_p_value: float
     has_trend: bool
     trend_slope: float
+    outlier_count: int = 0
+    outlier_ratio: float = 0.0
+    is_white_noise: bool = False
+    white_noise_p_value: float = 1.0
+    recommended_remediation: list[str] = Field(default_factory=list) # e.g. ["iqr_clip", "box_cox"]
+    domain: Optional[str] = None
     seasonal_period: Optional[int] = None
     dominant_period: Optional[float] = None
     summary: str

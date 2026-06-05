@@ -6,9 +6,10 @@ from typing import Any, Optional
 import numpy as np
 import pandas as pd
 from scipy.signal import periodogram as scipy_periodogram
-from scipy.stats import linregress
+from scipy.stats import linregress, boxcox
 from statsmodels.tsa.seasonal import STL
 from statsmodels.tsa.stattools import acf, adfuller, kpss, pacf
+from statsmodels.stats.diagnostic import acorr_ljungbox
 
 from core.logging_config import get_logger
 
@@ -176,3 +177,89 @@ def detect_trend(series: pd.Series) -> dict[str, Any]:
         "slope": float(slope),
         "interpretation": interpretation,
     }
+
+def detect_outliers_iqr(series: pd.Series) -> dict[str, Any]:
+    """
+    Detects outliers using the Interquartile Range (IQR) method.
+    Returns the count, ratio, and recommended bounds.
+    """
+    q1 = series.quantile(0.25)
+    q3 = series.quantile(0.75)
+    iqr = q3 - q1
+    lower_bound = q1 - 1.5 * iqr
+    upper_bound = q3 + 1.5 * iqr
+    
+    outliers = series[(series < lower_bound) | (series > upper_bound)]
+    count = len(outliers)
+    ratio = count / len(series) if len(series) > 0 else 0
+    
+    interpretation = (
+        f"Found {count} outliers ({ratio:.1%}). "
+        f"Recommended clipping bounds: [{lower_bound:.2f}, {upper_bound:.2f}]."
+    )
+    
+    return {
+        "count": count,
+        "ratio": ratio,
+        "lower_bound": lower_bound,
+        "upper_bound": upper_bound,
+        "interpretation": interpretation
+    }
+
+def run_white_noise_test(series: pd.Series) -> dict[str, Any]:
+    """
+    Ljung-Box test for white noise. If p-value > 0.05, the series is likely 
+    random noise and forecasting will be ineffective.
+    """
+    # Test up to 10 lags or 1/5th of series length
+    lags = min(10, len(series) // 5)
+    if lags < 1: lags = 1
+    
+    res = acorr_ljungbox(series.dropna(), lags=[lags], return_df=True)
+    p_value = float(res.lb_pvalue.iloc[0])
+    is_white_noise = p_value > 0.05
+    
+    interpretation = (
+        f"Ljung-Box p-value: {p_value:.4f}. "
+        f"{'Series is white noise (random).' if is_white_noise else 'Series contains significant signal.'}"
+    )
+    
+    return {
+        "p_value": p_value,
+        "is_white_noise": is_white_noise,
+        "interpretation": interpretation
+    }
+
+def check_variance_stability(series: pd.Series) -> dict[str, Any]:
+    """
+    Checks if the variance changes with the level (heteroskedasticity).
+    If the correlation between mean and std of rolling windows is high, 
+    a Box-Cox transform is recommended.
+    """
+    if len(series) < 20:
+        return {"is_unstable": False, "correlation": 0.0, "interpretation": "Series too short for variance check."}
+    
+    window = max(5, len(series) // 10)
+    rolling_mean = series.rolling(window=window).mean().dropna()
+    rolling_std = series.rolling(window=window).std().dropna()
+    
+    corr = float(rolling_mean.corr(rolling_std))
+    is_unstable = abs(corr) > 0.6 and series.min() > 0
+    
+    interpretation = (
+        f"Variance-to-mean correlation: {corr:.2f}. "
+        f"{'Variance is unstable; transformation recommended.' if is_unstable else 'Variance appears stable.'}"
+    )
+    
+    return {
+        "is_unstable": is_unstable,
+        "correlation": corr,
+        "interpretation": interpretation
+    }
+
+def apply_boxcox(series: pd.Series) -> tuple[pd.Series, float]:
+    """Applies Box-Cox transformation. Returns (transformed_series, lambda_val)."""
+    # Ensure strictly positive
+    vals = series.values + (abs(series.min()) + 1 if series.min() <= 0 else 0)
+    transformed, lam = boxcox(vals)
+    return pd.Series(transformed, index=series.index), float(lam)

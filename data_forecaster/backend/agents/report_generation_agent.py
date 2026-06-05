@@ -65,6 +65,7 @@ def run_report_agent(
     analysis_context = f"""
 ANALYSIS RESULTS SUMMARY
 =========================
+Domain: {statistical.domain}
 Data Quality:
   - Rows: {validation.row_count} | Freq: {validation.frequency} | Regular: {validation.is_regular}
   - Missing/Dupes/Gaps: {validation.missing_values}/{validation.duplicate_timestamps}/{validation.missing_timestamps}
