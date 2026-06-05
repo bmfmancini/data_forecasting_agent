@@ -24,6 +24,7 @@ from utils.statistical import (
     check_variance_stability,
     detect_change_points,
 )
+from prompts.statistical_analysis_prompt import STATISTICAL_ANALYSIS_PROMPT
 
 logger = get_logger(__name__)
 
@@ -112,22 +113,7 @@ def run_statistical_agent(
     else:
         llm = ChatGoogleGenerativeAI(model=GEMINI_MODEL, temperature=0)
 
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", "You are a statistics expert. Summarize the time series characteristics."),
-        ("human", (
-            "Perform a statistical analysis based on this profile:\n\n"
-            "{profile}\n\n"
-            "Provide a concise qualitative summary. Your primary goal is to identify context and decide on remediation:\n\n"
-            "1. Identify the likely DOMAIN (e.g. Retail, Network, Finance) from statistics and metadata if not specified.\n"
-            "2. Should IQR clipping be applied? If the domain is 'Network Traffic' or 'IoT', keep outliers as they are likely signal (bursts).\n"
-            "3. Should Box-Cox transformation be used to stabilize variance?\n"
-            "4. Are there structural breaks (change points) that might affect forecasting accuracy?\n"
-            "5. Is the series too 'noisy' for reliable forecasting?\n\n"
-            "If you recommend a method, include the keyword 'APPLY_IQR' or 'APPLY_BOXCOX' in your response. "
-            "If change points are significant, include 'CHANGE_POINTS_DETECTED' in your response. "
-            "Start your response with 'DOMAIN: <Detected Domain>'."
-        ))
-    ])
+    prompt = STATISTICAL_ANALYSIS_PROMPT
 
     recommended_remediation = []
     domain_guess = user_domain if not is_inferred else "General / Unknown"

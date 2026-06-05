@@ -8,6 +8,7 @@ from langchain_ollama import ChatOllama
 from core.config import GEMINI_MODEL, USE_OLLAMA, OLLAMA_BASE_URL, OLLAMA_MODEL, OLLAMA_API_KEY
 from core.logging_config import get_logger
 from schemas import ModelSelectionResult, StatisticalResult
+from prompts.model_selection_prompt import MODEL_SELECTION_PROMPT
 
 logger = get_logger(__name__)
 
@@ -124,27 +125,7 @@ def run_model_selection_agent(stat_result: StatisticalResult) -> ModelSelectionR
     else:
         llm = ChatGoogleGenerativeAI(model=GEMINI_MODEL, temperature=0)
 
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", "You are an expert in time series model selection. Choose the best model based on statistical assessments."),
-        ("human", (
-            "Evaluate the suitability of ARIMA, SARIMA, Holt-Winters, and EWMA (Exponential Weighted Moving Average) based on these assessments:\n\n"
-            "{suitability}\n\n"
-            "Select the SINGLE best model and provide a detailed rationale.\n"
-            "Your output MUST follow this exact structure:\n"
-            "Selected model: <MODEL_NAME>\n\n"
-            "## Why <MODEL_NAME> was chosen\n"
-            "<Detailed explanation referencing metrics>\n\n"
-            "## Model Assessment Summary\n"
-            "- **ARIMA**: <suitability detail> — Suitability: High/Medium/Low\n"
-            "- **SARIMA**: <suitability detail> — Suitability: High/Medium/Low\n"
-            "- **Holt-Winters**: <suitability detail> — Suitability: High/Medium/Low\n"
-            "- **EWMA**: <suitability detail> — Suitability: High/Medium/Low\n\n"
-            "## Why other models were not chosen\n"
-            "- **<Rejected Model 1>**: <reason>\n"
-            "- **<Rejected Model 2>**: <reason>\n"
-            "- **<Rejected Model 3>**: <reason>"
-        ))
-    ])
+    prompt = MODEL_SELECTION_PROMPT
 
     try:
         chain = prompt | llm

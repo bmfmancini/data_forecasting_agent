@@ -9,6 +9,7 @@ from core.config import GEMINI_MAX_TOKENS, GEMINI_MODEL, GEMINI_TEMPERATURE, USE
 from core.logging_config import get_logger
 from rag.knowledge_base import RAGKnowledgeBase
 from schemas import ForecastResult, ModelSelectionResult, StatisticalResult, ValidationResult
+from prompts.report_generation_prompt import REPORT_GENERATION_PROMPT
 
 logger = get_logger(__name__)
 
@@ -159,54 +160,7 @@ Visual Strategy Recommendations: {visual_strategy}
         if auto_choices else ""
     )
 
-    prompt_template = ChatPromptTemplate.from_messages([
-        ("system", (
-            "You are a Senior Business Analyst presenting a data-driven narrative to C-suite executives. "
-            "Your goal is to use data storytelling to transform statistical findings into strategic business insights. "
-            "Reference charting methods and visual evidence to support your narrative, ensuring the tone is "
-            "professional, authoritative, and focused on decision-making."
-        )),
-        ("human", (
-            "DATA CONTEXT:\n{data_context}\n\n"
-            "METHODOLOGY CONTEXT:\n{rag_context}\n\n"
-            "{ai_logic_instruction}\n"
-            "Write a high-impact strategic report using data storytelling and sophisticated business terminology. "
-            "To integrate visuals, you MUST insert visual placeholder tags where they most effectively support your narrative. "
-            "Use the format: [VISUAL: <TAG_NAME>]. \n"
-            "Available TAG_NAMES:\n"
-            "- HISTORICAL: Historical time series trends\n"
-            "- STL: Seasonal and Trend decomposition\n"
-            "- ACF_PACF: Correlation and lag analysis\n"
-            "- FORECAST: Projected values and confidence intervals\n"
-            "- COMPARISON: Benchmarking model performance metrics\n\n"
-            "You have pre-selected a visual strategy: {visual_strategy}. "
-            "Ensure your narrative refers to these charts specifically when presenting findings. "
-            "\nYou MUST address the ADDITIONAL USER INSTRUCTIONS provided below. "
-            "Organize the report into at least these 8 sections (use ## level headings):\n\n"
-            "## 1. Strategic Overview\n"
-            "High-level summary for the board. State the bottom line: current trajectory, "
-            "projected forecast direction/magnitude, and an assessment of overall confidence.\n\n"
-            "## 2. Historical Performance & Trend Analysis\n"
-            "Detailed review of historical patterns. Analyze trend strength, seasonal cycles, and data quality. "
-            "Recommend using 'Historical' or 'STL Decomposition' views here.\n\n"
-            "## 3. Future Growth & Market Outlook\n"
-            "The forward-looking narrative. Detail projected values, percentage changes, and confidence intervals. "
-            "Highlight the 'Forecast' visualization as the primary reference.\n\n"
-            "## 4. Analytical Methodology & Rigor\n"
-            "Explain the technical approach in business-friendly terms. Cover cleaning steps, stationarity, "
-            "and the rationale for the selected model family.\n\n"
-            "## 5. Critical Business Assumptions\n"
-            "Outline the foundational assumptions required for this forecast to remain valid (e.g., pattern persistence).\n\n"
-            "## 6. Model Reliability & Performance Assessment\n"
-            "Benchmark model accuracy using RMSE/MAPE. Reference the 'Model Comparison' visualization to justify the selection.\n\n"
-            "## 7. Strategic Risks & Operational Constraints\n"
-            "Identify potential 'black swan' events, structural breaks, or data limitations that could impact accuracy.\n\n"
-            "## 8. Tactical Recommendations & Next Steps\n"
-            "Direct, actionable items for leadership based on the quantitative evidence.\n\n"
-            "Write each section fully. Do not use placeholder text.\n\n"
-            "ADDITIONAL USER INSTRUCTIONS TO INTEGRATE:\n{extra_instructions}"
-        ))
-    ])
+    prompt_template = REPORT_GENERATION_PROMPT
 
     try:
         # Invoke the LLM once with all the context needed
