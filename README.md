@@ -18,6 +18,10 @@ The Time Series Data Forecaster Agent is a sophisticated application that automa
 
 ## Architecture
 
+
+![Agent Architecture](data_forecaster/docs/agent_arch.jpeg)
+
+
 The system consists of five specialized agents working in sequence:
 
 1. **Data Validation Agent**: Validates and preprocesses input data
