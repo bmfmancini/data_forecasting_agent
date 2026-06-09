@@ -5,6 +5,7 @@ from .forecasting_prompt import FORECASTING_PROMPT
 from .model_selection_prompt import MODEL_SELECTION_PROMPT
 from .statistical_analysis_prompt import STATISTICAL_ANALYSIS_PROMPT
 from .report_generation_prompt import REPORT_GENERATION_PROMPT
+from .orchestrator_prompt import ORCHESTRATOR_CHAT_PROMPT
 
 __all__ = [
     "DATA_VALIDATION_PROMPT",
@@ -12,4 +13,5 @@ __all__ = [
     "MODEL_SELECTION_PROMPT",
     "STATISTICAL_ANALYSIS_PROMPT",
     "REPORT_GENERATION_PROMPT",
+    "ORCHESTRATOR_CHAT_PROMPT",
 ]
