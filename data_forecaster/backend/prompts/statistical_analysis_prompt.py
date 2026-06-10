@@ -31,7 +31,10 @@ STATISTICAL_ANALYSIS_PROMPT = ChatPromptTemplate.from_messages([
 
  "2. OUTLIERS\n"
  "Assess whether outlier treatment is required using only provided distribution metrics.\n"
- "If sample size < 30 OR insufficient evidence, output NONE.\n\n"
+ "The system provides both IQR and Z-score outlier detection results. IQR is better for skewed distributions,\n"
+ "while Z-score is better for normally distributed data (low skewness and kurtosis near 0).\n"
+ "If sample size < 30 OR insufficient evidence, output NONE.\n"
+ "If outlier treatment is needed, choose between APPLY_IQR and APPLY_ZSCORE based on data characteristics.\n\n"
 
  "3. VARIANCE STABILITY\n"
  "Assess need for Box-Cox transformation using skewness/kurtosis/variance indicators if provided.\n"
@@ -51,7 +54,7 @@ STATISTICAL_ANALYSIS_PROMPT = ChatPromptTemplate.from_messages([
 
  "For each category (OUTLIERS, VARIANCE, STATIONARITY, SIGNAL):\n"
  "Reasoning: <evidence-based explanation only>\n"
- "DECISION: <ONE OF: APPLY_IQR | APPLY_BOXCOX | CHANGE_POINTS_DETECTED | NONE | INSUFFICIENT_EVIDENCE>\n\n"
+ "DECISION: <ONE OF: APPLY_IQR | APPLY_ZSCORE | APPLY_BOXCOX | CHANGE_POINTS_DETECTED | NONE | INSUFFICIENT_EVIDENCE>\n\n"
 
  "### SAFETY CONSTRAINTS ###\n"
  "- Never output transformations that would result in data loss unless strongly justified by evidence.\n"

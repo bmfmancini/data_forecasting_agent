@@ -116,11 +116,16 @@ def run_pipeline(
     if (preflight_options or {}).get("outlier_strategy") == "Let AI Decide":
         if "iqr_clip" in stat_result.recommended_remediation:
             logger.info("Agent decided to APPLY IQR clipping.")
-            from utils.statistical import apply_iqr_clipping
+            from utils.data_cleaning import apply_iqr_clipping
             series = apply_iqr_clipping(series)
             logger.info("IQR clipping applied successfully.")
+        elif "zscore_clip" in stat_result.recommended_remediation:
+            logger.info("Agent decided to APPLY Z-score clipping.")
+            from utils.data_cleaning import apply_zscore_clipping
+            series = apply_zscore_clipping(series)
+            logger.info("Z-score clipping applied successfully.")
         else:
-            logger.info("Agent decided to SKIP IQR clipping (likely determined outliers are signal).")
+            logger.info("Agent decided to SKIP outlier clipping (likely determined outliers are signal).")
 
     if "box_cox" in stat_result.recommended_remediation:
         logger.info("Agent decided to APPLY Box-Cox transformation.")
