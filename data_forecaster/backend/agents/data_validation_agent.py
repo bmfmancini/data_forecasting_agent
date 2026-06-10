@@ -10,6 +10,7 @@ from core.config import GEMINI_MODEL, USE_OLLAMA, OLLAMA_BASE_URL, OLLAMA_MODEL,
 from core.logging_config import get_logger
 from schemas import ValidationResult
 from prompts.data_validation_prompt import DATA_VALIDATION_PROMPT
+from utils.data_cleaning import audit_series, validate_schema
 
 logger = get_logger(__name__)
 
@@ -17,7 +18,30 @@ logger = get_logger(__name__)
 def run_validation_agent(
     df: pd.DataFrame, date_col: str, value_col: str, freq: str, preflight_options: dict[str, Any] | None = None
 ) -> ValidationResult:
-    """Run the data validation ReAct agent and return a ValidationResult."""
+    """Run the data validation ReAct agent and return a ValidationResult.
+
+    The agent combines three information sources:
+
+    1. **Heuristic metrics** — missing timestamps, duplicate timestamps,
+       null values and regularity are computed directly from the series.
+    2. **Structured audit** — ``audit_series`` produces a compact
+       ``DatetimeIndex``/outlier snapshot for the LLM prompt.
+    3. **Schema validation** — ``validate_schema`` checks frequency,
+       missing‑rate and value range against a configurable contract.
+
+    Args:
+        df: Source DataFrame containing the time series.
+        date_col: Name of the datetime column.
+        value_col: Name of the numeric value column.
+        freq: Inferred pandas frequency alias.
+        preflight_options: Optional mapping of user‑selected preflight
+            decisions (used to inform the LLM when the user chose
+            ``"Let AI Decide"``).
+
+    Returns:
+        A populated :class:`ValidationResult` summarising quality issues
+        and a natural‑language summary produced by the LLM.
+    """
 
     series = df.set_index(date_col)[value_col]
 
@@ -44,8 +68,8 @@ def run_validation_agent(
     # ── LLM Setup ────────────────────────────────────────────────────────────
     if USE_OLLAMA:
         llm = ChatOllama(
-            model=OLLAMA_MODEL, 
-            base_url=OLLAMA_BASE_URL, 
+            model=OLLAMA_MODEL,
+            base_url=OLLAMA_BASE_URL,
             temperature=0,
             headers={"Authorization": f"Bearer {OLLAMA_API_KEY}"} if OLLAMA_API_KEY else None,
         )
@@ -63,14 +87,27 @@ def run_validation_agent(
         if auto_choices else ""
     )
 
+    audit_info = audit_series(series)
+    # Default validation config – can be overridden by caller in the future
+    validation_cfg = {
+        "expected_freq": freq,
+        "max_missing_rate": 0.05,
+        "min_value": -1e9,
+        "max_value": 1e9,
+    }
+    schema_report = validate_schema(series, validation_cfg)
+
     quality_report = (
         f"DATA QUALITY SNAPSHOT:\n"
-        f"- Length: {len(series)} observations\n"
-        f"- Frequency: {freq}\n"
+        f"- Length: {audit_info['length']} observations\n"
+        f"- Frequency: {audit_info['freq'] or freq}\n"
         f"- Missing Gaps: {missing_ts}\n"
         f"- Duplicates: {duplicate_ts}\n"
         f"- Null Values: {missing_vals}\n"
-        f"- Regularity: {'Regular' if is_regular else 'Irregular'}"
+        f"- Regularity: {'Regular' if is_regular else 'Irregular'}\n"
+        f"- Schema Pass: {schema_report.get('freq_regular', False)} (freq regular)\n"
+        f"- Missing Rate OK: {schema_report.get('missing_below_threshold', False)}\n"
+        f"- Values In Range: {schema_report.get('values_in_range', True)}"
     )
 
     prompt = DATA_VALIDATION_PROMPT

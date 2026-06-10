@@ -19,11 +19,11 @@ from utils.statistical import (
     run_kpss_test,
     run_periodogram,
     run_stl_decomposition,
-    detect_outliers_iqr,
     run_white_noise_test,
     check_variance_stability,
     detect_change_points,
 )
+from utils.data_cleaning import detect_outliers_iqr, detect_outliers_zscore
 from prompts.statistical_analysis_prompt import STATISTICAL_ANALYSIS_PROMPT
 
 logger = get_logger(__name__)
@@ -59,9 +59,25 @@ def run_statistical_agent(
     kpss_res = run_kpss_test(series)
     trend = detect_trend(series)
     periodogram = run_periodogram(series)
-    outliers = detect_outliers_iqr(series)
+    outliers_iqr = detect_outliers_iqr(series)
+    outliers_zscore = detect_outliers_zscore(series)
     white_noise = run_white_noise_test(series)
     var_stability = check_variance_stability(series)
+    
+    # Determine which outlier detection method to recommend based on data characteristics
+    # Z-score is better for normally distributed data, IQR for skewed distributions
+    # We'll use a simple heuristic: if the data is relatively symmetric and not heavily skewed,
+    # z-score might be more appropriate
+    skewness = series.dropna().skew()
+    kurtosis = series.dropna().kurtosis()
+    
+    # Prefer z-score for more normal distributions (low skewness and kurtosis close to 0)
+    # and when z-score detects fewer outliers than IQR (indicating IQR might be too aggressive)
+    use_zscore = (abs(skewness) < 1.0 and abs(kurtosis) < 3.0 and 
+                  outliers_zscore["count"] <= outliers_iqr["count"])
+    
+    # Use the selected outlier detection method for reporting
+    outliers = outliers_zscore if use_zscore else outliers_iqr
 
     # Infer seasonal period: prefer explicit arg, validate against periodogram
     dom_period = periodogram["dominant_period"]
@@ -87,13 +103,20 @@ def run_statistical_agent(
     is_inferred = user_domain in ["Skip / Let AI Guess", "Other (Custom)"]
     domain_info = f"USER-SPECIFIED DOMAIN: {user_domain}" if not is_inferred else "DOMAIN: User skipped or requested inference (AI must infer domain from stats)"
 
+    # Add information about which outlier detection method was used
+    outlier_method_info = f"Outliers ({'Z-score' if use_zscore else 'IQR'}): {outliers['interpretation']}"
+    outlier_comparison = f"Outlier Comparison: IQR found {outliers_iqr['count']} outliers, Z-score found {outliers_zscore['count']} outliers"
+
     profile = (
         f"{domain_info}\n"
         f"STATISTICAL PROFILE:\n"
         f"- ADF: {adf['interpretation']}\n"
         f"- KPSS: {kpss_res['interpretation']}\n"
         f"- Trend: {trend['interpretation']}\n"
-        f"- Outliers: {outliers['interpretation']}\n"
+        f"- {outlier_method_info}\n"
+        f"- {outlier_comparison}\n"
+        f"- Skewness: {skewness:.2f} (Z-score preferred for values near 0)\n"
+        f"- Kurtosis: {kurtosis:.2f} (Z-score preferred for values near 0)\n"
         f"- Randomness: {white_noise['interpretation']}\n"
         f"- Variance Stability: {var_stability['interpretation']}\n"
         f"- Dominant Period: {periodogram['dominant_period']:.2f}\n"
@@ -125,8 +148,10 @@ def run_statistical_agent(
         if match := re.search(r"DOMAIN:\s*([^\n\.]+)", summary, re.IGNORECASE):
             domain_guess = match.group(1).strip()
 
-        if "APPLY_IQR" in summary:
+        if "APPLY_IQR" in summary or ("APPLY_OUTLIER" in summary and not use_zscore):
             recommended_remediation.append("iqr_clip")
+        if "APPLY_ZSCORE" in summary or ("APPLY_OUTLIER" in summary and use_zscore):
+            recommended_remediation.append("zscore_clip")
         if "APPLY_BOXCOX" in summary:
             recommended_remediation.append("box_cox")
         if "CHANGE_POINTS_DETECTED" in summary:
