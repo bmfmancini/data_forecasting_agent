@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>System Documentation: Time Series Data Forecaster Agent</title>
+    
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    
+    <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+
+    <style>
+        :root {
+            --primary-color: #2563eb;
+            --secondary-color: #1e293b;
+            --accent-color: #3b82f6;
+            --bg-color: #f8fafc;
+            --text-color: #334155;
+            --border-color: #e2e8f0;
+            --code-bg: #1e293b;
+        }
+        body {
+            font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+            line-height: 1.6;
+            color: var(--text-color);
+            background-color: var(--bg-color);
+            margin: 0;
+            padding: 0;
+        }
+        .container {
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+        header {
+            background-color: var(--secondary-color);
+            color: white;
+            padding: 60px 0;
+            text-align: center;
+            margin-bottom: 40px;
+            border-bottom: 5px solid var(--primary-color);
+        }
+        header h1 { margin: 0; font-size: 2.5rem; font-weight: 700; }
+        header p { font-weight: 300; opacity: 0.9; margin-top: 10px; }
+        section {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            margin-bottom: 30px;
+            border: 1px solid var(--border-color);
+            page-break-inside: avoid;
+        }
+        h2 {
+            color: var(--secondary-color);
+            border-left: 5px solid var(--primary-color);
+            padding-left: 15px;
+            margin-top: 0;
+            font-size: 1.75rem;
+        }
+        h3 {
+            color: var(--primary-color);
+            margin-top: 25px;
+            font-size: 1.3rem;
+        }
+        h4 {
+            color: var(--secondary-color);
+            margin-top: 20px;
+            font-size: 1.1rem;
+        }
+        p { margin-bottom: 15px; }
+        table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 0.95rem; }
+        th, td { border: 1px solid var(--border-color); padding: 12px; text-align: left; }
+        th { background-color: #f1f5f9; font-weight: 600; color: var(--secondary-color); }
+        code { font-family: Consolas, 'Courier New', monospace; background-color: #e2e8f0; padding: 2px 6px; border-radius: 4px; font-size: 0.9rem; }
+        .code-block {
+            background-color: var(--code-bg);
+            color: #f8fafc;
+            padding: 20px;
+            border-radius: 8px;
+            overflow-x: auto;
+            font-family: Consolas, 'Courier New', monospace;
+            font-size: 0.9rem;
+            margin: 20px 0;
+            line-height: 1.5;
+        }
+        .mermaid {
+            display: flex;
+            justify-content: center;
+            margin: 30px 0;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+        }
+        .img-container { text-align: center; margin: 30px 0; }
+        .img-container img {
+            max-width: 100%;
+            height: auto;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            border: 1px solid var(--border-color);
+        }
+        .highlight-box {
+            background-color: #eff6ff;
+            border-left: 4px solid var(--primary-color);
+            padding: 15px;
+            margin: 20px 0;
+        }
+        footer { text-align: center; padding: 40px; color: #64748b; font-size: 0.9rem; }
+        a { color: var(--primary-color); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1>Time Series Data Forecaster Agent</h1>
+            <p>Technical Architecture & System Documentation</p>
+        </div>
+    </header>
+    <div class="container">
+        
+        <section>
+            <h2>1. System Overview</h2>
+            <p>The Time Series Data Forecaster Agent is a production-grade, multi-agent autonomous system designed to bridge the gap between raw temporal data and strategic business intelligence. Most traditional forecasting tools provide numerical predictions in a vacuum, lacking the context and justification required for high-stakes executive decision-making.</p>
+            <p>This system automates the entire forecasting lifecycle—from ingestion and data hygiene to statistical modeling and narrative synthesis. By orchestrating specialized agents that combine the mathematical rigor of <code>statsmodels</code> and <code>pmdarima</code> with the reasoning capabilities of Large Language Models (Gemini/Ollama), the system does more than just generate a forecast; it provides a theoretically grounded justification for why a specific model was chosen and what the results actually mean for the business.</p>
+            <p>Through a dedicated RAG (Retrieval-Augmented Generation) layer, the agent transforms raw statistical output into a comprehensive, executive-level strategic report, effectively functioning as an automated Senior Business Analyst.</p>
+        </section>
+
+        <section>
+            <h2>2. System Setup & Installation</h2>
+            <h3>2.1 Prerequisites</h3>
+            <ul>
+                <li>Python 3.10+</li>
+                <li>Docker & Docker Compose</li>
+                <li>LLM API Key (Google Gemini) or local Ollama instance.</li>
+            </ul>
+            <h3>2.2 Local Environment Setup</h3>
+            <div class="code-block">
+                git clone https://github.com/bmfmancini/data_forecasting_agent.git<br>
+                cd data_forecasting_agent<br>
+                pip install -r requirements.txt
+            </div>
+            <p>Configure your <code>.env</code> file with your API keys and set your preferred LLM model (e.g., <code>gemini-pro</code>).</p>
+        </section>
+
+        <section>
+            <h2>3. Architecture & Agent Roles</h2>
+            <div class="mermaid">
+                flowchart TB
+                    subgraph Presentation_Layer [Presentation Layer]
+                        UI[Streamlit Frontend]
+                    end
+                    subgraph Application_Layer [Application Layer]
+                        API[FastAPI API]
+                        ORCH[LangChain Orchestrator]
+                    end
+                    subgraph Agent_Layer [Agent Layer]
+                        DVA[Data Validation]
+                        SAA[Statistical Analysis]
+                        MSA[Model Selection]
+                        FA[Forecasting]
+                        RGA[Report Generation]
+                    end
+                    subgraph Cleaning_Layer [Cleaning Library]
+                        CLN[utils.data_cleaning]
+                    end
+                    subgraph AI_Layer [AI Layer]
+                        GEM[Gemini]
+                        OLL[Ollama]
+                        RAG[RAG Service]
+                    end
+                    subgraph Data_Layer [Data Layer]
+                        CHROMA[(ChromaDB)]
+                        DATA[(Time Series Data)]
+                    end
+                    UI --> API
+                    API --> ORCH
+                    ORCH --> DVA
+                    DVA --> SAA
+                    SAA --> MSA
+                    MSA --> FA
+                    FA --> RGA
+                    DVA --> CLN
+                    ORCH --> CLN
+                    SAA --> RAG
+                    MSA --> RAG
+                    RGA --> RAG
+                    RAG --> CHROMA
+                    MSA --> GEM
+                    RGA --> GEM
+                    MSA --> OLL
+                    RGA --> OLL
+                    DATA --> DVA
+            </div>
+            <h3>Agent Responsibilities</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Agent</th>
+                        <th>Primary Goal</th>
+                        <th>Key Logic / Tools</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Data Validation</td>
+                        <td>Data Integrity</td>
+                        <td>Reindexing, forward-fill / time interpolation / seasonal-decomposition imputation, duplicate resolution (keep-first / mean / latest), IQR &amp; Z-score outlier clipping, Isolation Forest multivariate outliers, EWMA &amp; Savitzky–Golay smoothing, schema &amp; sanity validation, Box-Cox stabilization.</td>
+                    </tr>
+                    <tr>
+                        <td>Statistical Analysis</td>
+                        <td>Numerical Fingerprinting</td>
+                        <td>ADF/KPSS tests, STL decomposition, ACF/PACF lag analysis.</td>
+                    </tr>
+                    <tr>
+                        <td>Model Selection</td>
+                        <td>Decision Reasoning</td>
+                        <td>Hybrid logic: Deterministic Suitability &rarr; LLM Reasoning &rarr; Heuristic Fallback.</td>
+                    </tr>
+                    <tr>
+                        <td>Forecasting</td>
+                        <td>Numerical Execution</td>
+                        <td>Fitting via <code>pmdarima</code> and <code>statsmodels</code>, 95% CI generation.</td>
+                    </tr>
+                    <tr>
+                        <td>Report Generation</td>
+                        <td>Strategic Synthesis</td>
+                        <td>RAG-enhanced narrative synthesis using an 8-section structure.</td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <section>
+            <h2>4. Operational Infrastructure & UX</h2>
+            <h3>4.1 Resource Management (Queueing System)</h3>
+            <p>To prevent resource exhaustion from multiple simultaneous forecast requests, we implemented a Backend Queueing System. Incoming requests are processed sequentially, ensuring that each high-compute forecast has the required memory and CPU stability to complete without crashing the API.</p>
+            
+            <h3>4.2 Pre-Analysis & Demo Data</h3>
+            <p>Users can load the Airline Passengers demo dataset to test the pipeline instantly. Before analysis begins, a Preflight Check button appears. This triggers a validation scan, allowing users to manually resolve issues or delegate the remediation to the AI.</p>
+            
+            <h3>4.3 Preflight Mathematics & Data Hygiene</h3>
+            <p>During the Preflight Check, the Data Validation Agent executes a structured audit (mirroring the freeCodeCamp <em>How to Clean Time Series Data in Python</em> checklist) and applies a configurable set of mathematical transformations. All cleaning primitives are centralised in <code>backend/utils/data_cleaning.py</code>.</p>
+
+            <div class="highlight-box">
+                <h4>1. Time-Series Audit</h4>
+                <p>Before any transformation runs, the agent calls <code>audit_series()</code> to produce a snapshot of the dataset's health: observation count, missing-value count, duplicate timestamps, regularity, inferred frequency and outlier counts (IQR + Z-score). The same snapshot is exposed to the LLM prompt and the UI so users can see exactly what was found.</p>
+
+                <h4>2. Canonical Reindexing</h4>
+                <p>Timestamps that are simply <em>missing from the index</em> (not represented as <code>NaN</code>) become explicit holes after <code>reindex_series()</code> aligns the data to a uniform frequency grid:</p>
+                <div style="text-align: center; margin: 15px 0;">
+                    $$\text{index} = \{t_0, t_0+\Delta, t_0+2\Delta, \dots, t_n\}$$
+                </div>
+
+                <h4>3. Linear Interpolation (Missing Data)</h4>
+                <p>When minor sequential gaps are detected, the agent estimates the missing values by drawing a straight line between the known surrounding data points. <code>impute_missing()</code> supports <em>forward-fill</em>, <em>time-weighted interpolation</em> and <em>seasonal-decomposition imputation</em>:</p>
+                <div style="text-align: center; margin: 15px 0;">
+                    $$y = y_0 + (x - x_0) \frac{y_1 - y_0}{x_1 - x_0}$$
+                </div>
+
+                <h4>4. Seasonal Decomposition Imputation (Long Gaps)</h4>
+                <p>For seasonal signals with long gaps, the series is decomposed into trend + seasonal + residual, and only the missing positions are reconstructed. This preserves the time-of-day or month-of-year pattern that pure interpolation would flatten:</p>
+                <div style="text-align: center; margin: 15px 0;">
+                    $$\hat{y}_t = T_t + S_t \quad \text{where } T_t = \text{trend},\; S_t = \text{seasonal component}$$
+                </div>
+
+                <h4>5. Duplicate-Timestamp Resolution</h4>
+                <p>Pipeline retries frequently produce multiple readings for the same timestamp. <code>resolve_duplicates()</code> collapses them via <em>keep-first</em>, <em>mean</em> or <em>latest</em>, preserving the invariant of a one-to-one index-to-value mapping.</p>
+
+                <h4>6. IQR Outlier Clipping</h4>
+                <p>Extreme anomalies that could skew the model are capped using the Interquartile Range (IQR) method. <code>apply_iqr_clipping()</code> / <code>detect_outliers_iqr()</code> identify values outside the 1.5× IQR fence and either clip them to the boundary or replace them with <code>NaN</code> for downstream imputation:</p>
+                <div style="text-align: center; margin: 15px 0;">
+                    $$IQR = Q_3 - Q_1$$<br>
+                    $$Bounds = [Q_1 - 1.5 \times IQR,\; Q_3 + 1.5 \times IQR]$$
+                </div>
+
+                <h4>7. Z-Score Outlier Clipping</h4>
+                <p>For approximately Gaussian data, <code>apply_zscore_clipping()</code> / <code>detect_outliers_zscore()</code> cap observations whose absolute Z-score exceeds a configurable threshold (default 3.0):</p>
+                <div style="text-align: center; margin: 15px 0;">
+                    $$z_t = \frac{y_t - \mu}{\sigma}, \qquad |z_t| > \tau \implies \text{clip to } \mu \pm \tau\sigma$$
+                </div>
+
+                <h4>8. Isolation Forest (Multivariate Outliers)</h4>
+                <p>When multiple correlated sensors are present, <code>detect_outliers_isolation_forest()</code> catches combinations of readings that look normal individually but anomalous together. Although the current UI is univariate, the helper is ready for future multi-channel ingestion.</p>
+
+                <h4>9. Noise Smoothing</h4>
+                <p>Noisy sensors can be smoothed before modelling. <code>smooth_series()</code> exposes two industry-standard algorithms:</p>
+                <ul>
+                    <li><strong>Exponentially Weighted Moving Average (EWMA):</strong> recent observations get exponentially more weight, ideal for non-stationary signals:
+                        <div style="text-align: center; margin: 10px 0;">
+                            $$\hat{y}_t = \alpha\, y_{t-1} + (1-\alpha)\, \hat{y}_{t-1}$$
+                        </div>
+                    </li>
+                    <li><strong>Savitzky–Golay filter:</strong> fits a low-order polynomial over a sliding window, preserving peak shapes that simple averages would flatten.</li>
+                </ul>
+
+                <h4>10. Box-Cox Transformation</h4>
+                <p>If the data exhibits heteroscedasticity (changing variance over time), the agent applies a Box-Cox power transformation to stabilize the variance, making the series more normal:</p>
+                <div style="text-align: center; margin: 15px 0;">
+                    $$y_i^{(\lambda)} = \begin{cases} \frac{y_i^\lambda - 1}{\lambda} & \text{if } \lambda \neq 0 \\ \ln(y_i) & \text{if } \lambda = 0 \end{cases}$$
+                </div>
+
+                <h4>11. Schema &amp; Sanity Validation</h4>
+                <p>After cleaning, <code>validate_schema()</code> runs a final pass against a configurable contract (expected frequency, maximum missing-rate, value range, duplicate-free index, monotonic index). The result is appended to the LLM prompt and surfaced in the Data Quality tab so users can confirm post-cleaning state.</p>
+            </div>
+
+            <h3>4.4 Core Preprocessing Engine (<code>utils.data_cleaning</code>)</h3>
+            <p>All data hygiene primitives are centralized in a single, well-tested module: <code>backend/utils/data_cleaning.py</code>. By sharing this core engine across <code>preflight.py</code>, the Data Validation Agent, and the Statistical Analysis Agent, the system guarantees absolute consistency in how data is treated, whether during manual user previews or autonomous agent execution.</p>
+            <p>The engine is designed to execute transformations in a strict chronological sequence to prevent cascading data errors: the data is first audited, structurally aligned (reindexed) to expose hidden gaps, imputed to fix those gaps, scrubbed of outliers, and finally validated against a strict schema.</p>
+            <p>The public API surface is documented via Google-style docstrings and categorized by pipeline stage below:</p>
+
+            <h4>Stage 1: Auditing & Validation</h4>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Function</th>
+                        <th>Purpose</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td><code>audit_series</code></td><td>Generates the initial health snapshot (length, missing values, duplicates, regularity, frequency, and IQR/Z-score outlier counts) before any transformations occur.</td></tr>
+                    <tr><td><code>validate_schema</code></td><td>Performs the final contract check post-cleaning (frequency, missing rate, value range, duplicates, monotonic index) to authorize the data for forecasting.</td></tr>
+                    <tr><td><code>_infer_seasonal_period</code></td><td>Maps the inferred frequency alias to a distinct seasonal period (e.g., 12, 4, 52) to inform downstream validation.</td></tr>
+                </tbody>
+            </table>
+
+            <h4>Stage 2: Structural Alignment & Imputation</h4>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Function</th>
+                        <th>Purpose</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td><code>reindex_series</code></td><td>Forces the index onto a canonical frequency grid, converting implicit missing timestamps into explicit <code>NaN</code> rows.</td></tr>
+                    <tr><td><code>resolve_duplicates</code></td><td>Collapses multiple readings at the exact same timestamp via <em>keep-first</em>, <em>mean</em>, or <em>latest</em> aggregation.</td></tr>
+                    <tr><td><code>impute_missing</code></td><td>Executes the mathematical imputation outlined in Section 4.3 (forward-fill, time-weighted linear interpolation, or seasonal-decomposition).</td></tr>
+                </tbody>
+            </table>
+
+            <h4>Stage 3: Outlier Remediation</h4>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Function</th>
+                        <th>Purpose</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td><code>detect_outliers_iqr</code></td><td>Flags values outside the 1.5× IQR fence; recommended for skewed distributions.</td></tr>
+                    <tr><td><code>detect_outliers_zscore</code></td><td>Uses a rolling Z-score window (default 24) to flag local anomalies in approximately Gaussian data.</td></tr>
+                    <tr><td><code>detect_outliers_isolation_forest</code></td><td>Detects multivariate anomalies across correlated channels (forward-compatible feature).</td></tr>
+                    <tr><td><code>apply_iqr_clipping</code> / <code>apply_zscore_clipping</code></td><td>Physically caps the identified outliers to their respective mathematical boundaries in-place.</td></tr>
+                    <tr><td><code>treat_outliers</code></td><td>The unified agent entry point for executing <em>clip</em>, <em>winsorize</em>, <em>remove</em>, and <em>zscore_clip</em> strategies.</td></tr>
+                </tbody>
+            </table>
+
+            <h4>Stage 4: Noise Reduction</h4>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Function</th>
+                        <th>Purpose</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td><code>smooth_series</code></td><td>Applies EWMA or Savitzky–Golay filters for noise reduction prior to modeling.</td></tr>
+                </tbody>
+            </table>
+
+            <h3>4.5 Data Quality Tab (Business Analyst Persona)</h3>
+            <p>The system features a dedicated Data Quality Tab. Here, the LLM adopts the persona of a Senior Business Analyst to provide a qualitative interpretation of the data's health, transforming raw counts into a bottom-line verdict on suitability for forecasting.</p>
+            <div class="img-container">
+                <img src="/home/sean/Documents/agent_documentation/data_quality_tab.png" alt="Data Quality Tab Screenshot">
+            </div>
+
+            <h3>4.6 Forecast Model Selection Tab</h3>
+            <p>In Auto mode, the system provides a detailed Rationale for why a specific model was chosen. This includes a model-by-model assessment, explaining why alternatives were rejected based on evidence like seasonality, trend, or data length.</p>
+            <div class="img-container">
+                <img src="/home/sean/Documents/agent_documentation/model_selection.png" alt="Model Selection Tab Screenshot">
+            </div>
+            
+            <h3>4.7 AI Reasoning Trace</h3>
+            <p>For full auditability, the AI Reasoning Trace tab exposes the raw logs of agent interactions. Users can see the exact Python observations and thought process the LLM used to reach its conclusions.</p>
+            <div class="img-container">
+                <img src="/home/sean/Documents/agent_documentation/ai_reasoning_trace.png" alt="AI Reasoning Trace Screenshot">
+            </div>
+        </section>
+
+        <section>
+            <h2>5. Model Selection Logic</h2>
+            <p>The Model Selection Agent executes a multi-layered decision pipeline to ensure the most mathematically sound model is used.</p>
+            
+            <h3>5.1 The Decision Pipeline</h3>
+            <ol>
+                <li><strong>Deterministic Suitability (Python):</strong> The agent first generates a Suitability Summary based on hard rules. It checks if Holt-Winters can handle the detected trend, if SARIMA has enough cycles (min 2), and if EWMA is too sensitive to the current outlier ratio.</li>
+                <li><strong>Cognitive Reasoning (LLM):</strong> This summary is passed to the LLM, which weighs the pros and cons of each model to make a final selection based on the evidence.</li>
+                <li><strong>Heuristic Fallback (Safety):</strong> If the LLM call fails or returns an invalid model, the system triggers a priority matrix (e.g., <code>if seasonal_period > 1 &rarr; SARIMA</code>) to ensure the pipeline never breaks.</li>
+            </ol>
+
+            <h3>5.2 Selection Modes</h3>
+            <ul>
+                <li>Auto (AI Selects): Executes the full three-tier pipeline described above.</li>
+                <li>Manual Selection: The user overrides the entire pipeline and forces the Forecasting Agent to fit a specific model.</li>
+            </ul>
+
+            <h3>5.3 Available Model Library & Core Mathematics</h3>
+            <p>The Forecasting Agent utilizes the following mathematical frameworks to generate its predictions. The Model Selection Agent determines which of these is mathematically optimal for the current data signature.</p>
+            
+            <div class="highlight-box">
+                <h4>1. ARIMA (Auto-Regressive Integrated Moving Average)</h4>
+                <p>Best for non-seasonal, trended data. It models the next step as a linear function of past observations (AR) and past forecast errors (MA), applied to differenced data (I) to achieve stationarity.</p>
+                <div style="text-align: center; margin: 15px 0;">
+                    $$y'_t = c + \phi_1 y'_{t-1} + \dots + \phi_p y'_{t-p} + \theta_1 \epsilon_{t-1} + \dots + \theta_q \epsilon_{t-q} + \epsilon_t$$
+                </div>
+                <p style="font-size: 0.85rem; color: #64748b;">Where $y'_t$ is the differenced series, $\phi$ represents AR parameters, and $\theta$ represents MA parameters.</p>
+            </div>
+
+            <div class="highlight-box">
+                <h4>2. SARIMA (Seasonal ARIMA)</h4>
+                <p>Expands on ARIMA by adding seasonal backshifts. It is the primary model for datasets with confirmed recurring cycles (e.g., retail sales peaking every December).</p>
+                <div style="text-align: center; margin: 15px 0;">
+                    $$\Phi_P(B^s)\phi_p(B)(1-B^s)^D(1-B)^d Y_t = \Theta_Q(B^s)\theta_q(B)\epsilon_t$$
+                </div>
+                 <p style="font-size: 0.85rem; color: #64748b;">Where $B$ is the backshift operator, and $s$ is the seasonal period length.</p>
+            </div>
+
+            <div class="highlight-box">
+                <h4>3. Holt-Winters (Triple Exponential Smoothing)</h4>
+                <p>Applies exponential weighting to level, trend, and seasonal components. It is highly effective for data where the trend and seasonal patterns are prominent but non-linear.</p>
+                <div style="text-align: center; margin: 15px 0;">
+                    $$\text{Forecast: } \hat{Y}_{t+h} = L_t + h T_t + S_{t+h-s}$$
+                </div>
+                 <p style="font-size: 0.85rem; color: #64748b;">Where $L_t$ is the level, $T_t$ is the trend, and $S_t$ is the seasonal component, each smoothed by constants $\alpha$, $\beta$, and $\gamma$.</p>
+            </div>
+
+            <div class="highlight-box">
+                <h4>4. EWMA (Exponentially Weighted Moving Average)</h4>
+                <p>A simpler smoothing technique that applies exponentially decreasing weights to older observations. Ideal for noisy, stable datasets without strong trends or seasonality.</p>
+                <div style="text-align: center; margin: 15px 0;">
+                    $$\hat{y}_{t+1} = \alpha y_t + (1-\alpha) \hat{y}_t$$
+                </div>
+                 <p style="font-size: 0.85rem; color: #64748b;">Where $\alpha$ (between $0$ and $1$) is the smoothing factor dictating how heavily recent observations are weighted.</p>
+            </div>
+        </section>
+
+        <section>
+            <h2>6. System Guardrails & Domain Constraint</h2>
+            <p>To prevent prompt injection and ensure the agent remains a specialized tool, we implemented a strict Domain Guardrail layer.</p>
+            <p>The agent is explicitly instructed to only operate within the domain of Time Series Data Forecasting. If a user attempts to request general scripts or steer the conversation toward an unrelated domain, the agent will politely decline. This keeps the LLM's reasoning focused entirely on forecast accuracy.</p>
+            <div class="img-container">
+                <img src="/home/sean/Documents/agent_documentation/gaurd_rails.png" alt="Guardrails Screenshot">
+            </div>
+        </section>
+
+        <section>
+            <h2>7. Report Generation & Executive Synthesis</h2>
+            <p>The Report Generation Agent converts raw numbers into a high-fidelity executive brief. Rather than a generic summary, it synthesizes several data streams into a strategic narrative.</p>
+            
+            <h3>7.1 Logic-Driven Visual Strategy</h3>
+            <p>The agent determines which visualizations are necessary to communicate risk and insight to the C-suite:</p>
+            <ul>
+                <li>STL Decomposition: Triggered if strong seasonal patterns are detected.</li>
+                <li>Confidence Intervals: Prioritized if the MAPE is high (&gt;15%), emphasizing risk and uncertainty.</li>
+                <li>ACF/PACF Plots: Triggered specifically for SARIMA models to validate seasonal components.</li>
+            </ul>
+
+            <h3>7.2 AI Responsibility & Remediation</h3>
+            <p>If the user chose "Let AI Decide" during preflight checks, the agent is instructed to assume full responsibility for those decisions. The report must explain the statistical rationale for the chosen remediation (e.g., linear interpolation) to ensure the user understands how the signal was preserved.</p>
+            
+            <h3>7.3 Report Structure</h3>
+            <p>The final output is a strictly structured 8-section report covering strategic overview, historical trend analysis, future outlook, and tactical recommendations.</p>
+        </section>
+
+        <section>
+            <h2>8. RAG Implementation & Knowledge Architecture</h2>
+            <p>The Retrieval-Augmented Generation (RAG) component is integrated into the Report Generation Agent. Instead of providing a purely numerical output, the system leverages a domain-specific knowledge layer to transform raw forecasts into a theoretically grounded executive report.</p>
+            
+            <h3>8.1 The RAG Operational Workflow</h3>
+            <ol>
+                <li><strong>Embedding:</strong> Domain documentation is processed through <code>sentence-transformers</code>, converting text into high-dimensional vectors.</li>
+                <li><strong>Storage:</strong> These vectors are indexed in <strong>ChromaDB</strong> for persistent, fast retrieval.</li>
+                <li><strong>Retrieval:</strong> The agent uses current forecast metrics as a query to pull the most relevant theoretical context from ChromaDB.</li>
+                <li><strong>Augmentation:</strong> The LLM synthesizes the Numerical Forecast + Retrieved Knowledge &rarr; Contextual Executive Insight.</li>
+            </ol>
+
+            <h3>8.2 Knowledge Base Composition</h3>
+            <p>The RAG knowledge base is a comprehensive library covering the full spectrum of time-series theory, including:</p>
+            <ul>
+                <li>Statistical Frameworks: Guides on ARIMA, SARIMA, and Holt-Winters.</li>
+                <li>Stationarity & Testing: In-depth explanations of unit-root testing (ADF/KPSS) and differencing.</li>
+                <li>Diagnostic Tools: Interpretations of ACF/PACF, STL decomposition, and periodograms.</li>
+                <li>Validation & Metrics: Standardized definitions for RMSE, MAE, MAPE, and MASE.</li>
+            </ul>
+
+            <h3>8.3 Strategic Advantages</h3>
+            <div class="highlight-box">
+                By utilizing local RAG, the system eliminates hallucinations by forcing the LLM to base its justifications on established statistical texts. This reduces the need for iterative prompting, lowering both computational overhead and API costs.
+            </div>
+        </section>
+
+        <section>
+            <h2>9. Context-Aware Data Explorer</h2>
+            <p>The Chat with Data interface allows users to query their dataset in natural language using a hybrid retrieval mechanism:</p>
+            <ul>
+                <li>Fact-Based Queries: Retrieves specific metrics (e.g., <em>"How many datapoints were missing?"</em>) from the stored Validation Summary in ChromaDB.</li>
+                <li>Theoretical Queries: Queries the RAG Knowledge Base for forecasting theory (e.g., <em>"Why does stationarity matter here?"</em>).</li>
+            </ul>
+        </section>
+
+        <section>
+            <h2>10. Deployment Strategy</h2>
+            <div class="mermaid">
+                flowchart LR
+                    subgraph Docker_Compose [Docker Network]
+                        S[Streamlit] -- HTTP/JSON --> F[FastAPI]
+                        F -- gRPC/HTTP --> C[ChromaDB]
+                        F -- API Key --> L[Gemini/Ollama]
+                    end
+                    V[(Volume: /rag/docs)] --> C
+            </div>
+            <p>Deploy using <code style="font-weight: bold;">docker-compose up -d</code> to launch the Frontend, Backend API, and Vector Database as isolated containers.</p>
+        </section>
+
+        <section>
+            <h2>11. Data Requirements & Constraints</h2>
+            <p>To ensure mathematical accuracy and prevent pipeline failures, the input data must adhere to the following constraints:</p>
+            <ul>
+                <li><strong>Dimensionality:</strong> The system currently strictly supports <strong>Univariate Time Series</strong> forecasting. The dataset must contain exactly one chronological time/date column and one numerical target/value column.</li>
+                <li><strong>Data Volume & Model Suitability:</strong> The minimum number of required data points is dynamic and depends entirely on the statistical model being evaluated:
+                    <ul>
+                        <li><em>ARIMA / EWMA:</em> Requires a sufficient baseline of points to establish a trend (typically 30+ observations recommended).</li>
+                        <li><em>SARIMA / Holt-Winters:</em> Requires a minimum of <strong>two full seasonal cycles</strong> to detect and validate recurring seasonal patterns (e.g., at least 24 months of data for a monthly dataset with an annual seasonal period).</li>
+                    </ul>
+                </li>
+                <li><strong>Missing Values:</strong> The Data Validation Agent can automatically handle and impute missing values via three industry-standard strategies — <em>forward-fill</em> (step signals), <em>time-weighted linear interpolation</em> (continuous signals) and <em>seasonal-decomposition imputation</em> (long gaps in seasonal data). Datasets with massive sequential gaps that exceed the seasonal cycle length still fail the Preflight Check and require manual remediation.</li>
+                <li><strong>Outliers:</strong> Detected and treated using the IQR method, the rolling Z-score method, or the Isolation Forest algorithm for multivariate streams. Treatment options include clipping (Winsorize), removing and Z-score clipping. The agent's default when the user selects <em>Let AI Decide</em> is IQR Winsorize.</li>
+                <li><strong>Duplicates:</strong> Pipeline retries that produce multiple readings for the same timestamp are collapsed via <em>keep-first</em>, <em>mean</em> or <em>latest</em> aggregation.</li>
+                <li><strong>Noise:</strong> Optional smoothing via EWMA or Savitzky–Golay filtering is available before forecasting for high-frequency noisy sensors.</li>
+            </ul>
+        </section>
+        
+        <section>
+            <h2>12. API Reference & Core Endpoints</h2>
+            <p>The FastAPI backend uses an asynchronous, queue-based architecture to handle high-compute forecasting tasks without blocking the main thread or causing Out-Of-Memory (OOM) crashes. Here is the core API surface connecting the Streamlit frontend to the Langchain orchestrator:</p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Method</th>
+                        <th>Endpoint</th>
+                        <th>Primary Function</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>GET</strong></td>
+                        <td><code>/health</code></td>
+                        <td>Basic health check to ensure the API is responsive.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>POST</strong></td>
+                        <td><code>/upload</code></td>
+                        <td>Accepts file uploads, validates MIME types and sizes, parses the data into a Pandas DataFrame, and stores it in ephemeral memory. Returns a unique <code>file_id</code> and detected metadata (date column, frequency).</td>
+                    </tr>
+                    <tr>
+                        <td><strong>POST</strong></td>
+                        <td><code>/preflight</code></td>
+                        <td>Runs deterministic data quality checks on the uploaded dataset (using <code>file_id</code>) before initiating the full pipeline. Allows users to catch formatting issues early.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>POST</strong></td>
+                        <td><code>/analyze</code></td>
+                        <td>Submits the data for full forecasting analysis. Places the request into a FIFO queue (<code>JOB_QUEUE</code>) and returns a <code>job_id</code>.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>GET</strong></td>
+                        <td><code>/jobs/{job_id}</code></td>
+                        <td>Polling endpoint to retrieve the real-time status, execution progress (percentage), current step, and final results of a forecasting job.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>POST</strong></td>
+                        <td><code>/chat</code></td>
+                        <td>Context-aware data explorer endpoint. Uses the <code>file_id</code> to query both the raw DataFrame and the RAG-indexed analysis results (ChromaDB) for natural language Q&A.</td>
+                    </tr>
+                </tbody>
+            </table>
+            <div class="highlight-box">
+                <strong>Resource Management Note:</strong> To prevent OOM errors, the API enforces strict in-memory storage limits, automatically evicting the oldest entries when limits are reached (Max Files: 50, Max Jobs: 100).
+            </div>
+        </section>
+
+        <section>
+            <h2>13. Data Privacy & Security</h2>
+            <p>Given the sensitive nature of corporate forecasting data, the system is designed with strict boundaries around data persistence and LLM communication:</p>
+            <ul>
+                <li><strong>Ephemeral Data Storage:</strong> Uploaded datasets (CSVs) are stored strictly in-memory within the backend container. They are never written to disk as raw files. If the container restarts, or if the 50-file limit is reached, the data is permanently wiped from memory.</li>
+                <li><strong>Vectorized Abstraction:</strong> Only the <em>analysis results</em> and <em>metadata</em> are passed to ChromaDB for persistent RAG interactions. The raw transactional data remains isolated.</li>
+                <li><strong>LLM Routing & Privacy:</strong>
+                    <ul>
+                        <li><strong>Local Mode (Ollama):</strong> For air-gapped or highly sensitive environments, all data and reasoning traces remain entirely on-premises within the Docker network.</li>
+                        <li><strong>Cloud Mode (Google Gemini):</strong> If using the cloud LLM, only the statistical profile (JSON) and synthesized context are sent via the API.</li>
+                    </ul>
+                </li>
+                <li><strong>CORS Restrictions:</strong> The API explicitly restricts Cross-Origin Resource Sharing (CORS) strictly to the designated frontend containers (e.g., <code>http://localhost:8501</code>, <code>http://frontend:8501</code>).</li>
+            </ul>
+        </section>
+
+        <section>
+            <h2>14. Limitations & Challenges</h2>
+            <h3>14.1 Technical Challenges</h3>
+            <ul>
+                <li>Resource Spikes: Solved via the Backend Request Queue.</li>
+                <li>Trust/Auditability: Solved by the Reasoning Trace, Business Analyst Persona, Model Selection Rationale and the structured <code>validate_schema()</code> post-cleaning report.</li>
+                <li>LLM Hallucinations: Mitigated by constrained prompting and RAG grounding.</li>
+                <li>Data Quality Drift: Solved by the centralised <code>utils.data_cleaning</code> library which provides a single, well-tested set of cleaning primitives (audit, reindex, impute, treat outliers, smooth, validate) used by both the preflight pipeline and the agents.</li>
+            </ul>
+            <h3>14.2 Current Limitations</h3>
+            <ul>
+                <li>Limited to classical statistical models (No LSTM/Prophet integration).</li>
+                <li>Designed for batch uploads rather than real-time data streams.</li>
+                <li>UI exposes a curated subset of cleaning options (forward-fill, interpolation, IQR / Z-score clipping); advanced options such as <em>seasonal-decomposition imputation</em>, <em>EWMA smoothing</em>, <em>Savitzky–Golay filtering</em> and <em>Isolation Forest</em> are available programmatically and will be added to the UI in a follow-up release.</li>
+            </ul>
+        </section>
+
+        <section>
+            <h2>15. Acknowledgments & Attributions</h2>
+            <p>This project was made possible by the foundational work, research, and open-source contributions of the following individuals and organizations:</p>
+            <ul>
+                <li><a href="https://www.freecodecamp.org/news/author/balapriyac/" target="_blank">Bala Priya C</a> for the data cleaning methods in the freeCodeCamp post <a href="https://www.freecodecamp.org/news/how-to-clean-time-series-data-in-python/" target="_blank"><em>How to Clean Time Series Data in Python</em></a> that inspired the <code>utils.data_cleaning</code> module.</li>
+                <li><a href="https://otexts.com/fpp3/" target="_blank">Forecasting: Principles and Practice (3rd ed.)</a> by Hyndman & Athanasopoulos — the canonical reference for the ARIMA, SARIMA, and exponential-smoothing methodology implemented in the <code>backend/forecasting</code> package.</li>
+                <li><a href="https://diogofranquinho.com/notes/econometrics/time-series-analysis.html" target="_blank">Diogo Franquinho</a> for his excellent Udemy courses and concise <em>Time Series Analysis</em> technical notes covering stationarity, ACF, ARIMA, and AIC-based model selection that deeply informed the RAG knowledge base (<code>backend/rag/docs/</code>).</li>
+            </ul>
+            
+            <h3>Open-Source Ecosystem</h3>
+            <ul>
+                <li><a href="https://www.statsmodels.org/" target="_blank">Statsmodels</a> for rigorous statistical modeling.</li>
+                <li><a href="https://alkaline-ml.com/pmdarima/" target="_blank">Pmdarima</a> for automated ARIMA modeling.</li>
+                <li><a href="https://github.com/langchain-ai/langchain" target="_blank">LangChain</a> for LLM orchestration and agent integration.</li>
+                <li><a href="https://streamlit.io/" target="_blank">Streamlit</a> for the responsive frontend framework.</li>
+                <li><a href="https://fastapi.tiangolo.com/" target="_blank">FastAPI</a> for the high-performance backend framework.</li>
+            </ul>
+        </section>
+
+    </div>
+    <footer>
+        <p>Sean Mancini - sean@seanmancini.com - Time Series Data Forecaster Agent</p>
+    </footer>
+    <script>
+        mermaid.initialize({
+            startOnLoad: true,
+            theme: 'forest',
+            securityLevel: 'loose',
+            flowchart: { useMaxWidth: true, htmlLabels: true }
+        });
+    </script>
+</body>
+</html>
