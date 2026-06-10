@@ -3,7 +3,7 @@ fastapi==0.111.0
 uvicorn[standard]==0.29.0
 langchain==0.3.30
 langchain-community==0.3.27
-langchain-ollama==0.2.0
+langchain-ollama==1.1.0
 langchain-google-genai==2.0.10
 chromadb==0.5.3
 sentence-transformers==3.0.1
