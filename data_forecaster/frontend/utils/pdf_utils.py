@@ -6,14 +6,33 @@ Provides functionality to convert markdown reports to PDF format.
 import re
 from fpdf import FPDF
 
+# Strip [VISUAL:TAG] placeholders that the LLM report emits — those are
+# rendered as charts in the Streamlit UI and are not meaningful in a
+# text-only PDF. Removing the whole line (and any blank lines around it)
+# keeps the surrounding prose from being broken by dangling whitespace.
+_VISUAL_TAG_LINE_REGEX = re.compile(r"^\s*\[VISUAL:[A-Z_]+\]\s*$")
+
+def _strip_visual_tags(report_md: str) -> str:
+    """Remove [VISUAL:TAG] placeholder lines and their surrounding blanks."""
+    cleaned_lines: list[str] = []
+    for line in report_md.splitlines():
+        if _VISUAL_TAG_LINE_REGEX.match(line):
+            # Drop the tag line itself plus the trailing blank line that
+            # the prompt requires the LLM to leave after each tag.
+            while cleaned_lines and cleaned_lines[-1].strip() == "":
+                cleaned_lines.pop()
+            continue
+        cleaned_lines.append(line)
+    return "\n".join(cleaned_lines)
+
 def report_to_pdf(report_md: str, title: str = "Forecast Report") -> bytes:
     """
     Render a markdown report string to PDF bytes using fpdf2.
-    
+
     Args:
         report_md: Markdown formatted report text
         title: Title for the PDF document
-        
+
     Returns:
         PDF document as bytes
     """
@@ -45,7 +64,8 @@ def report_to_pdf(report_md: str, title: str = "Forecast Report") -> bytes:
     pdf.multi_cell(0, 12, _sanitize(title), align="C")
     pdf.ln(6)
 
-    for raw_line in report_md.splitlines():
+    cleaned_report = _strip_visual_tags(report_md)
+    for raw_line in cleaned_report.splitlines():
         line = raw_line.rstrip()
         if line.startswith("### "):
             pdf.ln(3)
