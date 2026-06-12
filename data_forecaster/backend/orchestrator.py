@@ -342,6 +342,56 @@ def chat_with_data(
         return {"answer": f"I encountered an error while processing your request: {str(exc)}"}
 
 
+def chat_general(query: str, chroma_persist_dir: str) -> dict[str, Any]:
+    """
+    Handle general questions using only the RAG knowledge base without requiring a dataset.
+    """
+    logger.info("General chat query: %s", query)
+    
+    # 1. Retrieve relevant information from RAG
+    rag_kb = get_rag_kb(chroma_persist_dir)
+    memory_context = ""
+    try:
+        # Search for relevant documentation
+        chunks = rag_kb.retrieve(query, k=5)
+        memory_context = "\n".join(chunks)
+    except Exception as exc:
+        logger.warning("RAG retrieval failed for general chat: %s", exc)
+
+    # 2. Setup LLM based on configuration
+    if settings.USE_OLLAMA:
+        llm = ChatOllama(model=settings.OLLAMA_MODEL, base_url=settings.OLLAMA_BASE_URL, temperature=0)
+    else:
+        llm = ChatGoogleGenerativeAI(model=settings.GEMINI_MODEL, google_api_key=settings.GEMINI_API_KEY, temperature=0)
+
+    # Create a prompt for general questions
+    general_prompt = ChatPromptTemplate.from_messages([
+        ("system", """You are an expert in time series forecasting and data analysis. 
+         Use the provided context to answer questions about time series forecasting concepts, methodologies, and best practices.
+         If the context doesn't contain enough information to fully answer the question, provide the best answer you can based on your general knowledge.
+         
+         Context from documentation:
+         {context}
+         
+         Answer the question in a clear, concise, and helpful manner."""),
+        ("human", "{query}")
+    ])
+
+    try:
+        chain = general_prompt | llm
+        response = chain.invoke({
+            "context": memory_context,
+            "query": query
+        })
+        
+        content = response.content
+        return {"answer": content}
+
+    except Exception as exc:
+        logger.exception("LLM General Chat failed")
+        return {"answer": f"I encountered an error while processing your request: {str(exc)}"}
+
+
 def _freq_to_period(freq: str) -> int:
     f = (freq or "").upper().lstrip("-")
     if f.startswith("MS") or f.startswith("M"):

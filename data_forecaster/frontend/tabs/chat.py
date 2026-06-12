@@ -4,7 +4,11 @@ from api_service import ForecastingAPI
 
 def render_chat_tab(info):
     st.subheader("💬 Data Explorer")
-    st.info("Ask questions about your data or the analysis results stored in my memory.")
+    st.info("Ask questions about time series data analysis or general forecasting concepts.")
+    
+    # Initialize chat history if not exists
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []
 
     for message in st.session_state.chat_history:
         with st.chat_message(message["role"]):
@@ -15,7 +19,7 @@ def render_chat_tab(info):
                     fig = go.Figure(data=[go.Pie(labels=viz["data"]["labels"], values=viz["data"]["values"])])
                     st.plotly_chart(fig, use_container_width=True)
 
-    if prompt := st.chat_input("How many datapoints are missing?"):
+    if prompt := st.chat_input("Ask about time series forecasting..."):
         st.session_state.chat_history.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
@@ -23,7 +27,9 @@ def render_chat_tab(info):
         with st.chat_message("assistant"):
             try:
                 with st.spinner("Thinking..."):
-                    resp = ForecastingAPI.send_chat(info["file_id"], prompt)
+                    # Send chat with file_id if available, otherwise send without
+                    file_id = info.get("file_id") if info else None
+                    resp = ForecastingAPI.send_chat(file_id, prompt)
                     if resp.status_code == 200:
                         data = resp.json()
                         answer = data["answer"]

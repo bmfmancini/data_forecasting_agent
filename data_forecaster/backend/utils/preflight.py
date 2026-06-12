@@ -233,9 +233,16 @@ def prepare_series_frame(
 
     outlier_strategy = options.get("outlier_strategy", "None")
     if outlier_strategy == "Let AI Decide":
-        outlier_strategy = "Clip (Winsorize)"
+        outlier_strategy = "clip"
     if outlier_strategy != "None":
-        series = treat_outliers(series, outlier_strategy.lower().replace(" ", "_"))
+        # Convert UI-friendly names to internal strategy names
+        strategy_map = {
+            "Clip (Winsorize)": "clip",
+            "Remove": "remove",
+            "Z-Score Clip": "zscore_clip"
+        }
+        internal_strategy = strategy_map.get(outlier_strategy, outlier_strategy.lower().replace(" ", "_"))
+        series = treat_outliers(series, internal_strategy)
 
     series = impute_missing(series, missing_strategy)
     series = series.dropna()
