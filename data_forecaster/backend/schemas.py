@@ -51,7 +51,7 @@ class AnalyzeRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     """Request schema for the data explorer chat."""
-    file_id: str
+    file_id: Optional[str] = None
     query: str
 
 

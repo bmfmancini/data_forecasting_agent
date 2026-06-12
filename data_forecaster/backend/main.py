@@ -324,24 +324,43 @@ def get_job_status(job_id: str) -> JobStatusResponse:
 )
 async def chat_explorer(request: ChatRequest) -> ChatResponse:
     """Allows users to chat with the agent about the uploaded data and results."""
-    stored = _file_store.get(request.file_id)
-    if not stored:
-        raise HTTPException(
-            status_code=404,
-            detail=("Chat session lost: the associated data is no longer in the server memory. "
-                    "Please re-run the analysis.")
-        )
-
-    try:
-        # Delegate to orchestrator to query both the data and the indexed memory
-        response = await asyncio.to_thread(
-            chat_with_data,
-            query=request.query,
-            df=stored["df"],
-            file_id=request.file_id,
-            chroma_persist_dir=settings.CHROMA_PERSIST_DIR
-        )
-        return ChatResponse(**response)
-    except Exception as exc:
-        logger.exception("Chat exploration failed")
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    # If file_id is provided, use the specific file data
+    if request.file_id:
+        stored = _file_store.get(request.file_id)
+        if not stored:
+            raise HTTPException(
+                status_code=404,
+                detail=("Chat session lost: the associated data is no longer in the server memory. "
+                        "Please re-run the analysis.")
+            )
+        
+        try:
+            # Delegate to orchestrator to query both the data and the indexed memory
+            response = await asyncio.to_thread(
+                chat_with_data,
+                query=request.query,
+                df=stored["df"],
+                file_id=request.file_id,
+                chroma_persist_dir=settings.CHROMA_PERSIST_DIR
+            )
+            return ChatResponse(**response)
+        except Exception as exc:
+            logger.exception("Chat exploration failed")
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+    else:
+        # General chat without specific file - use RAG knowledge base
+        try:
+            from orchestrator import chat_general
+            
+            # Delegate to orchestrator for general questions using RAG
+            response = await asyncio.to_thread(
+                chat_general,
+                query=request.query,
+                chroma_persist_dir=settings.CHROMA_PERSIST_DIR
+            )
+            return ChatResponse(**response)
+        except Exception as exc:
+            logger.exception("General chat failed")
+            # Provide a basic response
+            answer = f"I can help with general time series forecasting questions. Technical details: {str(exc)}"
+            return ChatResponse(answer=answer)

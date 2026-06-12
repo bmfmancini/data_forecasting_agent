@@ -339,52 +339,55 @@ if st.session_state._running and info:
 if st.session_state.error and not st.session_state.analysis_result:
     st.error(f"Error: {st.session_state.error}")
 
-# ── Main area — 6 tabs ────────────────────────────────────────────────────────
+# ── Main area — tabs ──────────────────────────────────────────────────────────
 result = st.session_state.analysis_result
 
+# Chat is always available; analysis tabs only appear once a run has completed.
+tab_labels = [
+    "💬 Chat with your data",
+]
 if result:
-    tab_report, tab_forecast, tab_model, tab_stats, tab_quality, tab_trace, tab_overview, tab_chat = st.tabs([
-        "📄 Report",
-        "🔮 Forecast",
-        "🤖 Forecast Model Selection",
-        "📐 Statistical Analysis",
-        "🔍 Data Quality",
-        "🕵️ AI Reasoning Trace",
+    tab_labels.extend([
+        "� Report",
         "📊 Data Overview",
-        "💬 Chat with your data",
+        "🔍 Data Quality",
+        "📐 Statistical Analysis",
+        "🤖 Forecast Model Selection",
+        "🔮 Forecast",
+        "🕵️ AI Reasoning Trace",
     ])
+else:
+    tab_labels.append("ℹ️ Get Started")
 
-    # ── Tab 1: Overview ───────────────────────────────────────────────────────
-    with tab_overview:
-        render_overview_tab(info, result, uploaded_file)
+tabs = st.tabs(tab_labels)
+tab_iter = iter(tabs)
 
-    # ── Tab 2: Data Quality ───────────────────────────────────────────────────
-    with tab_quality:
-        render_quality_tab(result, show_advanced)
+with next(tab_iter):
+    render_chat_tab(info)
 
-    # ── Tab 3: Statistical Analysis ───────────────────────────────────────────
-    with tab_stats:
-        render_stats_tab(result, show_advanced)
-
-    # ── Tab 4: Model Selection ────────────────────────────────────────────────
-    with tab_model:
-        render_model_tab(result, show_advanced)
-
-    # ── Tab 5: Forecast ───────────────────────────────────────────────────────
-    with tab_forecast:
-        render_forecast_tab(result)
-
-    # ── Tab 6: Report ─────────────────────────────────────────────────────────
-    with tab_report:
+if result:
+    with next(tab_iter):
         render_report_tab(result, info)
 
-    # ── Tab 7: AI Trace ───────────────────────────────────────────────────────
-    with tab_trace:
+    with next(tab_iter):
+        render_overview_tab(info, result, uploaded_file)
+
+    with next(tab_iter):
+        render_quality_tab(result, show_advanced)
+
+    with next(tab_iter):
+        render_stats_tab(result, show_advanced)
+
+    with next(tab_iter):
+        render_model_tab(result, show_advanced)
+
+    with next(tab_iter):
+        render_forecast_tab(result)
+
+    with next(tab_iter):
         render_trace_tab(result)
-
-    # ── Tab 8: Data Explorer ──────────────────────────────────────────────────
-    with tab_chat:
-        render_chat_tab(info)
-
 else:
-    st.info("Upload a time series file and click **Run Analysis** to get started.")
+    with next(tab_iter):
+        st.info("Upload a time series file and click **Run Analysis** to get started.")
+        st.markdown("### Or try the chat feature!")
+        st.markdown("You can ask general questions about time series forecasting even without uploading data.")

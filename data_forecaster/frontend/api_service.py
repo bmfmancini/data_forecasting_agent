@@ -93,19 +93,23 @@ class ForecastingAPI:
         return requests.get(f"{BACKEND_URL}/jobs/{job_id}", timeout=JOB_STATUS_TIMEOUT)
 
     @staticmethod
-    def send_chat(file_id: str, query: str) -> requests.Response:
+    def send_chat(file_id: str | None, query: str) -> requests.Response:
         """
-        Send a chat message to the backend.
+        Send a chat query to the backend.
         
         Args:
-            file_id: ID of the file for context
+            file_id: ID of the file to chat about (optional)
             query: User's chat query
             
         Returns:
             requests.Response: API response
         """
+        payload = {"query": query}
+        if file_id:
+            payload["file_id"] = file_id
+            
         return requests.post(
             f"{BACKEND_URL}/chat",
-            json={"file_id": file_id, "query": query},
+            json=payload,
             timeout=CHAT_TIMEOUT
         )
