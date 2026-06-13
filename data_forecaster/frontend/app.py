@@ -114,7 +114,7 @@ with st.sidebar:
                 _DEMO_BYTES = _f.read()
         except FileNotFoundError:
             st.error("Demo data file not found inside the container.")
-            _DEMO_BYTES = None
+            _DEMO_BYTES = b""  # Empty bytes instead of None
         if _DEMO_BYTES:
             with st.spinner("Loading demo data…"):
                 try:
