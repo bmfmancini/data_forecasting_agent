@@ -10,7 +10,7 @@ import pytest
 backend_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "backend")
 sys.path.insert(0, backend_dir)
 
-from utils.data_cleaning import detect_outliers_zscore, apply_zscore_clipping
+from backend.utils.data_cleaning import detect_outliers_zscore, apply_zscore_clipping
 
 
 class TestZScoreOutliers:

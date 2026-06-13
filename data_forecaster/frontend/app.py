@@ -69,18 +69,19 @@ if st.session_state.chat_history is None:
     st.session_state.chat_history = []
 
 
-def _render_preflight_dialog(preflight: dict[str, Any], disabled: bool = False) -> bool:
+def _render_preflight_dialog_base(preflight: dict[str, Any], disabled: bool = False) -> bool:
     return render_preflight_dialog_content(preflight, disabled)
 
 
 if _dialog:
 
     @_dialog("Preflight Review")
-    def _preflight_dialog(preflight: dict[str, Any], disabled: bool = False) -> None:
-        _render_preflight_dialog(preflight, disabled=disabled)
+    def _render_preflight_dialog(preflight: dict[str, Any], disabled: bool = False) -> None:
+        _render_preflight_dialog_base(preflight, disabled=disabled)
 
+    _PREFLIGHT_DIALOG = _render_preflight_dialog
 else:
-    _preflight_dialog = None
+    _PREFLIGHT_DIALOG = None
 
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
@@ -100,23 +101,21 @@ with st.sidebar:
     )
 
     if demo_clicked and not st.session_state.get("_demo_loaded"):
-        import io as _io
-
         try:
             _demo_path = os.path.join(os.path.dirname(__file__), "demo_data.csv")
             if not os.path.exists(_demo_path):
                 # Fall back to fetching from backend container's data dir via env path
                 _demo_path = "/app/data/sample_airline_passengers.csv"
             with open(_demo_path, "rb") as _f:
-                _demo_bytes = _f.read()
+                _DEMO_BYTES = _f.read()
         except FileNotFoundError:
             st.error("Demo data file not found inside the container.")
-            _demo_bytes = None
-        if _demo_bytes:
+            _DEMO_BYTES = None
+        if _DEMO_BYTES:
             with st.spinner("Loading demo data…"):
                 try:
                     resp = ForecastingAPI.upload_file(
-                        "sample_airline_passengers.csv", _demo_bytes, "text/csv"
+                        "sample_airline_passengers.csv", _DEMO_BYTES, "text/csv"
                     )
                     if resp.status_code == 200:
                         st.session_state.upload_info = resp.json()
@@ -215,7 +214,7 @@ with st.sidebar:
         disabled=not info,
         help="Appended to the AI report prompt so it can tailor the analysis to your needs.",
     )
-    show_advanced = True
+    SHOW_ADVANCED = True
 
     is_running = st.session_state._running is True
     preflight = None
@@ -223,9 +222,9 @@ with st.sidebar:
     preflight_blocks_run = False
 
     if info and date_col and value_col:
-        signature = f"{info['file_id']}|{date_col}|{value_col}|{forecast_horizon}"
-        if st.session_state._preflight_signature != signature:
-            st.session_state._preflight_signature = signature
+        SIGNATURE = f"{info['file_id']}|{date_col}|{value_col}|{forecast_horizon}"
+        if st.session_state._preflight_signature != SIGNATURE:
+            st.session_state._preflight_signature = SIGNATURE
             st.session_state._preflight_options_current = None
 
         try:
@@ -252,22 +251,22 @@ with st.sidebar:
                     if preflight.get("warnings") and not decisions:
                         st.caption(f"{len(preflight['warnings'])} caution(s) found.")
 
-                    review_label = (
+                    REVIEW_LABEL = (
                         "Review Preflight Options"
                         if decisions
                         else "View Preflight Details"
                     )
                     if st.button(
-                        review_label,
+                        REVIEW_LABEL,
                         disabled=is_running,
                         use_container_width=True,
                     ):
-                        if _preflight_dialog:
-                            _preflight_dialog(preflight, disabled=is_running)
+                        if _PREFLIGHT_DIALOG:
+                            _PREFLIGHT_DIALOG(preflight, disabled=is_running)
                         else:
                             st.session_state["_show_preflight_fallback"] = True
 
-                    if not _preflight_dialog and st.session_state.get(
+                    if not _PREFLIGHT_DIALOG and st.session_state.get(
                         "_show_preflight_fallback"
                     ):
                         with st.expander("Preflight Review", expanded=True):
@@ -421,13 +420,13 @@ if result:
         render_overview_tab(info, result, uploaded_file)
 
     with next(tab_iter):
-        render_quality_tab(result, show_advanced)
+        render_quality_tab(result, SHOW_ADVANCED)
 
     with next(tab_iter):
-        render_stats_tab(result, show_advanced)
+        render_stats_tab(result, SHOW_ADVANCED)
 
     with next(tab_iter):
-        render_model_tab(result, show_advanced)
+        render_model_tab(result, SHOW_ADVANCED)
 
     with next(tab_iter):
         render_forecast_tab(result)

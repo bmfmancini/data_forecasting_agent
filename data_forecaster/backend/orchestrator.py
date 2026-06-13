@@ -33,16 +33,28 @@ from prompts.orchestrator_prompt import ORCHESTRATOR_CHAT_PROMPT
 
 logger = get_logger(__name__)
 
-# Shared RAG knowledge base (initialised once on startup)
-_rag_kb: RAGKnowledgeBase | None = None
+class RAGKnowledgeBaseManager:
+    """Singleton manager for RAG knowledge base."""
+
+    _instance = None
+    _rag_kb: RAGKnowledgeBase | None = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def get_rag_kb(self, persist_directory: str = "./chroma_db") -> RAGKnowledgeBase:
+        if self._rag_kb is None:
+            self._rag_kb = RAGKnowledgeBase(persist_directory=persist_directory)
+            self._rag_kb.load_documents()
+        return self._rag_kb
 
 
 def get_rag_kb(persist_directory: str = "./chroma_db") -> RAGKnowledgeBase:
-    global _rag_kb
-    if _rag_kb is None:
-        _rag_kb = RAGKnowledgeBase(persist_directory=persist_directory)
-        _rag_kb.load_documents()
-    return _rag_kb
+    """Get the RAG knowledge base instance."""
+    manager = RAGKnowledgeBaseManager()
+    return manager.get_rag_kb(persist_directory)
 
 
 def run_pipeline_from_file(
@@ -452,13 +464,13 @@ def chat_general(query: str, chroma_persist_dir: str) -> dict[str, Any]:
         [
             (
                 "system",
-                """You are an expert in time series forecasting and data analysis. 
+                """You are an expert in time series forecasting and data analysis.
          Use the provided context to answer questions about time series forecasting concepts, methodologies, and best practices.
          If the context doesn't contain enough information to fully answer the question, provide the best answer you can based on your general knowledge.
-         
+
          Context from documentation:
          {context}
-         
+
          Answer the question in a clear, concise, and helpful manner.""",
             ),
             ("human", "{query}"),

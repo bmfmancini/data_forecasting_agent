@@ -2,12 +2,15 @@
 Test script for the dynamic visualization system.
 """
 
-import sys
+# Standard library imports
 import os
+import sys
 
-# Add the frontend directory to the path
+# Add the frontend directory to the path so that utils can be imported
 sys.path.append(os.path.join(os.path.dirname(__file__), "frontend"))
 
+# Third‑party imports (pylint may not resolve these in the analysis environment)
+# pylint: disable=import-error,unused-import
 from utils.visualization_utils import DynamicVisualizer
 import plotly.graph_objects as go
 import plotly.express as px

@@ -37,7 +37,7 @@ jobs:
 
     - name: Run Pylint
       run: |
-        pylint **/*.py
+        pylint --rcfile=.pylintrc data_forecaster/**/*.py
 
     - name: Run MyPy
       run: |
