@@ -9,3 +9,4 @@ updates:
     directory: "/data_forecaster/backend" # Location of package manifests
     schedule:
       interval: "weekly"
+  - package-ecosystem: "pip" # See documentation for possible values
