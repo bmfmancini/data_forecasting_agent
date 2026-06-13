@@ -309,8 +309,10 @@ def chat_with_data(
     """
 
     # 3. Setup LLM based on configuration
-    if settings.USE_OLLAMA:
+    if settings.USE_OLLAMA and not settings.USE_OLLAMA_CLOUD:
         llm = ChatOllama(model=settings.OLLAMA_MODEL, base_url=settings.OLLAMA_BASE_URL, temperature=0)
+    elif settings.USE_OLLAMA_CLOUD:
+        llm = ChatOllama(model=settings.OLLAMA_MODEL, base_url=settings.OLLAMA_BASE_URL, temperature=0, api_key=settings.OLLAMA_API_KEY)
     else:
         llm = ChatGoogleGenerativeAI(model=settings.GEMINI_MODEL, google_api_key=settings.GEMINI_API_KEY, temperature=0)
 
