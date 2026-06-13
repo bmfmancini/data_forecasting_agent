@@ -18,9 +18,8 @@ The Time Series Data Forecaster Agent is a sophisticated application that automa
 
 ## Architecture
 
-
-![Agent Architecture](data_forecaster/docs/agent_arch.jpeg)
-
+![Agent Architecture](/data_forecaster/docs/agent_arch.jpeg)
+![Agent Workflow](/data_forecaster/docs/agent_workflow.jpeg)
 
 The system consists of five specialized agents working in sequence:
 
@@ -192,19 +191,22 @@ python -m pytest tests/
 - [SARIMA Model Guide](docs/sarima.txt)
 - [Holt-Winters Model Guide](docs/holt_winters.txt)
 
-## Contributing
 
-1. Fork the repository
-2. Create a feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
 
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## Acknowledgments
+
+- [Bala Priya C](https://www.freecodecamp.org/news/author/balapriyac/) for the data cleaning methods in the freeCodeCamp post [*How to Clean Time Series Data in Python*](https://www.freecodecamp.org/news/how-to-clean-time-series-data-in-python/) that inspired the `utils.data_cleaning` module
+
+- [Forecasting: Principles and Practice (3rd ed.)](https://otexts.com/fpp3/) by Hyndman & Athanasopoulos — the canonical reference for the ARIMA, SARIMA and exponential-smoothing methodology implemented in the `backend/forecasting` package
+
+- [Diogo Franquinho](https://diogofranquinho.com/notes/econometrics/time-series-analysis.html) for the concise *Time Series Analysis* technical notes covering stationarity, ACF, ARIMA and AIC-based model selection that informed the RAG knowledge base (`backend/rag/docs/`)
+As well as his Udemy courses!
+
+Other resources used
 
 - [Statsmodels](https://www.statsmodels.org/) for statistical modeling
 - [Pmdarima](https://alkaline-ml.com/pmdarima/) for ARIMA modeling
