@@ -1,6 +1,7 @@
 import streamlit as st
 from utils.ui_utils import render_reasoning
 
+
 def render_quality_tab(result, show_advanced):
     v = result["validation"]
     col1, col2, col3, col4 = st.columns(4)

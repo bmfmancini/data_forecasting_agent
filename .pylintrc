@@ -1,0 +1,142 @@
+[MASTER]
+# A comma-separated list of package or module names from where C extensions may
+# be loaded. Extensions are loading during the analysis step.
+extension-pkg-whitelist=
+
+# Add files or directories to the blacklist. They should be base names, not
+# paths.
+ignore=CVS
+
+# Add files or directories matching the regex patterns to the blacklist. The
+# regex matches against base names, not paths.
+ignore-patterns=
+
+# Python code to execute, usually for sys.path manipulation such as
+# pygtk.require().
+init-hook=
+
+# Use multiple processes to speed up Pylint. Specifying 0 will auto-detect the
+# number of processors available to use.
+jobs=1
+
+# List of plugins (as comma separated values of python module names) to load,
+# usually to register additional checkers.
+load-plugins=
+
+# Pickle collected data for later reuse.
+persistent=yes
+
+# Specify a configuration file.
+#rcfile=
+
+[MESSAGES CONTROL]
+# Only show warnings with the listed confidence levels. Leave empty to show
+# all. Valid levels: HIGH, INFERENCE, INFERENCE_FAILURE, UNDEFINED
+confidence=
+
+# Enable the message, report, category or checker with the given id(s). You can
+# either give multiple identifier separated by comma (,) or put this option
+# multiple time (only on the command line, not in the configuration file where
+# it should appear only once). See also the "--disable" option for examples.
+#enable=
+
+# Disable the message, report, category or checker with the given id(s). You
+# can either give multiple identifiers separated by comma (,) or put this option
+# multiple times (only on the command line, not in the configuration file where
+# it should appear only once).You can also use the "--enable" option to enable
+# specific messages or categories.
+disable=
+    C0114,  # missing-module-docstring
+    C0115,  # missing-class-docstring
+    C0116,  # missing-function-docstring
+    C0301,  # line-too-long
+    C0411,  # wrong-import-order
+    C0412,  # ungrouped-imports
+    C0413,  # wrong-import-position
+    C0415,  # import-outside-toplevel
+    W0611,  # unused-import
+    W0621,  # redefined-outer-name
+    W0718,  # broad-exception-caught
+    R0913,  # too-many-arguments
+    R0914,  # too-many-locals
+    R0915,  # too-many-statements
+    R0917,  # too-many-positional-arguments
+    R0911,  # too-many-return-statements
+    R0903,  # too-few-public-methods
+    E0401,  # import-error
+    E0611,  # no-name-in-module
+    W0212,  # protected-access
+
+[REPORTS]
+# Set the output format. Available formats are text, parseable, colorized, json
+# and msvs (visual studio). You can also give a reporter class, e.g.
+# mypackage.mymodule.MyReporterClass.
+output-format=text
+
+# Tells whether to display a full report or only the messages.
+reports=no
+
+# Python expression which should return a score less than or equal to 10. You
+# have access to the variables 'error', 'warning', 'refactor', and 'convention'
+# which contain the number of messages in each category, as well as 'statement'
+# which is the total number of statements analyzed. This score is used by
+# internal time estimation and no reports are printed when the evaluated
+# expression is negative.
+score=yes
+
+[LOGGING]
+# Logging modules to check that the string format arguments are in logging
+# function parameter format.
+logging-modules=logging,log
+
+[FORMAT]
+# Maximum number of characters on a single line.
+max-line-length=100
+
+# Maximum number of lines in a module.
+max-module-lines=1000
+
+# String used as indentation unit. This is usually "    " (4 spaces) or "\t" (1
+# tab).
+indent-string='    '
+
+[MISCELLANEOUS]
+# List of note tags to take in consideration, separated by a comma.
+notes=FIXME,XXX,TODO
+
+[TYPECHECK]
+# List of module names for which member attributes should not be checked
+# (useful for modules/projects where namespaces are manipulated during runtime
+# and thus existing member attributes cannot be deduced by static analysis). It
+# supports qualified module names, as well as Unix shell-style wildcards.
+ignored-modules=
+    streamlit,
+    plotly,
+    plotly.graph_objects,
+    plotly.express,
+    pandas,
+    numpy,
+    fastapi,
+    langchain,
+    langchain_core,
+    langchain_google_genai,
+    langchain_ollama,
+    pydantic,
+    requests,
+    dotenv,
+    pytest,
+    matplotlib,
+    scipy,
+    statsmodels,
+    pmdarima,
+    scikit-learn,
+    chromadb,
+    sentence-transformers,
+    openpyxl,
+    python-dotenv,
+    uvicorn
+
+[EXCEPTIONS]
+# Exceptions that will not be counted towards the limit of allowed exceptions
+# per function.
+overgeneral-exceptions=Exception

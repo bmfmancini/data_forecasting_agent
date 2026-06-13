@@ -30,10 +30,16 @@ def fit_holt_winters(series: pd.Series, forecast_horizon: int) -> dict:
         if (series > 0).all():
             try:
                 m_fit = ExponentialSmoothing(
-                    series, trend="add", seasonal="mul", seasonal_periods=seasonal_period
+                    series,
+                    trend="add",
+                    seasonal="mul",
+                    seasonal_periods=seasonal_period,
                 ).fit(optimized=True)
                 a_fit = ExponentialSmoothing(
-                    series, trend="add", seasonal="add", seasonal_periods=seasonal_period
+                    series,
+                    trend="add",
+                    seasonal="add",
+                    seasonal_periods=seasonal_period,
                 ).fit(optimized=True)
                 seasonal = "mul" if m_fit.aic < a_fit.aic else "add"
             except Exception:
@@ -43,7 +49,9 @@ def fit_holt_winters(series: pd.Series, forecast_horizon: int) -> dict:
 
     logger.info(
         "Holt-Winters config: seasonal=%s seasonal_period=%d series_len=%d",
-        seasonal, seasonal_period, len(series),
+        seasonal,
+        seasonal_period,
+        len(series),
     )
 
     # Split data into train and test sets for metrics calculation
@@ -52,20 +60,26 @@ def fit_holt_winters(series: pd.Series, forecast_horizon: int) -> dict:
 
     try:
         train_fit = ExponentialSmoothing(
-            train, trend=trend, seasonal=seasonal,
+            train,
+            trend=trend,
+            seasonal=seasonal,
             seasonal_periods=seasonal_period if use_seasonal else None,
         ).fit(optimized=True)
         test_fc = train_fit.forecast(len(test))
         rmse = float(np.sqrt(np.mean((test.values - test_fc.values) ** 2)))
         mae = float(np.mean(np.abs(test.values - test_fc.values)))
-        mape = float(np.mean(np.abs((test.values - test_fc.values) / (test.values + 1e-8))) * 100)
+        mape = float(
+            np.mean(np.abs((test.values - test_fc.values) / (test.values + 1e-8))) * 100
+        )
     except Exception as exc:
         logger.warning("Holt-Winters metrics failed: %s", exc)
         rmse = mae = mape = 0.0
 
     # Fit the model on the full series for final forecasting
     full_fit = ExponentialSmoothing(
-        series, trend=trend, seasonal=seasonal,
+        series,
+        trend=trend,
+        seasonal=seasonal,
         seasonal_periods=seasonal_period if use_seasonal else None,
     ).fit(optimized=True)
 
@@ -87,10 +101,10 @@ def fit_holt_winters(series: pd.Series, forecast_horizon: int) -> dict:
 
 def _infer_seasonal_period(series: pd.Series) -> int:
     """Infer the seasonal period based on the series frequency.
-    
+
     Args:
         series: A pandas Series with DatetimeIndex.
-        
+
     Returns:
         int: The inferred seasonal period.
     """

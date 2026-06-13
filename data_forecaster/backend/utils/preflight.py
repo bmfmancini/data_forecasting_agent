@@ -16,19 +16,24 @@ from utils.data_cleaning import (
     validate_schema,
 )
 
-
 AGGREGATION_OPTIONS = ["Let AI Decide", "sum", "mean", "latest"]
 MISSING_OPTIONS = ["Let AI Decide", "interpolate", "forward-fill", "drop"]
 FREQUENCY_OPTIONS = ["Let AI Decide", "D", "W", "MS", "QS", "YS"]
-OUTLIER_OPTIONS = ["None", "Let AI Decide", "Clip (Winsorize)", "Remove", "Z-Score Clip"]
+OUTLIER_OPTIONS = [
+    "None",
+    "Let AI Decide",
+    "Clip (Winsorize)",
+    "Remove",
+    "Z-Score Clip",
+]
 DOMAIN_OPTIONS = [
-    "Skip / Let AI Guess", 
-    "General / Unknown", 
-    "Retail / Sales", 
-    "Network Traffic / IoT", 
-    "Finance / Stock", 
+    "Skip / Let AI Guess",
+    "General / Unknown",
+    "Retail / Sales",
+    "Network Traffic / IoT",
+    "Finance / Stock",
     "Weather / Climate",
-    "Other (Custom)"
+    "Other (Custom)",
 ]
 
 
@@ -87,65 +92,77 @@ def run_preflight_checks(
 
     if duplicate_ts:
         issues.append(f"{duplicate_ts} duplicate timestamp(s) found.")
-        decisions.append(PreflightDecision(
-            key="duplicate_strategy",
-            label="Duplicate timestamp handling",
-            message="Choose how repeated timestamps should be combined before forecasting.",
-            options=AGGREGATION_OPTIONS,
-            default="Let AI Decide",
-        ))
+        decisions.append(
+            PreflightDecision(
+                key="duplicate_strategy",
+                label="Duplicate timestamp handling",
+                message="Choose how repeated timestamps should be combined before forecasting.",
+                options=AGGREGATION_OPTIONS,
+                default="Let AI Decide",
+            )
+        )
 
     if missing_values:
         issues.append(f"{missing_values} missing value(s) found in '{value_col}'.")
-        decisions.append(PreflightDecision(
-            key="missing_strategy",
-            label="Missing value handling",
-            message="Choose how missing values should be handled before modeling.",
-            options=MISSING_OPTIONS,
-            default="Let AI Decide",
-        ))
+        decisions.append(
+            PreflightDecision(
+                key="missing_strategy",
+                label="Missing value handling",
+                message="Choose how missing values should be handled before modeling.",
+                options=MISSING_OPTIONS,
+                default="Let AI Decide",
+            )
+        )
 
     if missing_ts or not is_regular:
         issues.append("Irregular intervals or timestamp gaps found.")
-        decisions.append(PreflightDecision(
-            key="frequency",
-            label="Forecast frequency",
-            message="Choose the regular frequency to use for the forecast output.",
-            options=FREQUENCY_OPTIONS,
-            default="Let AI Decide",
-        ))
+        decisions.append(
+            PreflightDecision(
+                key="frequency",
+                label="Forecast frequency",
+                message="Choose the regular frequency to use for the forecast output.",
+                options=FREQUENCY_OPTIONS,
+                default="Let AI Decide",
+            )
+        )
 
-    decisions.append(PreflightDecision(
-        key="data_domain",
-        label="Data Domain Context",
-        message="What is the domain of this data? This helps the AI choose the best cleaning strategy.",
-        options=DOMAIN_OPTIONS,
-        default="Skip / Let AI Guess",
-        required=True,
-        allow_custom=True
-    ))
+    decisions.append(
+        PreflightDecision(
+            key="data_domain",
+            label="Data Domain Context",
+            message="What is the domain of this data? This helps the AI choose the best cleaning strategy.",
+            options=DOMAIN_OPTIONS,
+            default="Skip / Let AI Guess",
+            required=True,
+            allow_custom=True,
+        )
+    )
 
     if outlier_info["count"] > 0:
         warnings.append(f"Detected {outlier_info['count']} potential outliers.")
-        decisions.append(PreflightDecision(
-            key="outlier_strategy",
-            label="Outlier Handling",
-            message=f"Detected {outlier_info['count']} outliers. How should they be treated?",
-            options=OUTLIER_OPTIONS,
-            default="Let AI Decide"
-        ))
+        decisions.append(
+            PreflightDecision(
+                key="outlier_strategy",
+                label="Outlier Handling",
+                message=f"Detected {outlier_info['count']} outliers. How should they be treated?",
+                options=OUTLIER_OPTIONS,
+                default="Let AI Decide",
+            )
+        )
 
     if usable_observations < 20:
         warnings.append(
             f"Only {usable_observations} usable observation(s) are available; forecast reliability may be low."
         )
-        decisions.append(PreflightDecision(
-            key="continue_short_series",
-            label="Short series confirmation",
-            message="Confirm that you want to continue with a short time series.",
-            options=["continue", "stop"],
-            default="continue",
-        ))
+        decisions.append(
+            PreflightDecision(
+                key="continue_short_series",
+                label="Short series confirmation",
+                message="Confirm that you want to continue with a short time series.",
+                options=["continue", "stop"],
+                default="continue",
+            )
+        )
 
     if forecast_horizon > max(usable_observations, 1):
         warnings.append(
@@ -239,9 +256,11 @@ def prepare_series_frame(
         strategy_map = {
             "Clip (Winsorize)": "clip",
             "Remove": "remove",
-            "Z-Score Clip": "zscore_clip"
+            "Z-Score Clip": "zscore_clip",
         }
-        internal_strategy = strategy_map.get(outlier_strategy, outlier_strategy.lower().replace(" ", "_"))
+        internal_strategy = strategy_map.get(
+            outlier_strategy, outlier_strategy.lower().replace(" ", "_")
+        )
         series = treat_outliers(series, internal_strategy)
 
     series = impute_missing(series, missing_strategy)
@@ -270,7 +289,9 @@ def _selected_frame(df: pd.DataFrame, date_col: str, value_col: str) -> pd.DataF
     selected = selected.dropna(subset=[date_col])
     selected = selected.sort_values(date_col).reset_index(drop=True)
     if selected.empty:
-        raise ValueError("No usable timestamps were found for the selected date column.")
+        raise ValueError(
+            "No usable timestamps were found for the selected date column."
+        )
     return selected
 
 

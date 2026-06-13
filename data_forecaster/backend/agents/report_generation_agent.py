@@ -5,10 +5,23 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_ollama import ChatOllama
 
-from core.config import GEMINI_MAX_TOKENS, GEMINI_MODEL, GEMINI_TEMPERATURE, USE_OLLAMA, OLLAMA_BASE_URL, OLLAMA_MODEL, OLLAMA_API_KEY
+from core.config import (
+    GEMINI_MAX_TOKENS,
+    GEMINI_MODEL,
+    GEMINI_TEMPERATURE,
+    USE_OLLAMA,
+    OLLAMA_BASE_URL,
+    OLLAMA_MODEL,
+    OLLAMA_API_KEY,
+)
 from core.logging_config import get_logger
 from rag.knowledge_base import RAGKnowledgeBase
-from schemas import ForecastResult, ModelSelectionResult, StatisticalResult, ValidationResult
+from schemas import (
+    ForecastResult,
+    ModelSelectionResult,
+    StatisticalResult,
+    ValidationResult,
+)
 from prompts.report_generation_prompt import REPORT_GENERATION_PROMPT
 
 logger = get_logger(__name__)
@@ -38,7 +51,8 @@ def run_report_agent(
     last_forecast = forecast.forecast[-1] if forecast.forecast else None
     pct_change = (
         ((last_forecast - first_forecast) / abs(first_forecast)) * 100
-        if first_forecast and first_forecast != 0 else None
+        if first_forecast and first_forecast != 0
+        else None
     )
     first_lower = forecast.lower_ci[0] if forecast.lower_ci else None
     last_upper = forecast.upper_ci[-1] if forecast.upper_ci else None
@@ -55,53 +69,83 @@ def run_report_agent(
     # ── Logic-Driven Visual Strategy ─────────────────────────────────────────
     visual_strategy = []
     if statistical.seasonal_period and statistical.seasonal_period > 1:
-        visual_strategy.append({
-            "chart": "STL Decomposition", 
-            "reason": "Strong seasonal patterns detected; decomposition is essential to isolate recurring cycles from underlying growth."
-        })
+        visual_strategy.append(
+            {
+                "chart": "STL Decomposition",
+                "reason": "Strong seasonal patterns detected; decomposition is essential to isolate recurring cycles from underlying growth.",
+            }
+        )
     if forecast.mape > 15:
-        visual_strategy.append({
-            "chart": "Forecast Confidence Intervals",
-            "reason": "High variance in data requires emphasis on the 95% CI ribbon to communicate risk and uncertainty to the C-suite."
-        })
+        visual_strategy.append(
+            {
+                "chart": "Forecast Confidence Intervals",
+                "reason": "High variance in data requires emphasis on the 95% CI ribbon to communicate risk and uncertainty to the C-suite.",
+            }
+        )
     if model_selection.selected_model == "SARIMA":
-        visual_strategy.append({"chart": "ACF/PACF", "reason": "Used to validate the seasonal autoregressive components of the selected model."})
-    
+        visual_strategy.append(
+            {
+                "chart": "ACF/PACF",
+                "reason": "Used to validate the seasonal autoregressive components of the selected model.",
+            }
+        )
+
     # Additional visualization suggestions based on data characteristics
     if statistical.outlier_ratio > 0.05:  # More than 5% outliers
-        visual_strategy.append({
-            "chart": "Box Plot",
-            "reason": "Significant outliers detected; a box plot would effectively display the distribution and highlight extreme values."
-        })
-    
+        visual_strategy.append(
+            {
+                "chart": "Box Plot",
+                "reason": "Significant outliers detected; a box plot would effectively display the distribution and highlight extreme values.",
+            }
+        )
+
     if statistical.has_trend and abs(statistical.trend_slope) > 0.01:
-        visual_strategy.append({
-            "chart": "Trend Analysis",
-            "reason": "Clear trend detected; a trend analysis visualization would help illustrate the direction and magnitude of change over time."
-        })
-    
+        visual_strategy.append(
+            {
+                "chart": "Trend Analysis",
+                "reason": "Clear trend detected; a trend analysis visualization would help illustrate the direction and magnitude of change over time.",
+            }
+        )
+
     if forecast.mape > 10:  # High error
-        visual_strategy.append({
-            "chart": "Forecast Error Plot",
-            "reason": "Forecast errors are significant; an error plot would help diagnose model performance and identify patterns in prediction accuracy."
-        })
-    
+        visual_strategy.append(
+            {
+                "chart": "Forecast Error Plot",
+                "reason": "Forecast errors are significant; an error plot would help diagnose model performance and identify patterns in prediction accuracy.",
+            }
+        )
+
     # General statistical visualizations
-    visual_strategy.append({
-        "chart": "Histogram",
-        "reason": "A histogram of the data distribution provides insights into central tendency, spread, and shape of the time series."
-    })
+    visual_strategy.append(
+        {
+            "chart": "Histogram",
+            "reason": "A histogram of the data distribution provides insights into central tendency, spread, and shape of the time series.",
+        }
+    )
 
     # Identify where the AI was asked to make the decision
-    auto_choices = [k for k, v in (preflight_options or {}).items() if v == "Let AI Decide"]
+    auto_choices = [
+        k for k, v in (preflight_options or {}).items() if v == "Let AI Decide"
+    ]
     ai_decision_context = ""
     if auto_choices:
         remediation_details = []
-        if "duplicate_strategy" in auto_choices: remediation_details.append("Aggregating duplicate timestamps using 'mean'")
-        if "missing_strategy" in auto_choices: remediation_details.append("Handling missing values via 'linear time-interpolation'")
-        if "frequency" in auto_choices: remediation_details.append(f"Automatically inferring frequency as '{validation.frequency}'")
-        
-        ai_decision_context = "\nAI REMEDIATION ACTIONS APPLIED:\n" + "\n".join(f"- {d}" for d in remediation_details) + "\n"
+        if "duplicate_strategy" in auto_choices:
+            remediation_details.append("Aggregating duplicate timestamps using 'mean'")
+        if "missing_strategy" in auto_choices:
+            remediation_details.append(
+                "Handling missing values via 'linear time-interpolation'"
+            )
+        if "frequency" in auto_choices:
+            remediation_details.append(
+                f"Automatically inferring frequency as '{validation.frequency}'"
+            )
+
+        ai_decision_context = (
+            "\nAI REMEDIATION ACTIONS APPLIED:\n"
+            + "\n".join(f"- {d}" for d in remediation_details)
+            + "\n"
+        )
 
     analysis_context = f"""
 ANALYSIS RESULTS SUMMARY
@@ -161,7 +205,11 @@ Visual Strategy Recommendations: {visual_strategy}
             model=OLLAMA_MODEL,
             base_url=OLLAMA_BASE_URL,
             temperature=GEMINI_TEMPERATURE,
-            headers={"Authorization": f"Bearer {OLLAMA_API_KEY}"} if OLLAMA_API_KEY else None,
+            headers=(
+                {"Authorization": f"Bearer {OLLAMA_API_KEY}"}
+                if OLLAMA_API_KEY
+                else None
+            ),
         )
     else:
         llm = ChatGoogleGenerativeAI(
@@ -170,19 +218,23 @@ Visual Strategy Recommendations: {visual_strategy}
             max_output_tokens=GEMINI_MAX_TOKENS,
         )
 
-    reasoning_steps: list[dict[str, Any]] = [{"thought": "Pre-retrieving methodology from RAG...", "observation": "Success"}]
+    reasoning_steps: list[dict[str, Any]] = [
+        {"thought": "Pre-retrieving methodology from RAG...", "observation": "Success"}
+    ]
 
     extra_instructions = (
         f"\n\nADDITIONAL USER INSTRUCTIONS:\n{user_prompt.strip()}\n"
         "Incorporate these instructions throughout the report where relevant."
-        if user_prompt and user_prompt.strip() else ""
+        if user_prompt and user_prompt.strip()
+        else ""
     )
 
     ai_logic_instruction = (
         "\nWhere AI Remediation was applied, you must assume full responsibility for the decision. "
         "Explain the statistical rationale for why the chosen data treatment (aggregation, interpolation, etc.) "
         "was the most robust choice to preserve signal and minimize forecast bias."
-        if auto_choices else ""
+        if auto_choices
+        else ""
     )
 
     prompt_template = REPORT_GENERATION_PROMPT
@@ -190,20 +242,31 @@ Visual Strategy Recommendations: {visual_strategy}
     try:
         # Invoke the LLM once with all the context needed
         chain = prompt_template | llm
-        response = chain.invoke({
-            "data_context": analysis_context,
-            "rag_context": methodology_context,
-            "ai_logic_instruction": ai_logic_instruction,
-            "extra_instructions": extra_instructions,
-            "visual_strategy": str(visual_strategy)
-        })
+        response = chain.invoke(
+            {
+                "data_context": analysis_context,
+                "rag_context": methodology_context,
+                "ai_logic_instruction": ai_logic_instruction,
+                "extra_instructions": extra_instructions,
+                "visual_strategy": str(visual_strategy),
+            }
+        )
         report = response.content
-        reasoning_steps.append({"thought": "Generating final report in a single pass...", "observation": "Complete"})
+        reasoning_steps.append(
+            {
+                "thought": "Generating final report in a single pass...",
+                "observation": "Complete",
+            }
+        )
 
     except Exception as exc:
-        logger.warning("Report agent LLM call failed: %s — generating fallback report.", exc)
+        logger.warning(
+            "Report agent LLM call failed: %s — generating fallback report.", exc
+        )
         report = _fallback_report(validation, statistical, model_selection, forecast)
-        reasoning_steps.append({"thought": f"Error: {exc}", "observation": "Fallback generated"})
+        reasoning_steps.append(
+            {"thought": f"Error: {exc}", "observation": "Fallback generated"}
+        )
 
     if not report.strip():
         report = _fallback_report(validation, statistical, model_selection, forecast)
@@ -222,14 +285,17 @@ def _fallback_report(
     last_forecast = forecast.forecast[-1] if forecast.forecast else None
     pct_change = (
         ((last_forecast - first_forecast) / abs(first_forecast)) * 100
-        if first_forecast and first_forecast != 0 else None
+        if first_forecast and first_forecast != 0
+        else None
     )
     first_date = forecast.forecast_dates[0] if forecast.forecast_dates else "N/A"
     last_date = forecast.forecast_dates[-1] if forecast.forecast_dates else "N/A"
     if statistical.trend_slope > 0:
         trend_direction = "upward"
         trend_verb = "growing"
-        trend_action = "capacity and resource planning should account for increasing demand"
+        trend_action = (
+            "capacity and resource planning should account for increasing demand"
+        )
         trend_plan = "growth"
     elif statistical.trend_slope < 0:
         trend_direction = "downward"
@@ -239,7 +305,9 @@ def _fallback_report(
     else:
         trend_direction = "flat"
         trend_verb = "broadly flat"
-        trend_action = "the current operational baseline is broadly appropriate for the near term"
+        trend_action = (
+            "the current operational baseline is broadly appropriate for the near term"
+        )
         trend_plan = "stable conditions"
     if forecast.mape < 10:
         mape_quality = "high (MAPE < 10%)"

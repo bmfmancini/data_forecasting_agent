@@ -8,17 +8,18 @@ import pandas as pd
 import io
 import plotly.graph_objects as go
 
+
 def render_overview_tab(info: dict, result: dict, uploaded_file) -> None:
     """
     Render the overview tab with dataset preview and historical time series.
-    
+
     Args:
         info: Dictionary containing file information
         result: Dictionary containing analysis results
         uploaded_file: Uploaded file object
     """
     st.subheader("Dataset Preview")
-    
+
     # Display dataset preview
     if info:
         try:
@@ -33,7 +34,7 @@ def render_overview_tab(info: dict, result: dict, uploaded_file) -> None:
             st.info("Preview unavailable.")
 
     st.subheader("Historical Time Series")
-    
+
     # Display historical time series chart
     if result.get("chart_historical"):
         fig = go.Figure(result["chart_historical"], skip_invalid=True)
