@@ -254,7 +254,7 @@ def apply_boxcox(series: pd.Series) -> tuple[pd.Series, float]:
 
 
 def detect_change_points(
-    series: pd.Series, method: str = "cusum", threshold: float = None
+    series: pd.Series, method: str = "cusum", threshold: float | None = None
 ) -> dict[str, Any]:
     """
     Detects change points in a time series using various methods.
