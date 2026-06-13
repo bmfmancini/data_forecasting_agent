@@ -69,14 +69,18 @@ if st.session_state.chat_history is None:
     st.session_state.chat_history = []
 
 
-def _render_preflight_dialog_base(preflight: dict[str, Any], disabled: bool = False) -> bool:
+def _render_preflight_dialog_base(
+    preflight: dict[str, Any], disabled: bool = False
+) -> bool:
     return render_preflight_dialog_content(preflight, disabled)
 
 
 if _dialog:
 
     @_dialog("Preflight Review")
-    def _render_preflight_dialog(preflight: dict[str, Any], disabled: bool = False) -> None:
+    def _render_preflight_dialog(
+        preflight: dict[str, Any], disabled: bool = False
+    ) -> None:
         _render_preflight_dialog_base(preflight, disabled=disabled)
 
     _PREFLIGHT_DIALOG = _render_preflight_dialog

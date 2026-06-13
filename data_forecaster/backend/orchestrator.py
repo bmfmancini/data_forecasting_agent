@@ -33,6 +33,7 @@ from prompts.orchestrator_prompt import ORCHESTRATOR_CHAT_PROMPT
 
 logger = get_logger(__name__)
 
+
 class RAGKnowledgeBaseManager:
     """Singleton manager for RAG knowledge base."""
 
