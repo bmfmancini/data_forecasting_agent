@@ -66,6 +66,31 @@ def run_report_agent(
         })
     if model_selection.selected_model == "SARIMA":
         visual_strategy.append({"chart": "ACF/PACF", "reason": "Used to validate the seasonal autoregressive components of the selected model."})
+    
+    # Additional visualization suggestions based on data characteristics
+    if statistical.outlier_ratio > 0.05:  # More than 5% outliers
+        visual_strategy.append({
+            "chart": "Box Plot",
+            "reason": "Significant outliers detected; a box plot would effectively display the distribution and highlight extreme values."
+        })
+    
+    if statistical.has_trend and abs(statistical.trend_slope) > 0.01:
+        visual_strategy.append({
+            "chart": "Trend Analysis",
+            "reason": "Clear trend detected; a trend analysis visualization would help illustrate the direction and magnitude of change over time."
+        })
+    
+    if forecast.mape > 10:  # High error
+        visual_strategy.append({
+            "chart": "Forecast Error Plot",
+            "reason": "Forecast errors are significant; an error plot would help diagnose model performance and identify patterns in prediction accuracy."
+        })
+    
+    # General statistical visualizations
+    visual_strategy.append({
+        "chart": "Histogram",
+        "reason": "A histogram of the data distribution provides insights into central tendency, spread, and shape of the time series."
+    })
 
     # Identify where the AI was asked to make the decision
     auto_choices = [k for k, v in (preflight_options or {}).items() if v == "Let AI Decide"]

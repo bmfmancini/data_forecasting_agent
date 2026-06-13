@@ -335,6 +335,32 @@ def chat_with_data(
             except json.JSONDecodeError:
                 pass
         
+        # Try to parse any JSON visualization configuration from the response
+        # Look for JSON objects in the response that might contain visualization configs
+        # Use a simpler pattern to match JSON objects (this is a basic approach)
+        json_pattern = r'\{[^{}]*\{[^{}]*\}[^{}]*\}|\{[^{}]*\}'
+        matches = re.findall(json_pattern, content, re.DOTALL)
+        
+        for match in matches:
+            try:
+                potential_config = json.loads(match)
+                # Check if this looks like a visualization configuration
+                if isinstance(potential_config, dict) and (
+                    "data" in potential_config or 
+                    "type" in potential_config or 
+                    "layout" in potential_config
+                ):
+                    # Return the response with the visualization configuration
+                    # Remove the JSON from the answer text for cleaner display
+                    clean_answer = content.replace(match, "").strip()
+                    return {
+                        "answer": clean_answer,
+                        "visualization_data": potential_config,
+                        "visualization_type": "dynamic"
+                    }
+            except json.JSONDecodeError:
+                continue
+        
         return {"answer": content}
 
     except Exception as exc:

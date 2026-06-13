@@ -12,6 +12,7 @@ The Time Series Data Forecaster Agent is a sophisticated application that automa
 - **Multiple Forecasting Models**: ARIMA, SARIMA, Holt-Winters, and EWMA models
 - **AI-Powered Analysis**: Statistical analysis and model selection powered by LLMs
 - **Comprehensive Reporting**: Detailed reports with visualizations and business insights
+- **Dynamic Visualizations**: AI-generated Plotly charts for any time series visualization need
 - **Interactive UI**: Streamlit-based web interface for easy data upload and analysis
 - **Docker Deployment**: Containerized application for easy deployment
 - **RAG Integration**: Memory-augmented analysis with ChromaDB vector database
@@ -138,6 +139,26 @@ data_forecaster/
 - Creates comprehensive analysis reports
 - Provides business insights and recommendations
 - Generates visualizations and charts
+
+## Visualization Capabilities
+
+The Time Series Data Forecaster Agent now supports dynamic, AI-generated visualizations for enhanced data exploration and analysis:
+
+- **Predefined Visualizations**:
+  - Historical time series line charts
+  - STL decomposition (trend, seasonal, residual components)
+  - ACF/PACF correlation plots
+  - Forecast charts with confidence intervals
+  - Model comparison bar charts
+
+- **Dynamic Visualizations** (AI-generated on request):
+  - Statistical charts (histograms, box plots, violin plots)
+  - Time-based visualizations (area charts, heatmaps)
+  - Correlation visualizations (scatter plots, correlation matrices)
+  - Anomaly detection charts
+  - Custom chart types based on user requests
+
+Users can request specific visualizations through the chat interface, and the AI will generate appropriate Plotly chart configurations that are rendered in the UI.
 
 ## Supported Models
 
