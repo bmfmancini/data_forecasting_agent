@@ -18,8 +18,8 @@ The Time Series Data Forecaster Agent is a sophisticated application that automa
 
 ## Architecture
 
-![Agent Architecture](docs/agent_arch.jpeg)
-![Agent Workflow](docs/agent_workflow.jpeg)
+![Agent Architecture](backend/docs/agent_arch.jpeg)
+![Agent Workflow](backend/docs/agent_workflow.jpeg)
 
 The system consists of five specialized agents working in sequence:
 
