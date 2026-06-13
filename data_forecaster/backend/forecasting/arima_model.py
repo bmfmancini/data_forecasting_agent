@@ -25,6 +25,10 @@ logger = get_logger(__name__)
 def fit_arima(series: pd.Series, forecast_horizon: int) -> dict:
     """Fit ARIMA via pmdarima auto_arima and return forecast + metrics.
 
+    Args:
+        series: A pandas Series containing the time series data.
+        forecast_horizon: The number of periods to forecast.
+
     Returns:
         dict with keys: forecast, lower_ci, upper_ci, rmse, mae, mape
     """
@@ -40,7 +44,7 @@ def fit_arima(series: pd.Series, forecast_horizon: int) -> dict:
             "rmse": 0.0, "mae": 0.0, "mape": 0.0
         }
 
-    # ── Metrics via train/test split ─────────────────────────────────────────
+    # Split data into train and test sets for metrics calculation
     split = max(1, min(len(series) - 1, max(int(len(series) * 0.8), len(series) - forecast_horizon)))
     train, test = series.iloc[:split], series.iloc[split:]
 
@@ -66,7 +70,7 @@ def fit_arima(series: pd.Series, forecast_horizon: int) -> dict:
     except Exception as exc:
         logger.warning("ARIMA metrics failed: %s", exc)
 
-    # ── Full-series fit: Reuse optimal order found during training ────────────
+    # Fit the model on the full series using the order from training
     order = train_model.order if train_model is not None else (1, 1, 1)
 
     full_model = pm.ARIMA(

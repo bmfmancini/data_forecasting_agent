@@ -29,12 +29,17 @@ def fit_sarima(
 ) -> dict:
     """Fit SARIMA via pmdarima auto_arima (seasonal=True) and return forecast + metrics.
 
+    Args:
+        series: A pandas Series containing the time series data.
+        forecast_horizon: The number of periods to forecast.
+        seasonal_period: The seasonal period of the time series.
+
     Returns:
         dict with keys: forecast, lower_ci, upper_ci, rmse, mae, mape
     """
     series = series.dropna().astype(float)
 
-    # Need at least 2 full seasonal cycles; fall back to ARIMA otherwise
+    # Check if we have enough data for seasonal modeling
     if len(series) < 2 * seasonal_period:
         logger.warning(
             "Series too short (%d obs) for seasonal period %d. Fitting non-seasonal ARIMA.",
@@ -44,7 +49,7 @@ def fit_sarima(
 
     use_seasonal = seasonal_period > 1
 
-    # ── Metrics via train/test split ─────────────────────────────────────────
+    # Split data into train and test sets for metrics calculation
     split = max(int(len(series) * 0.8), len(series) - forecast_horizon)
     train, test = series.iloc[:split], series.iloc[split:]
 
@@ -69,7 +74,7 @@ def fit_sarima(
         logger.warning("SARIMA metrics failed: %s", exc)
         rmse = mae = mape = 0.0
 
-    # ── Full-series fit: Reuse parameters from train_model to avoid redundant search ─
+    # Fit the model on the full series using parameters from training
     full_model = pm.ARIMA(
         order=train_model.order,
         seasonal_order=train_model.seasonal_order,
