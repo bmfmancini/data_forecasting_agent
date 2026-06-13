@@ -29,7 +29,7 @@ jobs:
         if [ -f backend/requirements.txt ]; then pip install -r data_forecaster/backend/requirements.txt; fi
         if [ -f frontend/requirements.txt ]; then pip install -r data_forecaster/frontend/requirements.txt; fi
         # Install development tools
-        pip install pylint mypy black pytest
+        pip install pylint mypy black pytest mypy
 
     - name: Run Black (check mode)
       run: |
