@@ -76,14 +76,23 @@ def run_validation_agent(
     else:
         llm = ChatGoogleGenerativeAI(model=GEMINI_MODEL, temperature=0)
 
-    auto_choices = [k for k, v in (preflight_options or {}).items() if v == "Let AI Decide"]
+    options = preflight_options or {}
+    auto_choices = [k for k, v in options.items() if v == "Let AI Decide"]
+    
+    # Build a more descriptive remediation summary for the LLM to evaluate
+    remediation_log = []
+    if "duplicate_strategy" in auto_choices:
+        remediation_log.append("- Duplicates: Aggregated using 'mean' to preserve central tendency.")
+    if "missing_strategy" in auto_choices:
+        remediation_log.append("- Missing Values: Filled via 'linear time-interpolation' to maintain trend continuity.")
+    if "frequency" in auto_choices:
+        remediation_log.append(f"- Frequency: Automatically inferred as '{freq}' based on the median time delta.")
+
     ai_instruction = (
         "\nNOTE: The user has selected 'Let AI Decide' for data quality remediation. "
-        "The system has automatically applied the following treatments:\n"
-        + ("- Duplicates: Aggregated using 'mean' to preserve central tendency\n" if "duplicate_strategy" in auto_choices else "")
-        + ("- Missing Values: Filled via 'linear time-interpolation' to maintain trend continuity\n" if "missing_strategy" in auto_choices else "")
-        + ("- Frequency: Inferred based on the median time delta\n" if "frequency" in auto_choices else "")
-        + "\nEvaluate if this state is optimal and justify these specific cleaning steps."
+        "The system has applied the following treatments:\n"
+        + "\n".join(remediation_log)
+        + "\n\nAs the Analyst, evaluate if these steps were statistically sound for this specific dataset and justify the reasoning."
         if auto_choices else ""
     )
 
