@@ -3,6 +3,7 @@ import base64
 import plotly.graph_objects as go
 from utils.ui_utils import render_reasoning
 
+
 def render_stats_tab(result, show_advanced):
     s = result["statistical"]
 
@@ -10,9 +11,15 @@ def render_stats_tab(result, show_advanced):
     with col1:
         st.markdown("### Stationarity Tests")
         adf_status = "✅ Stationary" if s["is_stationary_adf"] else "⚠️ Non-stationary"
-        kpss_status = "✅ Stationary" if s["is_stationary_kpss"] else "⚠️ Non-stationary"
-        st.markdown(f"**ADF Test:** {adf_status}  \np-value = `{s['adf_p_value']:.4f}`, statistic = `{s['adf_statistic']:.4f}`")
-        st.markdown(f"**KPSS Test:** {kpss_status}  \np-value = `{s['kpss_p_value']:.4f}`, statistic = `{s['kpss_statistic']:.4f}`")
+        kpss_status = (
+            "✅ Stationary" if s["is_stationary_kpss"] else "⚠️ Non-stationary"
+        )
+        st.markdown(
+            f"**ADF Test:** {adf_status}  \np-value = `{s['adf_p_value']:.4f}`, statistic = `{s['adf_statistic']:.4f}`"
+        )
+        st.markdown(
+            f"**KPSS Test:** {kpss_status}  \np-value = `{s['kpss_p_value']:.4f}`, statistic = `{s['kpss_statistic']:.4f}`"
+        )
 
     with col2:
         st.markdown("### Trend & Seasonality")

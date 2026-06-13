@@ -98,9 +98,16 @@ def reindex_series(series: pd.Series, freq: str) -> pd.Series:
     if not isinstance(series.index, pd.DatetimeIndex):
         raise ValueError("Series index must be a pandas DatetimeIndex.")
     series = series.sort_index()
-    full_idx = pd.date_range(start=series.index.min(), end=series.index.max(), freq=freq)
+    full_idx = pd.date_range(
+        start=series.index.min(), end=series.index.max(), freq=freq
+    )
     reindexed = series.reindex(full_idx)
-    logger.info("Reindexed series from %d to %d points using freq='%s'", len(series), len(reindexed), freq)
+    logger.info(
+        "Reindexed series from %d to %d points using freq='%s'",
+        len(series),
+        len(reindexed),
+        freq,
+    )
     return reindexed
 
 
@@ -126,11 +133,15 @@ def impute_missing(
     elif method == "seasonal-decompose":
         period = _infer_seasonal_period(series)
         if len(series) < 2 * period:
-            logger.warning("Series too short for seasonal decomposition imputation; falling back to interpolation.")
+            logger.warning(
+                "Series too short for seasonal decomposition imputation; falling back to interpolation."
+            )
             filled = series.interpolate(method="time", limit=limit)
         else:
             temp = series.interpolate(method="time")
-            decomp = seasonal_decompose(temp, model="additive", period=period, extrapolate_trend="freq")
+            decomp = seasonal_decompose(
+                temp, model="additive", period=period, extrapolate_trend="freq"
+            )
             reconstructed = decomp.trend + decomp.seasonal
             filled = series.copy()
             filled[filled.isna()] = reconstructed[filled.isna()]
@@ -282,7 +293,9 @@ def apply_zscore_clipping(series: pd.Series, threshold: float = 3.0) -> pd.Serie
     return clipped_series
 
 
-def detect_outliers_isolation_forest(series: pd.Series, contamination: float = 0.02) -> Dict[str, Any]:
+def detect_outliers_isolation_forest(
+    series: pd.Series, contamination: float = 0.02
+) -> Dict[str, Any]:
     """Detect multivariate outliers using Isolation Forest.
 
     This function treats the series as a single‑feature array.
@@ -303,7 +316,11 @@ def detect_outliers_isolation_forest(series: pd.Series, contamination: float = 0
     inlier_vals = series[~outlier_mask]
     lower = inlier_vals.min()
     upper = inlier_vals.max()
-    return {"lower_bound": lower, "upper_bound": upper, "count": int(outlier_mask.sum())}
+    return {
+        "lower_bound": lower,
+        "upper_bound": upper,
+        "count": int(outlier_mask.sum()),
+    }
 
 
 def treat_outliers(
@@ -358,6 +375,7 @@ def resolve_duplicates(
         return series.groupby(level=0).mean()
     raise ValueError(f"Unsupported duplicate strategy: {strategy}")
 
+
 def smooth_series(
     series: pd.Series,
     method: Literal["ewma", "savgol", "none"],
@@ -384,9 +402,12 @@ def smooth_series(
         polyorder = params.get("polyorder", 2)
         if window % 2 == 0:
             window += 1
-        filtered = savgol_filter(series.values, window_length=window, polyorder=polyorder)
+        filtered = savgol_filter(
+            series.values, window_length=window, polyorder=polyorder
+        )
         return pd.Series(filtered, index=series.index)
     raise ValueError(f"Unsupported smoothing method: {method}")
+
 
 def validate_schema(
     series: pd.Series,
@@ -410,7 +431,9 @@ def validate_schema(
     inferred = pd.infer_freq(series.index)
     report["freq_regular"] = inferred == config.get("expected_freq")
     missing_rate = series.isna().mean()
-    report["missing_below_threshold"] = missing_rate <= config.get("max_missing_rate", 0.05)
+    report["missing_below_threshold"] = missing_rate <= config.get(
+        "max_missing_rate", 0.05
+    )
     report["missing_rate"] = round(missing_rate, 4)
     if series.dropna().empty:
         report["values_in_range"] = True
@@ -426,7 +449,9 @@ def validate_schema(
     report["index_monotonic"] = series.index.is_monotonic_increasing
     return report
 
+
 # ---------------------------------------------------------------------------
+
 
 def _infer_seasonal_period(series: pd.Series) -> int:
     """Infer seasonal period from the series frequency.
@@ -437,8 +462,10 @@ def _infer_seasonal_period(series: pd.Series) -> int:
     if not freq:
         return 12
     mapping = {
-        "M": 12, "MS": 12,
-        "Q": 4, "QS": 4,
+        "M": 12,
+        "MS": 12,
+        "Q": 4,
+        "QS": 4,
         "W": 52,
         "D": 7,
         "B": 5,
