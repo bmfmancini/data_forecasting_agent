@@ -35,7 +35,12 @@ The system consists of five specialized agents working in sequence:
 
 - Docker and Docker Compose
 - Python 3.9+ (for local development)
-- Google API Key (for Gemini models) or Ollama (for local LLMs)
+- Google API Key (for Gemini models) OR **Ollama** (for local/cloud-based models accessed via Ollama)
+
+> **Important Note on Ollama:** Ollama is currently required for both local and cloud-based model execution (e.g., `gpt-oss:120b-cloud`). You must install Ollama and manually download your model of choice using `ollama pull` before running the pipeline. 
+>
+> *Future Release Note:* In a near future release, if you are using **Ollama Cloud**, pre-pulling models will no longer be required. However, the `ollama pull` step will always remain mandatory for models running on local hardware.
+
 
 ### Using Docker (Recommended)
 
@@ -63,25 +68,35 @@ The system consists of five specialized agents working in sequence:
 
 ### Local Development
 
-1. Install backend dependencies:
+1. **Set up Ollama** (if using Ollama-based models):
+   - Install Ollama.
+   - Pull the required model:
+     ```bash
+     ollama pull gpt-oss:120b-cloud
+     ```
+
+2. Install backend dependencies:
    ```bash
    cd backend
    pip install -r requirements.txt
    ```
 
 2. Install frontend dependencies:
+3. Install frontend dependencies:
    ```bash
    cd frontend
    pip install -r requirements.txt
    ```
 
 3. Start the backend:
+4. Start the backend:
    ```bash
    cd backend
    uvicorn main:app --reload
    ```
 
 4. Start the frontend:
+5. Start the frontend:
    ```bash
    cd frontend
    streamlit run app.py
