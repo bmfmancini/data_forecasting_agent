@@ -9,6 +9,7 @@ GEMINI_TEMPERATURE: float = float(os.getenv("GEMINI_TEMPERATURE", "0.1"))
 GEMINI_MAX_TOKENS: int = int(os.getenv("GEMINI_MAX_TOKENS", "8192"))
 
 USE_OLLAMA: bool = os.getenv("USE_OLLAMA", "False").lower() == "true"
+USE_OLLAMA_CLOUD: bool = os.getenv("USE_OLLAMA_CLOUD", "False").lower() == "true"
 OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://host.docker.internal:11434")
 OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "llama3")
 OLLAMA_API_KEY: str | None = os.getenv("OLLAMA_API_KEY")
