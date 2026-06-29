@@ -15,8 +15,8 @@ logger = get_logger(__name__)
 DOCS_DIR = Path(__file__).parent / "docs"
 COLLECTION_NAME = "forecasting_methodology"
 EMBED_MODEL = "all-MiniLM-L6-v2"
-CHUNK_SIZE = 400      # characters per chunk
-CHUNK_OVERLAP = 80    # characters overlapping between consecutive chunks
+CHUNK_SIZE = 400  # characters per chunk
+CHUNK_OVERLAP = 80  # characters overlapping between consecutive chunks
 
 
 class RAGKnowledgeBase:
@@ -69,14 +69,20 @@ class RAGKnowledgeBase:
             embeddings=embeddings,
             metadatas=all_metas,
         )
-        logger.info("Upserted %d chunks into collection '%s'", len(all_ids), COLLECTION_NAME)
+        logger.info(
+            "Upserted %d chunks into collection '%s'", len(all_ids), COLLECTION_NAME
+        )
 
     def retrieve(self, query: str, k: int = 3) -> list[str]:
         """Return top-k relevant text chunks for the given query."""
         if self._collection is None or self._embedder is None:
-            raise RuntimeError("Knowledge base not loaded. Call load_documents() first.")
+            raise RuntimeError(
+                "Knowledge base not loaded. Call load_documents() first."
+            )
 
-        query_embedding = self._embedder.encode([query], show_progress_bar=False).tolist()
+        query_embedding = self._embedder.encode(
+            [query], show_progress_bar=False
+        ).tolist()
         results = self._collection.query(
             query_embeddings=query_embedding,
             n_results=k,
@@ -100,7 +106,9 @@ class RAGKnowledgeBase:
             RuntimeError: If the knowledge base has not been loaded yet.
         """
         if self._collection is None or self._embedder is None:
-            raise RuntimeError("Knowledge base not loaded. Call load_documents() first.")
+            raise RuntimeError(
+                "Knowledge base not loaded. Call load_documents() first."
+            )
         if not texts:
             return []
 
@@ -121,7 +129,11 @@ class RAGKnowledgeBase:
             chunks = _chunk_text(text, CHUNK_SIZE, CHUNK_OVERLAP)
             for i, chunk in enumerate(chunks):
                 chunk_id = f"{base_id}__{i}" if len(chunks) > 1 else base_id
-                chunk_meta = {**meta, "chunk_index": i, "source": meta.get("source", "runtime")}
+                chunk_meta = {
+                    **meta,
+                    "chunk_index": i,
+                    "source": meta.get("source", "runtime"),
+                }
                 all_ids.append(chunk_id)
                 all_texts.append(chunk)
                 all_metas.append(chunk_meta)
@@ -134,11 +146,16 @@ class RAGKnowledgeBase:
             embeddings=embeddings,
             metadatas=all_metas,
         )
-        logger.info("Upserted %d runtime chunks into collection '%s'", len(all_ids), COLLECTION_NAME)
+        logger.info(
+            "Upserted %d runtime chunks into collection '%s'",
+            len(all_ids),
+            COLLECTION_NAME,
+        )
         return all_ids
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def _chunk_text(text: str, chunk_size: int, overlap: int) -> list[str]:
     """Split text into overlapping character-level chunks."""

@@ -12,6 +12,7 @@ from fpdf import FPDF
 # keeps the surrounding prose from being broken by dangling whitespace.
 _VISUAL_TAG_LINE_REGEX = re.compile(r"^\s*\[VISUAL:[A-Z_]+\]\s*$")
 
+
 def _strip_visual_tags(report_md: str) -> str:
     """Remove [VISUAL:TAG] placeholder lines and their surrounding blanks."""
     cleaned_lines: list[str] = []
@@ -24,6 +25,7 @@ def _strip_visual_tags(report_md: str) -> str:
             continue
         cleaned_lines.append(line)
     return "\n".join(cleaned_lines)
+
 
 def report_to_pdf(report_md: str, title: str = "Forecast Report") -> bytes:
     """
@@ -101,7 +103,7 @@ def report_to_pdf(report_md: str, title: str = "Forecast Report") -> bytes:
             _cell(pdf, 6, _sanitize(_strip_inline(line)))
 
     try:
-        pdf_output_result = pdf.output(dest='S')
+        pdf_output_result = pdf.output(dest="S")
     except TypeError:
         pdf_output_result = pdf.output()
 

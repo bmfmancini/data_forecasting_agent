@@ -27,19 +27,21 @@ logger = logging.getLogger(__name__)
 
 class DynamicVisualizer:
     """A class to render dynamic visualizations from LLM-generated Plotly configurations."""
-    
+
     def __init__(self):
         """Initialize the DynamicVisualizer."""
         pass
-    
-    def render_from_config(self, config: Dict[str, Any], key: Optional[str] = None) -> bool:
+
+    def render_from_config(
+        self, config: Dict[str, Any], key: Optional[str] = None
+    ) -> bool:
         """
         Render a Plotly chart from a configuration dictionary.
-        
+
         Args:
             config: Dictionary containing Plotly chart configuration
             key: Optional unique key for Streamlit elements
-            
+
         Returns:
             bool: True if rendering was successful, False otherwise
         """
@@ -48,47 +50,47 @@ class DynamicVisualizer:
             if not self._validate_config(config):
                 st.warning("Invalid visualization configuration.")
                 return False
-            
+
             # Create the figure based on the configuration
             fig = self._create_figure(config)
-            
+
             if fig is not None:
                 st.plotly_chart(fig, use_container_width=True, key=key)
                 return True
             else:
                 st.warning("Could not generate visualization from configuration.")
                 return False
-                
+
         except Exception as e:
             logger.error(f"Error rendering visualization: {str(e)}")
             st.error(f"Error rendering visualization: {str(e)}")
             return False
-    
+
     def _validate_config(self, config: Dict[str, Any]) -> bool:
         """
         Validate the visualization configuration.
-        
+
         Args:
             config: Dictionary containing Plotly chart configuration
-            
+
         Returns:
             bool: True if configuration is valid, False otherwise
         """
         # Basic validation - check if config is a dictionary
         if not isinstance(config, dict):
             return False
-            
+
         # Check for required keys
         # For now, we'll be permissive and allow various Plotly chart types
         return True
-    
+
     def _create_figure(self, config: Dict[str, Any]) -> Optional[go.Figure]:
         """
         Create a Plotly figure from the configuration.
-        
+
         Args:
             config: Dictionary containing Plotly chart configuration
-            
+
         Returns:
             go.Figure: Plotly figure object or None if creation failed
         """
@@ -106,18 +108,18 @@ class DynamicVisualizer:
             else:
                 logger.warning("Invalid configuration format")
                 return None
-                
+
         except Exception as e:
             logger.error(f"Error creating figure: {str(e)}")
             return None
-    
+
     def _create_express_figure(self, config: Dict[str, Any]) -> Optional[go.Figure]:
         """
         Create a Plotly Express-style figure from the configuration.
-        
+
         Args:
             config: Dictionary containing chart type and data
-            
+
         Returns:
             go.Figure: Plotly figure object or None if creation failed
         """
@@ -125,7 +127,7 @@ class DynamicVisualizer:
             chart_type = config.get("type", "").lower()
             data = config.get("data", {})
             layout = config.get("layout", {})
-            
+
             # Create figure based on type
             if chart_type == "line":
                 fig = px.line(**data)
@@ -140,32 +142,38 @@ class DynamicVisualizer:
             elif chart_type == "violin":
                 fig = px.violin(**data)
             elif chart_type == "heatmap":
-                fig = px.density_heatmap(**data) if config.get("density", False) else px.imshow(**data)
+                fig = (
+                    px.density_heatmap(**data)
+                    if config.get("density", False)
+                    else px.imshow(**data)
+                )
             elif chart_type == "area":
                 fig = px.area(**data)
             else:
                 # Fallback to generic figure creation
                 fig = go.Figure(config)
-            
+
             # Apply layout if provided
             if layout:
                 fig.update_layout(**layout)
-                
+
             return fig
-            
+
         except Exception as e:
             logger.error(f"Error creating express figure: {str(e)}")
             return None
 
 
-def render_visualization_from_llm(viz_data: Dict[str, Any], key: Optional[str] = None) -> bool:
+def render_visualization_from_llm(
+    viz_data: Dict[str, Any], key: Optional[str] = None
+) -> bool:
     """
     Render a visualization from LLM-generated data.
-    
+
     Args:
         viz_data: Dictionary containing visualization data from LLM
         key: Optional unique key for Streamlit elements
-        
+
     Returns:
         bool: True if rendering was successful, False otherwise
     """
@@ -176,21 +184,21 @@ def render_visualization_from_llm(viz_data: Dict[str, Any], key: Optional[str] =
 def parse_llm_visualization_response(response_text: str) -> Optional[Dict[str, Any]]:
     """
     Parse visualization configuration from LLM response text.
-    
+
     Args:
         response_text: Text response from LLM that may contain visualization configuration
-        
+
     Returns:
         Dict[str, Any]: Parsed visualization configuration or None if not found
     """
     try:
         # Look for JSON configuration in the response
         # This is a simple implementation - in practice, you might want more robust parsing
-        
+
         # Check if the response is already JSON
-        if response_text.strip().startswith('{'):
+        if response_text.strip().startswith("{"):
             return json.loads(response_text)
-            
+
         decoder = json.JSONDecoder()
         for index, char in enumerate(response_text):
             if char != "{":
@@ -198,13 +206,15 @@ def parse_llm_visualization_response(response_text: str) -> Optional[Dict[str, A
             try:
                 config, _ = decoder.raw_decode(response_text[index:])
                 # Basic validation - check if it looks like a visualization config
-                if isinstance(config, dict) and (config.get("data") or config.get("type") or config.get("layout")):
+                if isinstance(config, dict) and (
+                    config.get("data") or config.get("type") or config.get("layout")
+                ):
                     return config
             except json.JSONDecodeError:
                 continue
-                
+
         return None
-        
+
     except Exception as e:
         logger.error(f"Error parsing LLM visualization response: {str(e)}")
         return None

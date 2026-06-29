@@ -17,7 +17,12 @@ from dotenv import load_dotenv
 
 from api_service import ForecastingAPI
 from utils.pdf_utils import report_to_pdf
-from utils.ui_utils import render_reasoning, preflight_defaults, render_preflight_contents, render_preflight_dialog_content
+from utils.ui_utils import (
+    render_reasoning,
+    preflight_defaults,
+    render_preflight_contents,
+    render_preflight_dialog_content,
+)
 from tabs.overview import render_overview_tab
 from tabs.quality import render_quality_tab
 from tabs.stats import render_stats_tab
@@ -31,7 +36,9 @@ load_dotenv()
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 
-st.set_page_config(page_title="Time Series Data Forecaster Agent", layout="wide", page_icon="📈")
+st.set_page_config(
+    page_title="Time Series Data Forecaster Agent", layout="wide", page_icon="📈"
+)
 st.title("📈 Time Series Data Forecaster Agent")
 
 # Initialize session state variables
@@ -61,14 +68,17 @@ _dialog = getattr(st, "dialog", None) or getattr(st, "experimental_dialog", None
 if st.session_state.chat_history is None:
     st.session_state.chat_history = []
 
+
 def _render_preflight_dialog(preflight: dict[str, Any], disabled: bool = False) -> bool:
     return render_preflight_dialog_content(preflight, disabled)
 
 
 if _dialog:
+
     @_dialog("Preflight Review")
     def _preflight_dialog(preflight: dict[str, Any], disabled: bool = False) -> None:
         _render_preflight_dialog(preflight, disabled=disabled)
+
 else:
     _preflight_dialog = None
 
@@ -77,7 +87,11 @@ else:
 with st.sidebar:
     st.header("Configuration")
 
-    demo_clicked = st.button("📂 Load Demo Data", use_container_width=True, help="Loads the classic airline passengers dataset (1949–1960)")
+    demo_clicked = st.button(
+        "📂 Load Demo Data",
+        use_container_width=True,
+        help="Loads the classic airline passengers dataset (1949–1960)",
+    )
 
     st.markdown("**— or upload your own —**")
 
@@ -87,6 +101,7 @@ with st.sidebar:
 
     if demo_clicked and not st.session_state.get("_demo_loaded"):
         import io as _io
+
         try:
             _demo_path = os.path.join(os.path.dirname(__file__), "demo_data.csv")
             if not os.path.exists(_demo_path):
@@ -108,12 +123,16 @@ with st.sidebar:
                         st.session_state.analysis_result = None
                         st.session_state.error = None
                         st.session_state["_demo_loaded"] = True
-                        st.success("Demo data loaded — 144 rows (airline passengers 1949–1960).")
+                        st.success(
+                            "Demo data loaded — 144 rows (airline passengers 1949–1960)."
+                        )
                         st.rerun()
                     else:
                         st.error(resp.json().get("detail", "Demo upload failed."))
                 except Exception as exc:
-                    st.error(f"🌐 Backend Connection Error: {exc}. Verify BACKEND_URL and service names in docker-compose.")
+                    st.error(
+                        f"🌐 Backend Connection Error: {exc}. Verify BACKEND_URL and service names in docker-compose."
+                    )
 
     if not demo_clicked:
         st.session_state["_demo_loaded"] = False
@@ -131,7 +150,9 @@ with st.sidebar:
                     st.session_state.upload_info = resp.json()
                     st.session_state.analysis_result = None
                     st.session_state.error = None
-                    st.success(f"Uploaded — {st.session_state.upload_info['rows']} rows detected.")
+                    st.success(
+                        f"Uploaded — {st.session_state.upload_info['rows']} rows detected."
+                    )
                 else:
                     st.session_state.error = resp.json().get("detail", "Upload failed.")
                     st.error(st.session_state.error)
@@ -145,13 +166,21 @@ with st.sidebar:
     date_col = st.selectbox(
         "Date Column",
         options=columns,
-        index=columns.index(info["detected_date_col"]) if info and info.get("detected_date_col") in columns else 0,
+        index=(
+            columns.index(info["detected_date_col"])
+            if info and info.get("detected_date_col") in columns
+            else 0
+        ),
         disabled=not columns,
     )
     value_col = st.selectbox(
         "Value Column",
         options=columns,
-        index=columns.index(info["detected_value_col"]) if info and info.get("detected_value_col") in columns else min(1, len(columns) - 1),
+        index=(
+            columns.index(info["detected_value_col"])
+            if info and info.get("detected_value_col") in columns
+            else min(1, len(columns) - 1)
+        ),
         disabled=not columns,
     )
 
@@ -162,7 +191,10 @@ with st.sidebar:
 
     forecast_horizon = st.slider(
         "Forecast Horizon (periods)",
-        min_value=7, max_value=365, value=12, step=1,
+        min_value=7,
+        max_value=365,
+        value=12,
+        step=1,
         disabled=not info,
     )
 
@@ -198,10 +230,7 @@ with st.sidebar:
 
         try:
             resp = ForecastingAPI.get_preflight(
-                info["file_id"],
-                forecast_horizon,
-                date_col,
-                value_col
+                info["file_id"], forecast_horizon, date_col, value_col
             )
             if resp.status_code == 200:
                 preflight = resp.json()
@@ -223,7 +252,11 @@ with st.sidebar:
                     if preflight.get("warnings") and not decisions:
                         st.caption(f"{len(preflight['warnings'])} caution(s) found.")
 
-                    review_label = "Review Preflight Options" if decisions else "View Preflight Details"
+                    review_label = (
+                        "Review Preflight Options"
+                        if decisions
+                        else "View Preflight Details"
+                    )
                     if st.button(
                         review_label,
                         disabled=is_running,
@@ -234,17 +267,27 @@ with st.sidebar:
                         else:
                             st.session_state["_show_preflight_fallback"] = True
 
-                    if not _preflight_dialog and st.session_state.get("_show_preflight_fallback"):
+                    if not _preflight_dialog and st.session_state.get(
+                        "_show_preflight_fallback"
+                    ):
                         with st.expander("Preflight Review", expanded=True):
-                            choices = render_preflight_contents(preflight, disabled=is_running)
-                            if st.button("Apply Preflight Choices", disabled=is_running, use_container_width=True):
+                            choices = render_preflight_contents(
+                                preflight, disabled=is_running
+                            )
+                            if st.button(
+                                "Apply Preflight Choices",
+                                disabled=is_running,
+                                use_container_width=True,
+                            ):
                                 st.session_state._preflight_options_current = choices
                                 st.session_state["_show_preflight_fallback"] = False
                                 st.rerun()
 
                 if preflight_options.get("continue_short_series") == "stop":
                     preflight_blocks_run = True
-                    st.info("Run Analysis is paused until short-series confirmation is set to continue.")
+                    st.info(
+                        "Run Analysis is paused until short-series confirmation is set to continue."
+                    )
             else:
                 st.error(resp.json().get("detail", "Preflight review failed."))
                 preflight_blocks_run = True
@@ -288,13 +331,15 @@ if st.session_state._running and info:
                 "preflight_options": st.session_state.get("_preflight_options"),
             }
             resp = ForecastingAPI.submit_analysis(payload)
-            
+
             if resp.status_code == 202:
                 st.session_state._job_id = resp.json()["job_id"]
                 st.session_state._job_progress = 0
                 st.session_state._job_step = "Queued — waiting for an available slot…"
             else:
-                st.session_state.error = resp.json().get("detail", "Failed to submit job.")
+                st.session_state.error = resp.json().get(
+                    "detail", "Failed to submit job."
+                )
                 st.session_state._running = False
         except Exception as exc:
             st.session_state.error = str(exc)
@@ -303,6 +348,7 @@ if st.session_state._running and info:
     else:
         # ── Poll for status ───────────────────────────────────────────────────
         import time as _time
+
         try:
             resp = ForecastingAPI.get_job_status(job_id)
             if resp.status_code == 200:
@@ -347,15 +393,17 @@ tab_labels = [
     "💬 Chat with your data",
 ]
 if result:
-    tab_labels.extend([
-        "� Report",
-        "📊 Data Overview",
-        "🔍 Data Quality",
-        "📐 Statistical Analysis",
-        "🤖 Forecast Model Selection",
-        "🔮 Forecast",
-        "🕵️ AI Reasoning Trace",
-    ])
+    tab_labels.extend(
+        [
+            "� Report",
+            "📊 Data Overview",
+            "🔍 Data Quality",
+            "📐 Statistical Analysis",
+            "🤖 Forecast Model Selection",
+            "🔮 Forecast",
+            "🕵️ AI Reasoning Trace",
+        ]
+    )
 else:
     tab_labels.append("ℹ️ Get Started")
 
@@ -390,4 +438,6 @@ else:
     with next(tab_iter):
         st.info("Upload a time series file and click **Run Analysis** to get started.")
         st.markdown("### Or try the chat feature!")
-        st.markdown("You can ask general questions about time series forecasting even without uploading data.")
+        st.markdown(
+            "You can ask general questions about time series forecasting even without uploading data."
+        )

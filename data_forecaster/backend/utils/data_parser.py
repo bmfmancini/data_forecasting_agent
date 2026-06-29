@@ -27,7 +27,9 @@ def parse_upload(
     if ext not in ALLOWED_EXTENSIONS:
         raise ValueError(f"Unsupported file type: .{ext}")
 
-    logger.info("Parsing upload: filename=%s ext=%s bytes=%d", filename, ext, len(content))
+    logger.info(
+        "Parsing upload: filename=%s ext=%s bytes=%d", filename, ext, len(content)
+    )
 
     if ext == "csv":
         df = pd.read_csv(io.BytesIO(content))
@@ -44,7 +46,9 @@ def parse_upload(
     if date_col is None:
         raise ValueError("Could not detect a date column. Please specify date_col.")
     if value_col is None:
-        raise ValueError("Could not detect a numeric value column. Please specify value_col.")
+        raise ValueError(
+            "Could not detect a numeric value column. Please specify value_col."
+        )
 
     logger.info("Detected columns: date_col=%s  value_col=%s", date_col, value_col)
 
@@ -67,9 +71,19 @@ def parse_upload(
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+
 def _detect_date_column(df: pd.DataFrame) -> Optional[str]:
     """Return first column that can be parsed as dates."""
-    date_keywords = {"date", "time", "month", "year", "day", "period", "ds", "timestamp"}
+    date_keywords = {
+        "date",
+        "time",
+        "month",
+        "year",
+        "day",
+        "period",
+        "ds",
+        "timestamp",
+    }
     # keyword match first
     for col in df.columns:
         if any(kw in col.lower() for kw in date_keywords):

@@ -51,7 +51,7 @@ def run_pipeline_from_file(
     value_col: str,
     freq: str,
     forecast_horizon: int,
-    **kwargs
+    **kwargs,
 ) -> AnalysisResponse:
     """
     Entry point for Task 3: Ingests enterprise documents (CSV/Excel)
@@ -59,8 +59,10 @@ def run_pipeline_from_file(
     """
     logger.info("Ingesting file for pipeline: %s", file_path)
     df = load_file_to_dataframe(file_path)
-    file_id = file_path.split('/')[-1]
-    return run_pipeline(df, file_id, date_col, value_col, freq, forecast_horizon, **kwargs)
+    file_id = file_path.split("/")[-1]
+    return run_pipeline(
+        df, file_id, date_col, value_col, freq, forecast_horizon, **kwargs
+    )
 
 
 def run_pipeline(
@@ -84,7 +86,11 @@ def run_pipeline(
 
     logger.info(
         "Pipeline start: file_id=%s date_col=%s value_col=%s freq=%s horizon=%d",
-        file_id, date_col, value_col, freq, forecast_horizon,
+        file_id,
+        date_col,
+        value_col,
+        freq,
+        forecast_horizon,
     )
 
     if (preflight_options or {}).get("continue_short_series") == "stop":
@@ -97,7 +103,9 @@ def run_pipeline(
     # ── Agent 1: Data Validation ──────────────────────────────────────────────
     logger.info("Agent 1: Data Validation")
     _progress(5, "Validating data…")
-    validation_result = run_validation_agent(df, date_col, value_col, freq, preflight_options=preflight_options)
+    validation_result = run_validation_agent(
+        df, date_col, value_col, freq, preflight_options=preflight_options
+    )
     _progress(15, "Data validation complete")
 
     # ── Agent 2: Statistical Analysis ────────────────────────────────────────
@@ -105,9 +113,7 @@ def run_pipeline(
     _progress(20, "Running statistical analysis…")
     user_domain = (preflight_options or {}).get("data_domain", "Skip / Let AI Guess")
     stat_result = run_statistical_agent(
-        series, 
-        seasonal_period, 
-        user_domain=user_domain
+        series, seasonal_period, user_domain=user_domain
     )
     _progress(35, "Statistical analysis complete")
 
@@ -117,15 +123,19 @@ def run_pipeline(
         if "iqr_clip" in stat_result.recommended_remediation:
             logger.info("Agent decided to APPLY IQR clipping.")
             from utils.data_cleaning import apply_iqr_clipping
+
             series = apply_iqr_clipping(series)
             logger.info("IQR clipping applied successfully.")
         elif "zscore_clip" in stat_result.recommended_remediation:
             logger.info("Agent decided to APPLY Z-score clipping.")
             from utils.data_cleaning import apply_zscore_clipping
+
             series = apply_zscore_clipping(series)
             logger.info("Z-score clipping applied successfully.")
         else:
-            logger.info("Agent decided to SKIP outlier clipping (likely determined outliers are signal).")
+            logger.info(
+                "Agent decided to SKIP outlier clipping (likely determined outliers are signal)."
+            )
 
     if "box_cox" in stat_result.recommended_remediation:
         logger.info("Agent decided to APPLY Box-Cox transformation.")
@@ -136,23 +146,41 @@ def run_pipeline(
             logger.warning("Box-Cox application failed: %s", e)
 
     if "change_point_analysis" in stat_result.recommended_remediation:
-        logger.info("Agent detected significant change points. Adding note to analysis.")
+        logger.info(
+            "Agent detected significant change points. Adding note to analysis."
+        )
         stat_result.summary += "\n\n(Note: Change point analysis detected structural breaks. Consider segmenting the data for improved forecasting accuracy.)"
 
     # ── Agent 3: Model Selection ──────────────────────────────────────────────
     if forced_model:
-        logger.info("Agent 3: Model Selection skipped — user forced model: %s", forced_model)
+        logger.info(
+            "Agent 3: Model Selection skipped — user forced model: %s", forced_model
+        )
         _progress(40, f"Model manually set to {forced_model}")
         model_selection = ModelSelectionResult(
             selected_model=forced_model,
             explanation=f"Model manually selected by user: {forced_model}.",
-            holt_winters_rejected_reason=None if forced_model == "Holt-Winters" else "Not selected (user chose a different model).",
-            arima_rejected_reason=None if forced_model == "ARIMA" else "Not selected (user chose a different model).",
-            sarima_rejected_reason=None if forced_model == "SARIMA" else "Not selected (user chose a different model).",
-            reasoning_steps=[{
-                "thought": f"User explicitly requested the {forced_model} model. Skipping automated model selection logic.",
-                "observation": f"Manual selection active: {forced_model}"
-            }]
+            holt_winters_rejected_reason=(
+                None
+                if forced_model == "Holt-Winters"
+                else "Not selected (user chose a different model)."
+            ),
+            arima_rejected_reason=(
+                None
+                if forced_model == "ARIMA"
+                else "Not selected (user chose a different model)."
+            ),
+            sarima_rejected_reason=(
+                None
+                if forced_model == "SARIMA"
+                else "Not selected (user chose a different model)."
+            ),
+            reasoning_steps=[
+                {
+                    "thought": f"User explicitly requested the {forced_model} model. Skipping automated model selection logic.",
+                    "observation": f"Manual selection active: {forced_model}",
+                }
+            ],
         )
     else:
         logger.info("Agent 3: Model Selection")
@@ -228,10 +256,9 @@ def run_pipeline(
         chart_model_comparison=chart_model_comparison,
     )
 
+
 def index_analysis_results(
-    file_id: str,
-    analysis_result: AnalysisResponse,
-    chroma_persist_dir: str
+    file_id: str, analysis_result: AnalysisResponse, chroma_persist_dir: str
 ) -> None:
     """
     Requirement 1: Store the output results in the agent's memory.
@@ -239,7 +266,7 @@ def index_analysis_results(
     """
     logger.info("Indexing analysis results for file_id=%s", file_id)
     rag_kb = get_rag_kb(chroma_persist_dir)
-    
+
     # Create a summary document for the vector store
     summary = (
         f"Forecasting Analysis Results for {file_id}:\n"
@@ -247,27 +274,26 @@ def index_analysis_results(
         f"Model Selection: {analysis_result.model_selection.selected_model}\n"
         f"Statistical Insights: {analysis_result.statistical.model_dump_json()}\n"
     )
-    
+
     # Persist the summary to the RAG knowledge base
     if hasattr(rag_kb, "add_texts"):
         rag_kb.add_texts(
-            texts=[summary],
-            metadatas=[{"file_id": file_id, "type": "analysis_result"}]
+            texts=[summary], metadatas=[{"file_id": file_id, "type": "analysis_result"}]
         )
     else:
-        logger.warning("RAGKnowledgeBase does not support direct text indexing. Result memory not persisted.")
+        logger.warning(
+            "RAGKnowledgeBase does not support direct text indexing. Result memory not persisted."
+        )
+
 
 def chat_with_data(
-    query: str,
-    df: pd.DataFrame,
-    file_id: str,
-    chroma_persist_dir: str
+    query: str, df: pd.DataFrame, file_id: str, chroma_persist_dir: str
 ) -> dict[str, Any]:
     """
     Requirement 2: Data Explorer - Allow user to prompt the agent with questions about data.
     """
     logger.info("Data Explorer query for file_id=%s: %s", file_id, query)
-    
+
     # 1. Retrieve Analysis Memory from RAG
     rag_kb = get_rag_kb(chroma_persist_dir)
     memory_context = ""
@@ -283,19 +309,23 @@ def chat_with_data(
     stats_dict = df.describe().iloc[:, :20].to_dict()
 
     # ── Enhanced Data Visibility ─────────────────────────────────────────────
-    # Instead of just stats, we provide a "sorted snapshot" so the LLM can 
+    # Instead of just stats, we provide a "sorted snapshot" so the LLM can
     # see specific dates for peaks and troughs.
     data_snapshots = ""
     try:
-        date_cols = df.select_dtypes(include=['datetime', 'datetimetz']).columns.tolist()
-        num_cols = df.select_dtypes(include=['number']).columns.tolist()
+        date_cols = df.select_dtypes(
+            include=["datetime", "datetimetz"]
+        ).columns.tolist()
+        num_cols = df.select_dtypes(include=["number"]).columns.tolist()
         if date_cols and num_cols:
             main_date = date_cols[0]
             val_col = num_cols[0]
-            
+
             top_5 = df.nlargest(5, val_col)[[main_date, val_col]].to_string(index=False)
-            bottom_5 = df.nsmallest(5, val_col)[[main_date, val_col]].to_string(index=False)
-            
+            bottom_5 = df.nsmallest(5, val_col)[[main_date, val_col]].to_string(
+                index=False
+            )
+
             data_snapshots = f"\nHIGHEST 5 RECORDS (Sorted by {val_col}):\n{top_5}\n"
             data_snapshots += f"\nLOWEST 5 RECORDS (Sorted by {val_col}):\n{bottom_5}\n"
     except Exception as exc:
@@ -310,24 +340,39 @@ def chat_with_data(
 
     # 3. Setup LLM based on configuration
     if settings.USE_OLLAMA and not settings.USE_OLLAMA_CLOUD:
-        llm = ChatOllama(model=settings.OLLAMA_MODEL, base_url=settings.OLLAMA_BASE_URL, temperature=0)
+        llm = ChatOllama(
+            model=settings.OLLAMA_MODEL,
+            base_url=settings.OLLAMA_BASE_URL,
+            temperature=0,
+        )
     elif settings.USE_OLLAMA_CLOUD:
-        llm = ChatOllama(model=settings.OLLAMA_MODEL, base_url=settings.OLLAMA_BASE_URL, temperature=0, api_key=settings.OLLAMA_API_KEY)
+        llm = ChatOllama(
+            model=settings.OLLAMA_MODEL,
+            base_url=settings.OLLAMA_BASE_URL,
+            temperature=0,
+            api_key=settings.OLLAMA_API_KEY,
+        )
     else:
-        llm = ChatGoogleGenerativeAI(model=settings.GEMINI_MODEL, google_api_key=settings.GEMINI_API_KEY, temperature=0)
+        llm = ChatGoogleGenerativeAI(
+            model=settings.GEMINI_MODEL,
+            google_api_key=settings.GEMINI_API_KEY,
+            temperature=0,
+        )
 
     prompt = ORCHESTRATOR_CHAT_PROMPT
 
     try:
         chain = prompt | llm
-        response = chain.invoke({
-            "analysis_context": memory_context,
-            "data_summary": data_summary,
-            "query": query
-        })
-        
+        response = chain.invoke(
+            {
+                "analysis_context": memory_context,
+                "data_summary": data_summary,
+                "query": query,
+            }
+        )
+
         content = response.content
-        
+
         # Handle potential JSON visualization responses from LLM
         if "visualization_type" in content:
             # Strip markdown code blocks if present
@@ -336,21 +381,21 @@ def chat_with_data(
                 return json.loads(clean_content)
             except json.JSONDecodeError:
                 pass
-        
+
         # Try to parse any JSON visualization configuration from the response
         # Look for JSON objects in the response that might contain visualization configs
         # Use a simpler pattern to match JSON objects (this is a basic approach)
-        json_pattern = r'\{[^{}]*\{[^{}]*\}[^{}]*\}|\{[^{}]*\}'
+        json_pattern = r"\{[^{}]*\{[^{}]*\}[^{}]*\}|\{[^{}]*\}"
         matches = re.findall(json_pattern, content, re.DOTALL)
-        
+
         for match in matches:
             try:
                 potential_config = json.loads(match)
                 # Check if this looks like a visualization configuration
                 if isinstance(potential_config, dict) and (
-                    "data" in potential_config or 
-                    "type" in potential_config or 
-                    "layout" in potential_config
+                    "data" in potential_config
+                    or "type" in potential_config
+                    or "layout" in potential_config
                 ):
                     # Return the response with the visualization configuration
                     # Remove the JSON from the answer text for cleaner display
@@ -358,16 +403,18 @@ def chat_with_data(
                     return {
                         "answer": clean_answer,
                         "visualization_data": potential_config,
-                        "visualization_type": "dynamic"
+                        "visualization_type": "dynamic",
                     }
             except json.JSONDecodeError:
                 continue
-        
+
         return {"answer": content}
 
     except Exception as exc:
         logger.exception("LLM Chat failed")
-        return {"answer": f"I encountered an error while processing your request: {str(exc)}"}
+        return {
+            "answer": f"I encountered an error while processing your request: {str(exc)}"
+        }
 
 
 def chat_general(query: str, chroma_persist_dir: str) -> dict[str, Any]:
@@ -375,7 +422,7 @@ def chat_general(query: str, chroma_persist_dir: str) -> dict[str, Any]:
     Handle general questions using only the RAG knowledge base without requiring a dataset.
     """
     logger.info("General chat query: %s", query)
-    
+
     # 1. Retrieve relevant information from RAG
     rag_kb = get_rag_kb(chroma_persist_dir)
     memory_context = ""
@@ -388,36 +435,48 @@ def chat_general(query: str, chroma_persist_dir: str) -> dict[str, Any]:
 
     # 2. Setup LLM based on configuration
     if settings.USE_OLLAMA:
-        llm = ChatOllama(model=settings.OLLAMA_MODEL, base_url=settings.OLLAMA_BASE_URL, temperature=0)
+        llm = ChatOllama(
+            model=settings.OLLAMA_MODEL,
+            base_url=settings.OLLAMA_BASE_URL,
+            temperature=0,
+        )
     else:
-        llm = ChatGoogleGenerativeAI(model=settings.GEMINI_MODEL, google_api_key=settings.GEMINI_API_KEY, temperature=0)
+        llm = ChatGoogleGenerativeAI(
+            model=settings.GEMINI_MODEL,
+            google_api_key=settings.GEMINI_API_KEY,
+            temperature=0,
+        )
 
     # Create a prompt for general questions
-    general_prompt = ChatPromptTemplate.from_messages([
-        ("system", """You are an expert in time series forecasting and data analysis. 
+    general_prompt = ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                """You are an expert in time series forecasting and data analysis. 
          Use the provided context to answer questions about time series forecasting concepts, methodologies, and best practices.
          If the context doesn't contain enough information to fully answer the question, provide the best answer you can based on your general knowledge.
          
          Context from documentation:
          {context}
          
-         Answer the question in a clear, concise, and helpful manner."""),
-        ("human", "{query}")
-    ])
+         Answer the question in a clear, concise, and helpful manner.""",
+            ),
+            ("human", "{query}"),
+        ]
+    )
 
     try:
         chain = general_prompt | llm
-        response = chain.invoke({
-            "context": memory_context,
-            "query": query
-        })
-        
+        response = chain.invoke({"context": memory_context, "query": query})
+
         content = response.content
         return {"answer": content}
 
     except Exception as exc:
         logger.exception("LLM General Chat failed")
-        return {"answer": f"I encountered an error while processing your request: {str(exc)}"}
+        return {
+            "answer": f"I encountered an error while processing your request: {str(exc)}"
+        }
 
 
 def _freq_to_period(freq: str) -> int:
