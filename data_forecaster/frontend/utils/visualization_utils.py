@@ -7,11 +7,20 @@ from __future__ import annotations
 
 import json
 import logging
+from types import SimpleNamespace
 from typing import Any, Dict, Optional
 
 import plotly.graph_objects as go
 import plotly.express as px
-import streamlit as st
+
+try:
+    import streamlit as st
+except ModuleNotFoundError:
+    st = SimpleNamespace(
+        error=lambda *args, **kwargs: None,
+        plotly_chart=lambda *args, **kwargs: None,
+        warning=lambda *args, **kwargs: None,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -182,14 +191,12 @@ def parse_llm_visualization_response(response_text: str) -> Optional[Dict[str, A
         if response_text.strip().startswith('{'):
             return json.loads(response_text)
             
-        # Look for JSON-like patterns in the text
-        import re
-        json_pattern = r'\{(?:[^{}]|(?R))*\}'
-        matches = re.findall(json_pattern, response_text, re.DOTALL)
-        
-        for match in matches:
+        decoder = json.JSONDecoder()
+        for index, char in enumerate(response_text):
+            if char != "{":
+                continue
             try:
-                config = json.loads(match)
+                config, _ = decoder.raw_decode(response_text[index:])
                 # Basic validation - check if it looks like a visualization config
                 if isinstance(config, dict) and (config.get("data") or config.get("type") or config.get("layout")):
                     return config
