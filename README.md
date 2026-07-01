@@ -12,7 +12,7 @@ The Time Series Data Forecaster Agent is a sophisticated application that automa
 - **Multiple Forecasting Models**: ARIMA, SARIMA, Holt-Winters, and EWMA models
 - **AI-Powered Analysis**: Statistical analysis and model selection powered by LLMs
 - **Comprehensive Reporting**: Detailed reports with visualizations and business insights
-- **Interactive UI**: Streamlit-based web interface for easy data upload and analysis
+- **Flask Web Interface**: Multi-page Flask application with authentication, admin panel, and role-based access control
 - **Docker Deployment**: Containerized application for easy deployment
 - **RAG Integration**: Memory-augmented analysis with ChromaDB vector database
 
@@ -63,7 +63,7 @@ The system consists of five specialized agents working in sequence:
    ```
 
 4. Access the application:
-   - Frontend: http://localhost:8501
+   - Frontend: http://localhost:5000
    - Backend API: http://localhost:8000
 
 ### Local Development
@@ -81,14 +81,12 @@ The system consists of five specialized agents working in sequence:
    pip install -r requirements.txt
    ```
 
-2. Install frontend dependencies:
 3. Install frontend dependencies:
    ```bash
    cd frontend
    pip install -r requirements.txt
    ```
 
-3. Start the backend:
 4. Start the backend:
    ```bash
    cd backend
@@ -96,11 +94,18 @@ The system consists of five specialized agents working in sequence:
    ```
 
 4. Start the frontend:
-5. Start the frontend:
    ```bash
    cd frontend
-   streamlit run app.py
+   flask run
    ```
+   Or with Gunicorn:
+   ```bash
+   gunicorn --bind 0.0.0.0:5000 wsgi:application
+   ```
+
+4. Access the application:
+   - Frontend: http://localhost:5000
+   - Backend API: http://localhost:8000
 
 ## Project Structure
 
@@ -115,9 +120,18 @@ data_forecaster/
 │   ├── utils/              # Utility functions
 │   ├── main.py             # API endpoints
 │   └── orchestrator.py     # Pipeline orchestration
-├── frontend/               # Streamlit frontend
-│   ├── tabs/               # UI components for different views
-│   └── app.py              # Main application
+├── frontend/               # Flask web application
+│   ├── blueprints/         # Route blueprints (main, auth, admin)
+│   │   ├── main/           # Core app pages and AJAX endpoints
+│   │   ├── auth/           # Login / logout
+│   │   └── admin/          # User & API-credential management
+│   ├── db/                 # SQLite helpers and schema
+│   ├── services/           # Backend API client and PDF export
+│   ├── static/             # CSS and JavaScript assets
+│   ├── app.py              # Application factory
+│   ├── models.py           # Flask-Login User model
+│   ├── config.py           # Environment-based configuration
+│   └── wsgi.py             # Gunicorn entry point
 ├── data/                   # Sample data
 ├── docker/                 # Docker configuration
 └── docs/                   # Documentation
@@ -184,12 +198,21 @@ OLLAMA_BASE_URL=http://host.docker.internal:11434
 OLLAMA_MODEL=llama3
 
 # File Upload Settings
-MAX_UPLOAD_MB=100
+MAX_UPLOAD_MB=200
 ALLOWED_EXTENSIONS=csv,xlsx
 
 # Storage
 CHROMA_PERSIST_DIR=./chroma_db
+
+# Flask Frontend
+FLASK_ENV=production
+SECRET_KEY=your-secret-key
+FLASK_ENCRYPTION_KEY=your-encryption-key   # used to encrypt stored API credentials
 ```
+
+### First-run setup
+
+On first startup the Flask app auto-seeds the SQLite database (`instance/forecaster.db`) with two default roles (`admin`, `user`).  Create users and configure the backend URL via the **Admin** panel at `/admin/` (accessible to accounts with the `admin` role).
 
 ## Testing
 
@@ -226,5 +249,5 @@ Other resources used
 - [Statsmodels](https://www.statsmodels.org/) for statistical modeling
 - [Pmdarima](https://alkaline-ml.com/pmdarima/) for ARIMA modeling
 - [Langchain](https://github.com/langchain-ai/langchain) for LLM integration
-- [Streamlit](https://streamlit.io/) for the frontend framework
+- [Flask](https://flask.palletsprojects.com/) for the frontend framework
 - [FastAPI](https://fastapi.tiangolo.com/) for the backend framework
