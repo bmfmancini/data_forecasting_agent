@@ -12,6 +12,10 @@ logger = get_logger(__name__)
 def fit_holt_winters(series: pd.Series, forecast_horizon: int) -> dict:
     """Fit Holt-Winters Triple Exponential Smoothing and return forecast + metrics.
 
+    Args:
+        series: A pandas Series containing the time series data.
+        forecast_horizon: The number of periods to forecast.
+
     Returns:
         dict with keys: forecast, lower_ci, upper_ci, rmse, mae, mape
     """
@@ -26,10 +30,16 @@ def fit_holt_winters(series: pd.Series, forecast_horizon: int) -> dict:
         if (series > 0).all():
             try:
                 m_fit = ExponentialSmoothing(
-                    series, trend="add", seasonal="mul", seasonal_periods=seasonal_period
+                    series,
+                    trend="add",
+                    seasonal="mul",
+                    seasonal_periods=seasonal_period,
                 ).fit(optimized=True)
                 a_fit = ExponentialSmoothing(
-                    series, trend="add", seasonal="add", seasonal_periods=seasonal_period
+                    series,
+                    trend="add",
+                    seasonal="add",
+                    seasonal_periods=seasonal_period,
                 ).fit(optimized=True)
                 seasonal = "mul" if m_fit.aic < a_fit.aic else "add"
             except Exception:
@@ -39,29 +49,37 @@ def fit_holt_winters(series: pd.Series, forecast_horizon: int) -> dict:
 
     logger.info(
         "Holt-Winters config: seasonal=%s seasonal_period=%d series_len=%d",
-        seasonal, seasonal_period, len(series),
+        seasonal,
+        seasonal_period,
+        len(series),
     )
 
-    # ── Metrics via train/test split ─────────────────────────────────────────
+    # Split data into train and test sets for metrics calculation
     split = max(int(len(series) * 0.8), len(series) - forecast_horizon)
     train, test = series.iloc[:split], series.iloc[split:]
 
     try:
         train_fit = ExponentialSmoothing(
-            train, trend=trend, seasonal=seasonal,
+            train,
+            trend=trend,
+            seasonal=seasonal,
             seasonal_periods=seasonal_period if use_seasonal else None,
         ).fit(optimized=True)
         test_fc = train_fit.forecast(len(test))
         rmse = float(np.sqrt(np.mean((test.values - test_fc.values) ** 2)))
         mae = float(np.mean(np.abs(test.values - test_fc.values)))
-        mape = float(np.mean(np.abs((test.values - test_fc.values) / (test.values + 1e-8))) * 100)
+        mape = float(
+            np.mean(np.abs((test.values - test_fc.values) / (test.values + 1e-8))) * 100
+        )
     except Exception as exc:
         logger.warning("Holt-Winters metrics failed: %s", exc)
         rmse = mae = mape = 0.0
 
-    # ── Full-series fit for forecast ─────────────────────────────────────────
+    # Fit the model on the full series for final forecasting
     full_fit = ExponentialSmoothing(
-        series, trend=trend, seasonal=seasonal,
+        series,
+        trend=trend,
+        seasonal=seasonal,
         seasonal_periods=seasonal_period if use_seasonal else None,
     ).fit(optimized=True)
 
@@ -82,6 +100,14 @@ def fit_holt_winters(series: pd.Series, forecast_horizon: int) -> dict:
 
 
 def _infer_seasonal_period(series: pd.Series) -> int:
+    """Infer the seasonal period based on the series frequency.
+
+    Args:
+        series: A pandas Series with DatetimeIndex.
+
+    Returns:
+        int: The inferred seasonal period.
+    """
     if hasattr(series.index, "freq") and series.index.freq is not None:
         freq_str = str(series.index.freq).upper()
         if "MS" in freq_str or freq_str.startswith("M"):

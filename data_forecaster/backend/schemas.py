@@ -44,19 +44,25 @@ class AnalyzeRequest(BaseModel):
     forecast_horizon: int
     date_col: Optional[str] = None
     value_col: Optional[str] = None
-    forced_model: Optional[str] = None  # "Holt-Winters" | "ARIMA" | "SARIMA" | None (auto)
-    user_prompt: Optional[str] = None   # Extra instructions appended to the report prompt
+    forced_model: Optional[str] = (
+        None  # "Holt-Winters" | "ARIMA" | "SARIMA" | None (auto)
+    )
+    user_prompt: Optional[str] = (
+        None  # Extra instructions appended to the report prompt
+    )
     preflight_options: Optional[dict[str, Any]] = Field(default_factory=dict)
 
 
 class ChatRequest(BaseModel):
     """Request schema for the data explorer chat."""
-    file_id: str
+
+    file_id: Optional[str] = None
     query: str
 
 
 class ChatResponse(BaseModel):
     """Response schema for the data explorer chat."""
+
     answer: str
     visualization_data: Optional[dict[str, Any]] = None
     visualization_type: Optional[str] = None
@@ -89,7 +95,9 @@ class StatisticalResult(BaseModel):
     outlier_ratio: float = 0.0
     is_white_noise: bool = False
     white_noise_p_value: float = 1.0
-    recommended_remediation: list[str] = Field(default_factory=list) # e.g. ["iqr_clip", "box_cox"]
+    recommended_remediation: list[str] = Field(
+        default_factory=list
+    )  # e.g. ["iqr_clip", "box_cox"]
     domain: Optional[str] = None
     seasonal_period: Optional[int] = None
     dominant_period: Optional[float] = None
@@ -130,7 +138,7 @@ class AnalysisResponse(BaseModel):
     strategic_visual_recommendations: list[dict[str, str]] = Field(default_factory=list)
     chart_historical: dict
     chart_stl: dict
-    chart_acf_pacf: str          # base64 PNG
+    chart_acf_pacf: str  # base64 PNG
     chart_forecast: dict
     chart_model_comparison: dict
 

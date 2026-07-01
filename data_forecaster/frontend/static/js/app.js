@@ -1,0 +1,381 @@
+/**
+ * Main application JavaScript.
+ *
+ * Handles file upload via AJAX, column selection changes, preflight
+ * option persistence, and the Run Analysis submission.  All AJAX
+ * requests include the CSRF token read from the page meta tag.
+ */
+
+(function () {
+  "use strict";
+
+  /** Read the CSRF token from the page meta tag. */
+  function getCsrfToken() {
+    const meta = document.querySelector('meta[name="csrf-token"]');
+    return meta ? meta.getAttribute("content") : "";
+  }
+
+  /**
+   * POST JSON to a URL with the CSRF token header.
+   *
+   * @param {string} url
+   * @param {object} body
+   * @returns {Promise<Response>}
+   */
+  function postJSON(url, body) {
+    return fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRFToken": getCsrfToken(),
+      },
+      body: JSON.stringify(body),
+    });
+  }
+
+  /**
+   * POST a FormData object (for file uploads) with the CSRF token header.
+   *
+   * @param {string} url
+   * @param {FormData} formData
+   * @returns {Promise<Response>}
+   */
+  function postForm(url, formData) {
+    return fetch(url, {
+      method: "POST",
+      headers: { "X-CSRFToken": getCsrfToken() },
+      body: formData,
+    });
+  }
+
+  /** Display a short status message below the upload zone. */
+  function setUploadStatus(message, isError) {
+    const el = document.getElementById("upload-status");
+    if (!el) return;
+    el.textContent = message;
+    el.className = "mt-1 small " + (isError ? "text-danger" : "text-success");
+  }
+
+  /**
+   * Update the sidebar column dropdowns after a successful upload.
+   *
+   * @param {object} info - Upload response from the backend.
+   */
+  function populateColumnSelectors(info) {
+    const dateSel = document.getElementById("sel-date");
+    const valueSel = document.getElementById("sel-value");
+    if (!dateSel || !valueSel) return;
+
+    [dateSel, valueSel].forEach(function (sel) {
+      sel.innerHTML = "";
+      sel.disabled = false;
+    });
+
+    (info.columns || []).forEach(function (col) {
+      dateSel.options.add(new Option(col, col, false, col === info.detected_date_col));
+      valueSel.options.add(new Option(col, col, false, col === info.detected_value_col));
+    });
+
+    const freqEl = document.querySelector(".text-muted strong");
+    if (freqEl) freqEl.textContent = info.detected_frequency || "—";
+
+    enableSidebarControls();
+  }
+
+  /** Enable all sidebar controls that depend on an uploaded file. */
+  function enableSidebarControls() {
+    ["sel-model", "inp-horizon", "inp-prompt", "btn-run"].forEach(function (id) {
+      const el = document.getElementById(id);
+      if (el) el.disabled = false;
+    });
+  }
+
+  /**
+   * Handle a new file selection from the file input.
+   *
+   * @param {File} file
+   */
+  function uploadFile(file) {
+    setUploadStatus("Uploading...", false);
+    const formData = new FormData();
+    formData.append("file", file);
+
+    postForm("/api/upload", formData)
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data.error) {
+          setUploadStatus(data.error, true);
+        } else {
+          setUploadStatus(
+            "Uploaded — " + data.rows + " rows detected.",
+            false
+          );
+          populateColumnSelectors(data);
+          triggerPreflight();
+        }
+      })
+      .catch(function (err) {
+        setUploadStatus("Upload failed: " + err, true);
+      });
+  }
+
+  /** Call the preflight endpoint with the current column selection. */
+  function triggerPreflight() {
+    const dateSel = document.getElementById("sel-date");
+    const valueSel = document.getElementById("sel-value");
+    if (!dateSel || !valueSel || dateSel.disabled) return;
+
+    postJSON("/api/columns", {
+      date_col: dateSel.value,
+      value_col: valueSel.value,
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data.preflight) {
+          updatePreflightBadge(data.preflight);
+          checkPreflightBlocks(data.preflight);
+        }
+      })
+      .catch(function () {});
+  }
+
+  /**
+   * Update the preflight status badge in the sidebar.
+   *
+   * @param {object} preflight
+   */
+  function updatePreflightBadge(preflight) {
+    const statusEl = document.getElementById("preflight-status");
+    if (!statusEl) return;
+
+    let badgeClass = "bg-success";
+    let badgeText = "Preflight: Ready";
+    if (preflight.status === "warning") {
+      badgeClass = "bg-warning text-dark";
+      badgeText = "Preflight: Cautions";
+    } else if (preflight.status === "error") {
+      badgeClass = "bg-danger";
+      badgeText = "Preflight: Issues found";
+    }
+
+    let html =
+      '<span class="badge ' + badgeClass + ' w-100">' + badgeText + "</span>";
+
+    if (preflight.decisions && preflight.decisions.length > 0) {
+      html +=
+        '<button type="button" class="btn btn-outline-info btn-sm w-100 mt-1" ' +
+        'data-bs-toggle="modal" data-bs-target="#preflightModal">' +
+        "Review Preflight Options</button>";
+      populatePreflightModal(preflight);
+    }
+
+    statusEl.innerHTML = html;
+  }
+
+  /**
+   * Populate the preflight modal body from live preflight data returned by the
+   * server.  This is needed because the modal is always rendered in the DOM but
+   * its content must be filled dynamically when a file is uploaded.
+   *
+   * @param {object} preflight  Preflight result object from /api/columns.
+   */
+  function populatePreflightModal(preflight) {
+    const body = document.getElementById("preflight-modal-body");
+    if (!body) return;
+
+    let html = "";
+
+    if (preflight.detected_frequency) {
+      html += '<p class="text-muted small">Detected frequency: <strong>' +
+        preflight.detected_frequency + "</strong></p>";
+    }
+
+    (preflight.issues || []).forEach(function (msg) {
+      html += '<div class="alert alert-info py-1 px-2 small">' + msg + "</div>";
+    });
+    (preflight.warnings || []).forEach(function (msg) {
+      html += '<div class="alert alert-warning py-1 px-2 small">' + msg + "</div>";
+    });
+
+    const saved = App._preflightOptions || {};
+    (preflight.decisions || []).forEach(function (d) {
+      const current = saved[d.key] || d.default || "";
+      let opts = "";
+      (d.options || []).forEach(function (opt) {
+        const sel = opt === current ? " selected" : "";
+        opts += '<option value="' + opt + '"' + sel + '>' +
+          opt.charAt(0).toUpperCase() + opt.slice(1) + "</option>";
+      });
+      html +=
+        '<div class="mb-3">' +
+        '<label class="form-label" for="pf-' + d.key + '">' + d.label + "</label>" +
+        '<p class="text-muted small">' + d.message + "</p>" +
+        '<select class="form-select form-select-sm preflight-choice" id="pf-' +
+        d.key + '" data-key="' + d.key + '">' +
+        opts +
+        "</select></div>";
+    });
+
+    body.innerHTML = html;
+  }
+
+  /**
+   * Disable the Run Analysis button when a preflight decision blocks the run.
+   *
+   * @param {object} preflight
+   */
+  function checkPreflightBlocks(preflight) {
+    const runBtn = document.getElementById("btn-run");
+    if (!runBtn) return;
+    const opts = App._preflightOptions || {};
+    const blocks =
+      preflight.decisions &&
+      preflight.decisions.some(function (d) {
+        return (opts[d.key] || d.default) === "stop";
+      });
+    runBtn.disabled = blocks;
+  }
+
+  /** Submit the analysis job via AJAX and start the polling loop. */
+  function runAnalysis() {
+    const dateSel = document.getElementById("sel-date");
+    const valueSel = document.getElementById("sel-value");
+    const horizonEl = document.getElementById("inp-horizon");
+    const modelEl = document.getElementById("sel-model");
+    const promptEl = document.getElementById("inp-prompt");
+    const runBtn = document.getElementById("btn-run");
+
+    if (!dateSel || !valueSel) return;
+
+    const payload = {
+      date_col: dateSel.value,
+      value_col: valueSel.value,
+      forecast_horizon: horizonEl ? parseInt(horizonEl.value, 10) : 12,
+      model_choice: modelEl ? modelEl.value : "Auto (AI selects)",
+      user_prompt: promptEl ? promptEl.value : "",
+      preflight_options: App._preflightOptions || {},
+    };
+
+    if (runBtn) {
+      runBtn.disabled = true;
+      runBtn.textContent = "Running...";
+    }
+
+    const progressArea = document.getElementById("progress-area");
+    if (progressArea) progressArea.classList.remove("d-none");
+
+    postJSON("/api/analyze", payload)
+      .then(function (r) {
+        if (r.status === 202) {
+          Polling.start();
+        } else {
+          return r.json().then(function (data) {
+            showRunError(data.error || "Failed to submit job.");
+          });
+        }
+      })
+      .catch(function (err) {
+        showRunError("Connection error: " + err);
+      });
+  }
+
+  /**
+   * Display an inline error from the analysis submission.
+   *
+   * @param {string} message
+   */
+  function showRunError(message) {
+    const runBtn = document.getElementById("btn-run");
+    if (runBtn) {
+      runBtn.disabled = false;
+      runBtn.textContent = "Run Analysis";
+    }
+    const progressArea = document.getElementById("progress-area");
+    if (progressArea) progressArea.classList.add("d-none");
+
+    let errEl = document.querySelector(".analysis-error-inline");
+    if (!errEl) {
+      errEl = document.createElement("div");
+      errEl.className = "alert alert-danger mt-2 py-1 px-2 small analysis-error-inline";
+      const sidebar = document.querySelector(".sidebar-inner");
+      if (sidebar) sidebar.appendChild(errEl);
+    }
+    errEl.textContent = message;
+  }
+
+  /**
+   * Collect preflight decision choices from the modal selects and POST them.
+   */
+  function savePreflightChoices() {
+    const selects = document.querySelectorAll(".preflight-choice");
+    const choices = {};
+    selects.forEach(function (sel) {
+      choices[sel.dataset.key] = sel.value;
+    });
+    App._preflightOptions = choices;
+
+    postJSON("/api/preflight-choices", { choices: choices })
+      .then(function (r) { return r.json(); })
+      .then(function () {
+        const modal = bootstrap.Modal.getInstance(
+          document.getElementById("preflightModal")
+        );
+        if (modal) modal.hide();
+
+        const blocks = Object.values(choices).some(function (v) {
+          return v === "stop";
+        });
+        const runBtn = document.getElementById("btn-run");
+        if (runBtn) runBtn.disabled = blocks;
+      })
+      .catch(function () {});
+  }
+
+  /** Wire up the forecast horizon range slider display. */
+  function initHorizonSlider() {
+    const slider = document.getElementById("inp-horizon");
+    const label = document.getElementById("horizon-val");
+    if (!slider || !label) return;
+    slider.addEventListener("input", function () {
+      label.textContent = slider.value;
+    });
+  }
+
+  /** Wire up the file input change event. */
+  function initFileInput() {
+    const input = document.getElementById("file-input");
+    if (!input) return;
+    input.addEventListener("change", function () {
+      if (input.files && input.files[0]) {
+        uploadFile(input.files[0]);
+      }
+    });
+  }
+
+  /** Wire up column selector change events to trigger preflight. */
+  function initColumnSelectors() {
+    ["sel-date", "sel-value"].forEach(function (id) {
+      const el = document.getElementById(id);
+      if (el) {
+        el.addEventListener("change", function () {
+          triggerPreflight();
+        });
+      }
+    });
+  }
+
+  function init() {
+    initHorizonSlider();
+    initFileInput();
+    initColumnSelectors();
+  }
+
+  document.addEventListener("DOMContentLoaded", init);
+
+  window.App = {
+    runAnalysis: runAnalysis,
+    savePreflightChoices: savePreflightChoices,
+    triggerPreflight: triggerPreflight,
+    _preflightOptions: {},
+  };
+}());

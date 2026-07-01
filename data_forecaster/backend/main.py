@@ -1,4 +1,5 @@
 """Main FastAPI application module for the Data Forecaster API."""
+
 from __future__ import annotations
 
 import asyncio
@@ -82,7 +83,9 @@ async def _job_worker() -> None:
                 user_prompt=r.get("user_prompt"),
                 preflight_options=r.get("preflight_options"),
                 chroma_persist_dir=settings.CHROMA_PERSIST_DIR,
-                progress_callback=lambda pct, step: _update_job_progress(j_id, pct, step),
+                progress_callback=lambda pct, step: _update_job_progress(
+                    j_id, pct, step
+                ),
             )
 
         try:
@@ -97,10 +100,12 @@ async def _job_worker() -> None:
                 index_analysis_results,
                 file_id=req["file_id"],
                 analysis_result=result,
-                chroma_persist_dir=settings.CHROMA_PERSIST_DIR
+                chroma_persist_dir=settings.CHROMA_PERSIST_DIR,
             )
         except Exception as exc:  # pylint: disable=broad-exception-caught
-            logger.exception("Pipeline failed for job_id=%s file_id=%s", job_id, req["file_id"])
+            logger.exception(
+                "Pipeline failed for job_id=%s file_id=%s", job_id, req["file_id"]
+            )
             job["status"] = "error"
             job["step"] = "Pipeline failed."
             job["error"] = str(exc)
@@ -131,6 +136,7 @@ app.add_middleware(
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
+
 @app.get("/health")
 def health() -> dict[str, str]:
     """Health check endpoint."""
@@ -141,17 +147,19 @@ def health() -> dict[str, str]:
     "/upload",
     responses={
         400: {"description": "Invalid file content, size, or format"},
-        500: {"description": "File parsing failed"}
-    }
+        500: {"description": "File parsing failed"},
+    },
 )
-async def upload_file(
-    file: Annotated[UploadFile, File(...)]
-) -> UploadResponse:
+async def upload_file(file: Annotated[UploadFile, File(...)]) -> UploadResponse:
     """Handle file uploads, validate types, and store in memory."""
-    logger.info("POST /upload  filename=%s  content_type=%s", file.filename, file.content_type)
+    logger.info(
+        "POST /upload  filename=%s  content_type=%s", file.filename, file.content_type
+    )
 
     # ── Validate content-type ─────────────────────────────────────────────────
-    if file.content_type not in settings.ALLOWED_MIME_TYPES + ["application/octet-stream"]:
+    if file.content_type not in settings.ALLOWED_MIME_TYPES + [
+        "application/octet-stream"
+    ]:
         raise HTTPException(
             status_code=400,
             detail=(
@@ -181,12 +189,16 @@ async def upload_file(
 
     # ── Parse ─────────────────────────────────────────────────────────────────
     try:
-        df, date_col, value_col, freq = parse_upload(contents, file.filename or "upload.csv")
+        df, date_col, value_col, freq = parse_upload(
+            contents, file.filename or "upload.csv"
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Unexpected error during file parsing")
-        raise HTTPException(status_code=500, detail=f"Failed to parse file: {exc}") from exc
+        raise HTTPException(
+            status_code=500, detail=f"Failed to parse file: {exc}"
+        ) from exc
 
     # ── Store & return ────────────────────────────────────────────────────────
     if len(_file_store) >= MAX_FILES:
@@ -204,7 +216,11 @@ async def upload_file(
     }
     logger.info(
         "File stored: file_id=%s rows=%d date_col=%s value_col=%s freq=%s",
-        file_id, len(df), date_col, value_col, freq,
+        file_id,
+        len(df),
+        date_col,
+        value_col,
+        freq,
     )
 
     return UploadResponse(
@@ -222,8 +238,8 @@ async def upload_file(
     "/preflight",
     responses={
         400: {"description": "Preflight check failed"},
-        404: {"description": "Session data not found"}
-    }
+        404: {"description": "Session data not found"},
+    },
 )
 async def preflight_check(request: AnalyzeRequest) -> PreflightResponse:
     """Run data quality checks before starting the full analysis pipeline."""
@@ -231,7 +247,7 @@ async def preflight_check(request: AnalyzeRequest) -> PreflightResponse:
     if not stored:
         raise HTTPException(
             status_code=404,
-            detail="Session expired or data cleared from memory. Please re-upload your file."
+            detail="Session expired or data cleared from memory. Please re-upload your file.",
         )
 
     date_col = request.date_col or stored["date_col"]
@@ -251,13 +267,15 @@ async def preflight_check(request: AnalyzeRequest) -> PreflightResponse:
     status_code=202,
     responses={
         404: {"description": "Session data not found"},
-        503: {"description": "Background worker service not ready"}
-    }
+        503: {"description": "Background worker service not ready"},
+    },
 )
 def analyze(request: AnalyzeRequest) -> JobSubmitResponse:
     """Enqueue a forecasting analysis job."""
     logger.info(
-        "POST /analyze  file_id=%s horizon=%d", request.file_id, request.forecast_horizon
+        "POST /analyze  file_id=%s horizon=%d",
+        request.file_id,
+        request.forecast_horizon,
     )
 
     if JOB_QUEUE is None:
@@ -265,7 +283,9 @@ def analyze(request: AnalyzeRequest) -> JobSubmitResponse:
 
     stored = _file_store.get(request.file_id)
     if stored is None:
-        raise HTTPException(status_code=404, detail=f"File ID '{request.file_id}' not found.")
+        raise HTTPException(
+            status_code=404, detail=f"File ID '{request.file_id}' not found."
+        )
 
     date_col = request.date_col or stored["date_col"]
     value_col = request.value_col or stored["value_col"]
@@ -297,10 +317,7 @@ def analyze(request: AnalyzeRequest) -> JobSubmitResponse:
     return JobSubmitResponse(job_id=job_id, status="pending")
 
 
-@app.get(
-    "/jobs/{job_id}",
-    responses={404: {"description": "Job ID not found"}}
-)
+@app.get("/jobs/{job_id}", responses={404: {"description": "Job ID not found"}})
 def get_job_status(job_id: str) -> JobStatusResponse:
     """Retrieve the status and results of a specific background job."""
     job = _job_store.get(job_id)
@@ -315,33 +332,55 @@ def get_job_status(job_id: str) -> JobStatusResponse:
         error=job.get("error"),
     )
 
+
 @app.post(
     "/chat",
     responses={
         404: {"description": "Session data not found"},
-        500: {"description": "Chat agent processing error"}
-    }
+        500: {"description": "Chat agent processing error"},
+    },
 )
 async def chat_explorer(request: ChatRequest) -> ChatResponse:
     """Allows users to chat with the agent about the uploaded data and results."""
-    stored = _file_store.get(request.file_id)
-    if not stored:
-        raise HTTPException(
-            status_code=404,
-            detail=("Chat session lost: the associated data is no longer in the server memory. "
-                    "Please re-run the analysis.")
-        )
+    # If file_id is provided, use the specific file data
+    if request.file_id:
+        stored = _file_store.get(request.file_id)
+        if not stored:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "Chat session lost: the associated data is no longer in the server memory. "
+                    "Please re-run the analysis."
+                ),
+            )
 
-    try:
-        # Delegate to orchestrator to query both the data and the indexed memory
-        response = await asyncio.to_thread(
-            chat_with_data,
-            query=request.query,
-            df=stored["df"],
-            file_id=request.file_id,
-            chroma_persist_dir=settings.CHROMA_PERSIST_DIR
-        )
-        return ChatResponse(**response)
-    except Exception as exc:
-        logger.exception("Chat exploration failed")
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        try:
+            # Delegate to orchestrator to query both the data and the indexed memory
+            response = await asyncio.to_thread(
+                chat_with_data,
+                query=request.query,
+                df=stored["df"],
+                file_id=request.file_id,
+                chroma_persist_dir=settings.CHROMA_PERSIST_DIR,
+            )
+            return ChatResponse(**response)
+        except Exception as exc:
+            logger.exception("Chat exploration failed")
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+    else:
+        # General chat without specific file - use RAG knowledge base
+        try:
+            from orchestrator import chat_general
+
+            # Delegate to orchestrator for general questions using RAG
+            response = await asyncio.to_thread(
+                chat_general,
+                query=request.query,
+                chroma_persist_dir=settings.CHROMA_PERSIST_DIR,
+            )
+            return ChatResponse(**response)
+        except Exception as exc:
+            logger.exception("General chat failed")
+            # Provide a basic response
+            answer = f"I can help with general time series forecasting questions. Technical details: {str(exc)}"
+            return ChatResponse(answer=answer)

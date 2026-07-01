@@ -1,9 +1,14 @@
-# Time Series Data Forecaster Agent - Frontend Requirements
-# This file lists the Python packages required for the frontend application
-
-streamlit>=1.28.0  # Web application framework
-requests>=2.31.0   # HTTP library for API calls
-plotly>=5.15.0     # Interactive charting library
-pandas>=2.0.0      # Data manipulation library
-python-dotenv>=1.0.0  # Environment variable management
-fpdf>=1.7.2        # PDF generation library
+flask>=3.0.3
+flask-login>=0.6.3
+flask-wtf>=1.2.1
+flask-session>=0.8.0
+werkzeug>=3.0.3
+cryptography>=42.0.5
+requests>=2.32.3
+gunicorn>=22.0.0
+fpdf2>=2.8.1
+markdown>=3.6
+bleach>=6.1.0
+pandas>=2.2.0
+types-requests>=2.32.0
+types-bleach>=6.1.0

@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11"]
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+        cache: "pip"
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        # Install project requirements if they exist
+        if [ -f backend/requirements.txt ]; then pip install -r backend/requirements.txt; fi
+        if [ -f frontend/requirements.txt ]; then pip install -r frontend/requirements.txt; fi
+        # Install development tools
+        pip install pylint mypy black pytest
+
+    - name: Run Black (check mode)
+      run: |
+        black --check .
+
+    - name: Run Pylint
+      run: |
+        pylint **/*.py
+
+    - name: Run MyPy
+      run: |
+        mypy .
+
+    - name: Run Pytest
+      run: |
+        pytest

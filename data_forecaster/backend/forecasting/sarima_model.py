@@ -6,12 +6,15 @@ import pandas as pd
 # Compatibility shim: pmdarima 2.0.x uses sklearn's force_all_finite which was
 # removed in scikit-learn 1.6. Translate it to ensure_all_finite.
 import sklearn.utils.validation as _skval  # noqa: E402
+
 if not hasattr(_skval, "_patched_for_pmdarima"):
     _orig = _skval.check_array
+
     def _patched(*args, **kwargs):  # noqa: E306
         if "force_all_finite" in kwargs:
             kwargs.setdefault("ensure_all_finite", kwargs.pop("force_all_finite"))
         return _orig(*args, **kwargs)
+
     _skval.check_array = _patched
     _skval._patched_for_pmdarima = True
 
@@ -29,22 +32,28 @@ def fit_sarima(
 ) -> dict:
     """Fit SARIMA via pmdarima auto_arima (seasonal=True) and return forecast + metrics.
 
+    Args:
+        series: A pandas Series containing the time series data.
+        forecast_horizon: The number of periods to forecast.
+        seasonal_period: The seasonal period of the time series.
+
     Returns:
         dict with keys: forecast, lower_ci, upper_ci, rmse, mae, mape
     """
     series = series.dropna().astype(float)
 
-    # Need at least 2 full seasonal cycles; fall back to ARIMA otherwise
+    # Check if we have enough data for seasonal modeling
     if len(series) < 2 * seasonal_period:
         logger.warning(
             "Series too short (%d obs) for seasonal period %d. Fitting non-seasonal ARIMA.",
-            len(series), seasonal_period,
+            len(series),
+            seasonal_period,
         )
         seasonal_period = 1
 
     use_seasonal = seasonal_period > 1
 
-    # ── Metrics via train/test split ─────────────────────────────────────────
+    # Split data into train and test sets for metrics calculation
     split = max(int(len(series) * 0.8), len(series) - forecast_horizon)
     train, test = series.iloc[:split], series.iloc[split:]
 
@@ -54,8 +63,10 @@ def fit_sarima(
             seasonal=use_seasonal,
             m=seasonal_period,
             stepwise=True,
-            max_p=3, max_q=3,
-            max_P=2, max_Q=2,
+            max_p=3,
+            max_q=3,
+            max_P=2,
+            max_Q=2,
             max_order=10,
             error_action="ignore",
             suppress_warnings=True,
@@ -64,21 +75,24 @@ def fit_sarima(
         test_fc, _ = train_model.predict(n_periods=len(test), return_conf_int=True)
         rmse = float(np.sqrt(np.mean((test.values - test_fc) ** 2)))
         mae = float(np.mean(np.abs(test.values - test_fc)))
-        mape = float(np.mean(np.abs((test.values - test_fc) / (test.values + 1e-8))) * 100)
+        mape = float(
+            np.mean(np.abs((test.values - test_fc) / (test.values + 1e-8))) * 100
+        )
     except Exception as exc:
         logger.warning("SARIMA metrics failed: %s", exc)
         rmse = mae = mape = 0.0
 
-    # ── Full-series fit: Reuse parameters from train_model to avoid redundant search ─
+    # Fit the model on the full series using parameters from training
     full_model = pm.ARIMA(
         order=train_model.order,
         seasonal_order=train_model.seasonal_order,
-        suppress_warnings=True
+        suppress_warnings=True,
     ).fit(series)
 
     logger.info(
         "SARIMA selected order: %s seasonal_order: %s",
-        full_model.order, full_model.seasonal_order,
+        full_model.order,
+        full_model.seasonal_order,
     )
 
     forecast_values, conf_int = full_model.predict(

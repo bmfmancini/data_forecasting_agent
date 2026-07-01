@@ -27,19 +27,27 @@ services:
   frontend:
     build:
       context: ../frontend
-      dockerfile: ../docker/Dockerfile.frontend
+      dockerfile: ../docker/Dockerfile.flask
     ports:
-      - "8501:8501"
+      - "5000:5000"
     environment:
+      - FLASK_ENV=production
       - BACKEND_URL=http://backend:8000
+      - SECRET_KEY=${FLASK_SECRET_KEY:-change-me-in-production}
+      - FLASK_ENCRYPTION_KEY=${FLASK_ENCRYPTION_KEY:-}
     volumes:
-      - ../data:/app/data
+      - flask_instance:/app/instance
     depends_on:
       backend:
         condition: service_healthy
     restart: unless-stopped
     networks:
       - forecasting_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/auth/login"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 networks:
   forecasting_network:
@@ -48,3 +56,4 @@ networks:
 volumes:
   logs_data:
   chroma_data:
+  flask_instance:
