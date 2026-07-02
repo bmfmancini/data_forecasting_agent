@@ -37,7 +37,11 @@
 
     var contentEl = document.createElement("div");
     contentEl.className = "chat-content";
-    contentEl.textContent = content;
+    if (role === "assistant" && typeof marked !== "undefined") {
+      contentEl.innerHTML = DOMPurify.sanitize(marked.parse(content));
+    } else {
+      contentEl.textContent = content;
+    }
     bubble.appendChild(contentEl);
 
     if (vizData) {

@@ -1,0 +1,15 @@
+{% extends "admin/base.html" %}
+{% block title %}Dashboard — Admin{% endblock %}
+{% block header %}Admin Dashboard{% endblock %}
+{% block content %}
+<div class="row g-3 mb-4">
+    <div class="col-md-4"><div class="metric-card"><div class="metric-value">{{ user_count }}</div><div class="metric-label">Application Users</div></div></div>
+    <div class="col-md-4"><div class="metric-card {{ 'metric-ok' if backend_ok else 'metric-warn' }}"><div class="metric-value">{{ 'Online' if backend_ok else 'Offline' }}</div><div class="metric-label">Backend Status</div></div></div>
+</div>
+<h5>Quick Links</h5>
+<div class="list-group" style="max-width:400px;">
+    <a href="{{ url_for('admin.users') }}" class="list-group-item list-group-item-action bg-dark-subtle">Manage Application Users</a>
+    <a href="{{ url_for('admin.api_config') }}" class="list-group-item list-group-item-action bg-dark-subtle">Backend API Configuration</a>
+    <a href="{{ url_for('admin.settings') }}" class="list-group-item list-group-item-action bg-dark-subtle">Application Settings</a>
+</div>
+{% endblock %}

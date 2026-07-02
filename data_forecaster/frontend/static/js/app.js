@@ -53,11 +53,11 @@
     const el = document.getElementById("upload-status");
     if (!el) return;
     el.textContent = message;
-    el.className = "mt-1 small " + (isError ? "text-danger" : "text-success");
+    el.className = "mt-2 small " + (isError ? "text-danger" : "text-success");
   }
 
   /**
-   * Update the sidebar column dropdowns after a successful upload.
+   * Update the column dropdowns after a successful upload.
    *
    * @param {object} info - Upload response from the backend.
    */
@@ -76,14 +76,14 @@
       valueSel.options.add(new Option(col, col, false, col === info.detected_value_col));
     });
 
-    const freqEl = document.querySelector(".text-muted strong");
+    const freqEl = document.querySelector("p.small.text-muted strong");
     if (freqEl) freqEl.textContent = info.detected_frequency || "—";
 
-    enableSidebarControls();
+    enableControls();
   }
 
-  /** Enable all sidebar controls that depend on an uploaded file. */
-  function enableSidebarControls() {
+  /** Enable all forecast configuration controls that depend on an uploaded file. */
+  function enableControls() {
     ["sel-model", "inp-horizon", "inp-prompt", "btn-run"].forEach(function (id) {
       const el = document.getElementById(id);
       if (el) el.disabled = false;
@@ -125,6 +125,12 @@
     const valueSel = document.getElementById("sel-value");
     if (!dateSel || !valueSel || dateSel.disabled) return;
 
+    // Show a loading state for preflight
+    const statusEl = document.getElementById("preflight-status");
+    if(statusEl) {
+        statusEl.innerHTML = `<div class="alert alert-secondary">Running preflight checks...</div>`;
+    }
+
     postJSON("/api/columns", {
       date_col: dateSel.value,
       value_col: valueSel.value,
@@ -132,50 +138,61 @@
       .then(function (r) { return r.json(); })
       .then(function (data) {
         if (data.preflight) {
-          updatePreflightBadge(data.preflight);
+          updatePreflightStatus(data.preflight);
           checkPreflightBlocks(data.preflight);
+        } else if (data.error) {
+            updatePreflightStatus({ status: 'error', errors: [data.error]});
         }
       })
-      .catch(function () {});
+      .catch(function (err) {
+        updatePreflightStatus({ status: 'error', errors: [`Connection error: ${err}`]});
+      });
   }
 
   /**
-   * Update the preflight status badge in the sidebar.
+   * Update the preflight status display on the setup page.
    *
    * @param {object} preflight
    */
-  function updatePreflightBadge(preflight) {
+  function updatePreflightStatus(preflight) {
     const statusEl = document.getElementById("preflight-status");
     if (!statusEl) return;
 
-    let badgeClass = "bg-success";
-    let badgeText = "Preflight: Ready";
+    let alertClass = "alert-success";
+    let title = "Preflight Ready";
+    let messages = preflight.issues || [];
+
     if (preflight.status === "warning") {
-      badgeClass = "bg-warning text-dark";
-      badgeText = "Preflight: Cautions";
+        alertClass = "alert-warning";
+        title = "Preflight Cautions";
+        messages = messages.concat(preflight.warnings);
     } else if (preflight.status === "error") {
-      badgeClass = "bg-danger";
-      badgeText = "Preflight: Issues found";
+        alertClass = "alert-danger";
+        title = "Preflight Issues Found";
+        messages = messages.concat(preflight.errors);
     }
 
-    let html =
-      '<span class="badge ' + badgeClass + ' w-100">' + badgeText + "</span>";
+    let html = `<div class="alert ${alertClass}"><strong>${title}</strong>`;
+    if (messages.length > 0) {
+        html += '<ul>';
+        messages.forEach(msg => { html += `<li>${msg}</li>`; });
+        html += '</ul>';
+    }
 
     if (preflight.decisions && preflight.decisions.length > 0) {
       html +=
-        '<button type="button" class="btn btn-outline-info btn-sm w-100 mt-1" ' +
+        '<button type="button" class="btn btn-outline-info btn-sm w-100 mt-2" ' +
         'data-bs-toggle="modal" data-bs-target="#preflightModal">' +
         "Review Preflight Options</button>";
       populatePreflightModal(preflight);
     }
-
+    html += '</div>';
     statusEl.innerHTML = html;
   }
 
   /**
    * Populate the preflight modal body from live preflight data returned by the
-   * server.  This is needed because the modal is always rendered in the DOM but
-   * its content must be filled dynamically when a file is uploaded.
+   * server.
    *
    * @param {object} preflight  Preflight result object from /api/columns.
    */
@@ -261,8 +278,11 @@
       runBtn.textContent = "Running...";
     }
 
-    const progressArea = document.getElementById("progress-area");
-    if (progressArea) progressArea.classList.remove("d-none");
+    const progressContainer = document.getElementById("progress-area-container");
+    if (progressContainer) progressContainer.style.display = "block";
+    const sidebarProgress = document.getElementById("progress-area");
+    if(sidebarProgress) sidebarProgress.classList.remove("d-none");
+
 
     postJSON("/api/analyze", payload)
       .then(function (r) {
@@ -290,17 +310,23 @@
       runBtn.disabled = false;
       runBtn.textContent = "Run Analysis";
     }
-    const progressArea = document.getElementById("progress-area");
-    if (progressArea) progressArea.classList.add("d-none");
 
-    let errEl = document.querySelector(".analysis-error-inline");
+    const progressContainer = document.getElementById("progress-area-container");
+    if (progressContainer) progressContainer.style.display = "none";
+    const sidebarProgress = document.getElementById("progress-area");
+    if(sidebarProgress) sidebarProgress.classList.add("d-none");
+
+
+    let errEl = document.getElementById("run-error-message");
     if (!errEl) {
       errEl = document.createElement("div");
-      errEl.className = "alert alert-danger mt-2 py-1 px-2 small analysis-error-inline";
-      const sidebar = document.querySelector(".sidebar-inner");
-      if (sidebar) sidebar.appendChild(errEl);
+      errEl.id = "run-error-message";
+      errEl.className = "alert alert-danger mt-3";
+      const container = document.querySelector("#progress-area-container");
+      if(container) container.insertAdjacentElement('beforebegin', errEl);
     }
     errEl.textContent = message;
+    errEl.style.display = "block";
   }
 
   /**
@@ -364,10 +390,22 @@
     });
   }
 
+  /** Wire up the Run Analysis button. */
+  function initRunButton() {
+    const runBtn = document.getElementById("btn-run");
+    if (runBtn) {
+      runBtn.addEventListener("click", function () {
+        runAnalysis();
+      });
+    }
+  }
+
   function init() {
-    initHorizonSlider();
-    initFileInput();
-    initColumnSelectors();
+    // Only run initializers if the relevant elements are on the page
+    if (document.getElementById('inp-horizon')) initHorizonSlider();
+    if (document.getElementById('file-input')) initFileInput();
+    if (document.getElementById('sel-date')) initColumnSelectors();
+    if (document.getElementById('btn-run')) initRunButton();
   }
 
   document.addEventListener("DOMContentLoaded", init);
@@ -376,6 +414,9 @@
     runAnalysis: runAnalysis,
     savePreflightChoices: savePreflightChoices,
     triggerPreflight: triggerPreflight,
+    populateColumnSelectors: populateColumnSelectors,
+    enableControls: enableControls,
+    updateUploadStatus: setUploadStatus, // Renamed for clarity in template
     _preflightOptions: {},
   };
 }());

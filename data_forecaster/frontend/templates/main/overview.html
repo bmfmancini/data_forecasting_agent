@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Data Overview — Forecaster{% endblock %}
+{% block header %}📊 Data Overview{% endblock %}
+{% block content %}
+<h4>Dataset Preview</h4>
+<div class="card mb-3">
+    <div class="card-body">
+        <table class="table table-dark table-sm">
+            <tbody>
+                <tr><th style="width:200px;">Filename</th><td>{{ upload_info.get('filename', '—') }}</td></tr>
+                <tr><th>Rows</th><td>{{ upload_info.get('rows', '—') }}</td></tr>
+                <tr><th>Columns</th><td>{{ upload_info.get('columns', []) | join(', ') }}</td></tr>
+                <tr><th>Date Column</th><td>{{ upload_info.get('detected_date_col', '—') }}</td></tr>
+                <tr><th>Value Column</th><td>{{ upload_info.get('detected_value_col', '—') }}</td></tr>
+                <tr><th>Frequency</th><td>{{ upload_info.get('detected_frequency', '—') }}</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+{% if preview_data %}
+<div class="card mb-3">
+    <div class="card-body" style="max-height:400px; overflow-y:auto;">
+        <table class="table table-dark table-sm table-striped mb-0">
+            <thead>
+                <tr>
+                    {% for col in preview_data[0].keys() %}<th>{{ col }}</th>{% endfor %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in preview_data[:20] %}
+                <tr>
+                    {% for col in row.keys() %}<td>{{ row[col] }}</td>{% endfor %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+<h4>Historical Time Series</h4>
+{% if chart_json %}
+<div class="chart-container" data-chart='{{ chart_json | safe }}'></div>
+{% else %}
+<p style="color:var(--text-muted-custom);">Historical chart unavailable.</p>
+{% endif %}
+{% endblock %}
+{% block scripts %}<script>Charts.renderAll();</script>{% endblock %}

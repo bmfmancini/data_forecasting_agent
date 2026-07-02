@@ -81,7 +81,7 @@ def analysis_required(f: _F) -> _F:
     def wrapper(*args: Any, **kwargs: Any) -> Any:
         if not session.get("analysis_result"):
             flash("Please run an analysis first.", "warning")
-            return redirect(url_for("main.chat"))
+            return redirect(url_for("main.forecast_setup"))
         return f(*args, **kwargs)
 
     return wrapper  # type: ignore[return-value]
@@ -177,7 +177,22 @@ def chat() -> str:
         Rendered HTML for the chat page.
     """
     chat_history: list[dict[str, Any]] = session.get("chat_history") or []
-    return render_template("main/chat.html", chat_history=chat_history)
+    return render_template(
+        "main/chat.html",
+        chat_history=chat_history,
+    )
+
+
+@main_bp.route("/forecast-setup")
+@_login_required
+def forecast_setup() -> str:
+    """Render the forecast setup and configuration page.
+
+    Returns:
+        Rendered HTML for the forecast setup page.
+    """
+    upload_info: dict[str, Any] = session.get("upload_info") or {}
+    return render_template("main/forecast_setup.html", upload_info=upload_info)
 
 
 @main_bp.route("/started")
@@ -415,7 +430,7 @@ def report_export() -> Response:
     )
 
 
-@main_bp.route("/load-demo")
+@main_bp.route("/load-demo", methods=["GET", "POST"])
 @_login_required
 def load_demo() -> Response:
     """Upload the bundled airline-passengers demo dataset to the backend.
@@ -433,7 +448,7 @@ def load_demo() -> Response:
             demo_bytes = fh.read()
     except FileNotFoundError:
         flash("Demo data file not found. Check DEMO_DATA_PATH configuration.", "danger")
-        return redirect(url_for("main.chat"))
+        return redirect(url_for("main.forecast_setup"))
 
     _clear_analysis_state()
 
@@ -460,7 +475,7 @@ def load_demo() -> Response:
             "danger",
         )
 
-    return redirect(url_for("main.chat"))
+    return redirect(url_for("main.forecast_setup"))
 
 
 @main_bp.route("/api/upload", methods=["POST"])

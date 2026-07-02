@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Chat — Forecaster{% endblock %}
+{% block header %}💬 Data Explorer{% endblock %}
+
+{% block content %}
+<div class="row" style="min-height: calc(100vh - 120px);">
+    {# ── Main Chat Panel (Full Width) ───────────────────────── #}
+    <div class="col-12">
+        <div class="card" style="height: 100%; display: flex; flex-direction: column;">
+            <div class="card-header d-flex align-items-center justify-content-between">
+                <span class="fw-semibold">💬 Data Explorer</span>
+                <span class="small text-muted">
+                    Ask questions about time series analysis or general forecasting concepts.
+                </span>
+            </div>
+            <div class="card-body flex-grow-1 overflow-hidden" style="min-height: 400px;">
+                <div class="chat-messages" id="chat-messages" style="max-height: 100%; overflow-y: auto;">
+                    {% if chat_history %}
+                        {% for msg in chat_history %}
+                        <div class="chat-message {{ msg.role }}">
+                            <div class="chat-bubble">
+                                <div class="chat-content">
+                                    {% if msg.visualization_type %}
+                                        <div class="text-center mb-2">
+                                            <img src="data:image/png;base64,{{ msg.visualization_data }}" class="img-fluid rounded" alt="Chat Visualization">
+                                        </div>
+                                    {% endif %}
+                                    {{ msg.content | md }}
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <div class="text-center mt-5 text-muted">
+                            <p>To ask questions about your data, please configure your forecast first.</p>
+                            <a href="{{ url_for('main.forecast_setup') }}" class="btn btn-primary">🚀 Go to Forecast Setup</a>
+                            <p class="mt-3 mb-0">You can also ask general forecasting questions without uploading data.</p>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="chat-input-area p-2 border-top">
+                <div class="input-group">
+                    <input type="text" id="chat-input" class="form-control"
+                           placeholder="Ask about time series forecasting...">
+                    <span id="chat-spinner" class="input-group-text d-none bg-body">
+                        <span class="spinner-border spinner-border-sm" role="status"></span>
+                    </span>
+                    <button class="btn btn-primary" id="chat-send" type="button">Send</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById("chat-send").addEventListener("click", function() { Chat.send(); });
+Chat.init();
+</script>
+{% endblock %}

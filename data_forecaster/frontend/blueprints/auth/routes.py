@@ -6,7 +6,7 @@ Provides ``/auth/login`` and ``/auth/logout``.
 
 from __future__ import annotations
 
-from flask import flash, redirect, render_template, request, url_for
+from flask import flash, redirect, render_template, request, session, url_for
 from flask_login import current_user, login_user, logout_user
 from werkzeug.security import check_password_hash
 from werkzeug.wrappers import Response
@@ -78,5 +78,6 @@ def logout() -> Response:
         A redirect response to the login page.
     """
     logout_user()
+    session.clear()
     flash("You have been logged out.", "info")
     return redirect(url_for("auth.login"))

@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Get Started — Forecaster{% endblock %}
+{% block header %}ℹ️ Get Started{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <h4>Getting Started</h4>
+        <hr>
+        <ol>
+            <li class="mb-2"><strong>Upload Data</strong> — Go to the Chat tab and upload a CSV or XLSX file with a date column and a numeric value column. Or click "Load Demo Data" to try the classic airline passengers dataset (1949–1960).</li>
+            <li class="mb-2"><strong>Select Columns</strong> — After upload, choose the correct date and value columns, then set the forecast horizon.</li>
+            <li class="mb-2"><strong>Run Analysis</strong> — Click "Run Analysis" to start the multi-agent forecasting pipeline.</li>
+            <li class="mb-2"><strong>Review Results</strong> — Navigate through the Report, Overview, Quality, Statistics, Model, and Forecast tabs to review the analysis.</li>
+            <li class="mb-2"><strong>Chat with Data</strong> — Use the Data Explorer chat to ask questions about your data and results. You can even request dynamic visualizations.</li>
+        </ol>
+        <div class="card mt-4">
+            <div class="card-body">
+                <h6>Multi-Agent Architecture</h6>
+                <p style="color:var(--text-muted-custom);">Five specialized agents handle different aspects of the forecasting pipeline:</p>
+                <ul>
+                    <li><strong>Data Validation Agent</strong> — Checks data quality, missing values, duplicates</li>
+                    <li><strong>Statistical Analysis Agent</strong> — ADF/KPSS tests, trend detection, STL decomposition</li>
+                    <li><strong>Model Selection Agent</strong> — Evaluates ARIMA, SARIMA, Holt-Winters, EWMA</li>
+                    <li><strong>Forecasting Agent</strong> — Generates predictions with confidence intervals</li>
+                    <li><strong>Report Generation Agent</strong> — Creates detailed reports with insights</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Data Quality — Forecaster{% endblock %}
+{% block header %}🔍 Data Quality{% endblock %}
+{% block content %}
+<div class="row g-3 mb-3">
+    <div class="col-md-3"><div class="metric-card"><div class="metric-value">{{ v.get('row_count', '—') }}</div><div class="metric-label">Total Rows</div></div></div>
+    <div class="col-md-3"><div class="metric-card {{ 'metric-warn' if v.get('missing_timestamps', 0) > 0 else 'metric-ok' }}"><div class="metric-value">{{ v.get('missing_timestamps', 0) }}</div><div class="metric-label">Missing Timestamps</div></div></div>
+    <div class="col-md-3"><div class="metric-card {{ 'metric-warn' if v.get('duplicate_timestamps', 0) > 0 else 'metric-ok' }}"><div class="metric-value">{{ v.get('duplicate_timestamps', 0) }}</div><div class="metric-label">Duplicates</div></div></div>
+    <div class="col-md-3"><div class="metric-card {{ 'metric-warn' if v.get('missing_values', 0) > 0 else 'metric-ok' }}"><div class="metric-value">{{ v.get('missing_values', 0) }}</div><div class="metric-label">Missing Values</div></div></div>
+</div>
+<div class="card mb-3">
+    <div class="card-body">
+        <p><strong>Frequency detected:</strong> <code>{{ v.get('frequency', '—') }}</code></p>
+        <p><strong>Regular intervals:</strong> {{ '✅ Yes' if v.get('is_regular') else '⚠️ No' }}</p>
+        {% if v.get('issues') %}
+        <div class="alert alert-warning"><strong>Issues found:</strong><ul class="mb-0">{% for i in v.get('issues', []) %}<li>{{ i }}</li>{% endfor %}</ul></div>
+        {% else %}
+        <div class="alert alert-success">No data quality issues detected.</div>
+        {% endif %}
+        <p><strong>Validation Summary:</strong></p>
+        <p>{{ v.get('summary', '') | md }}</p>
+    </div>
+</div>
+{% if v.get('reasoning_steps') %}
+<div class="card">
+    <div class="card-body">
+        <h6>🕵️ Data Validation Reasoning</h6>
+        {% for step in v.get('reasoning_steps', []) %}
+        <div class="reasoning-step mb-2">
+            <strong>Step {{ loop.index }}</strong>
+            {% set thought = (step.get('thought') or step.get('log') or '') %}
+            {% if thought %}<p class="small mb-0" style="color:var(--text-muted-custom);">{{ thought | md }}</p>{% endif %}
+            {% if step.get('observation') %}<p class="small mb-0"><em>Observation: {{ step['observation'] | md }}</em></p>{% endif %}
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+{% endblock %}
