@@ -625,7 +625,7 @@ The admin blueprint uses a properly implemented `admin_required` decorator that 
 
 ---
 
-### FE-007: Default Admin Credentials Not Force-Rotated
+### FE-007: ✅ Fixed — Default Admin Password Force-Rotated on First Login
 
 **Severity:** Medium  
 **Category:** Security  
@@ -1042,7 +1042,7 @@ Add an `ARCHITECTURE.md` with system diagrams and data flow.
 1. **SEC-008: BOLA — No per-user isolation on `_file_store`/`_job_store`** — Any authenticated user can access any resource.
 2. **SEC-003: No rate limiting** — Brute-force and cost abuse are possible.
 3. **SEC-006: Prompt injection** — Chat queries have no length limits or sanitization.
-4. **FE-007: Default admin credentials** — `admin`/`admin` seeded without forced rotation.
+4. ~~**FE-007: Default admin credentials** — `admin`/`admin` seeded without forced rotation.~~ ✅ Fixed — forced password rotation on first login implemented.
 5. **TEST-001: Low test coverage** — No tests for auth, API endpoints, or Flask routes.
 
 ### 2. High-Priority Improvements

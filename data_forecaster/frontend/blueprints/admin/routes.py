@@ -212,7 +212,7 @@ def user_edit(user_id: int) -> str | Response:
         if new_password:
             pw_hash = generate_password_hash(new_password)
             execute_db(
-                "UPDATE users SET password_hash = ?, role_id = ?, active = ? WHERE id = ?",
+                "UPDATE users SET password_hash = ?, role_id = ?, active = ?, must_change_password = 1 WHERE id = ?",
                 (pw_hash, int(role_row["id"]), int(new_active), user_id),
             )
         else:

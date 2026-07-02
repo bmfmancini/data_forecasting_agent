@@ -217,7 +217,8 @@ def _register_user_loader() -> None:
 
         row = _query(
             """
-            SELECT u.id, u.username, r.name AS role_name, u.active
+            SELECT u.id, u.username, r.name AS role_name, u.active,
+                   u.must_change_password
             FROM users u
             JOIN roles r ON r.id = u.role_id
             WHERE u.id = ?
@@ -231,5 +232,6 @@ def _register_user_loader() -> None:
                 username=str(row["username"]),
                 role_name=str(row["role_name"]),
                 active=bool(row["active"]),
+                must_change_password=bool(row.get("must_change_password", 0)),
             )
         return None
