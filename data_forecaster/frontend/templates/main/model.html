@@ -6,7 +6,7 @@
     <strong>Selected Model: {{ m.get('selected_model', '—') }}</strong>
 </div>
 <h5>Rationale</h5>
-<p>{{ m.get('explanation', 'No explanation available.') }}</p>
+<p>{{ m.get('explanation', 'No explanation available.') | md }}</p>
 {% if rejected %}
 <h5>Models not selected:</h5>
 <ul>
@@ -17,7 +17,7 @@
 {% endif %}
 <h5>Model Comparison Metrics</h5>
 {% if comparison_json %}
-<div class="chart-container" data-chart="{{ comparison_json }}" data-chart-type="dynamic"></div>
+<div class="chart-container" data-chart='{{ comparison_json | safe }}'></div>
 {% else %}
 <p style="color:var(--text-muted-custom);">Comparison chart unavailable.</p>
 {% endif %}
@@ -49,8 +49,8 @@
         <div class="reasoning-step mb-2">
             <strong>Step {{ loop.index }}</strong>
             {% set thought = (step.get('thought') or step.get('log') or '') %}
-            {% if thought %}<p class="small mb-0" style="color:var(--text-muted-custom);">{{ thought }}</p>{% endif %}
-            {% if step.get('observation') %}<p class="small mb-0"><em>Observation: {{ step['observation'] }}</em></p>{% endif %}
+            {% if thought %}<p class="small mb-0" style="color:var(--text-muted-custom);">{{ thought | md }}</p>{% endif %}
+            {% if step.get('observation') %}<p class="small mb-0"><em>Observation: {{ step['observation'] | md }}</em></p>{% endif %}
         </div>
         {% endfor %}
     </div>

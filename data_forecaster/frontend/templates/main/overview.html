@@ -39,7 +39,7 @@
 {% endif %}
 <h4>Historical Time Series</h4>
 {% if chart_json %}
-<div class="chart-container" data-chart="{{ chart_json }}" data-chart-type="dynamic"></div>
+<div class="chart-container" data-chart='{{ chart_json | safe }}'></div>
 {% else %}
 <p style="color:var(--text-muted-custom);">Historical chart unavailable.</p>
 {% endif %}

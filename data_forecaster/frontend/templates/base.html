@@ -16,6 +16,7 @@
             <ul class="nav flex-column">
                 <li class="nav-item"><a class="nav-link" href="{{ url_for('main.chat') }}">💬 Chat</a></li>
                 <li class="nav-item"><a class="nav-link" href="{{ url_for('main.started') }}">ℹ️ Get Started</a></li>
+                <li class="nav-item"><a class="nav-link" href="{{ url_for('main.forecast_setup') }}">🚀 Forecast Setup</a></li>
                 {% if session.get('analysis_result') %}
                 <li class="nav-item"><a class="nav-link" href="{{ url_for('main.report') }}">📄 Report</a></li>
                 <li class="nav-item"><a class="nav-link" href="{{ url_for('main.overview') }}">📊 Overview</a></li>

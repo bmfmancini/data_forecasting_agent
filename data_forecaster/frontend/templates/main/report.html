@@ -18,7 +18,7 @@
         {% if segment.tag == 'ACF_PACF' and segment.acf_b64 %}
             <img src="data:image/png;base64,{{ segment.acf_b64 }}" class="img-fluid my-2" alt="ACF/PACF">
         {% elif segment.chart_json %}
-            <div class="chart-container my-2" data-chart="{{ segment.chart_json }}" data-chart-type="dynamic"></div>
+            <div class="chart-container my-2" data-chart='{{ segment.chart_json | safe }}'></div>
         {% endif %}
     {% endif %}
 {% endfor %}

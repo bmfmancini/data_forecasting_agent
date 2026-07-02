@@ -11,13 +11,31 @@ from __future__ import annotations
 import os
 from typing import Any
 
+import bleach
+import markdown as md_lib
 from flask import Flask, session
 from flask_session import Session  # type: ignore[import-untyped]
+from markupsafe import Markup
 
 from config import get_config
 from db.db import init_app as db_init_app, init_db, query_db
 from extensions import csrf, login_manager
 from models import User
+
+_BLEACH_ALLOWED_TAGS: list[str] = [
+    "p", "h1", "h2", "h3", "h4", "h5", "h6",
+    "ul", "ol", "li",
+    "strong", "em", "code", "pre",
+    "blockquote", "hr",
+    "a", "br",
+    "table", "thead", "tbody", "tr", "th", "td",
+]
+
+_BLEACH_ALLOWED_ATTRS: dict[str, list[str]] = {
+    "a": ["href", "title"],
+    "code": ["class"],
+    "pre": ["class"],
+}
 
 
 def create_app(config_name: str | None = None) -> Flask:
@@ -57,6 +75,7 @@ def create_app(config_name: str | None = None) -> Flask:
         init_db()
         _sync_backend_url_from_db(app)
 
+    _register_template_filters(app)
     _register_blueprints(app)
     _register_context_processors(app)
     _register_user_loader()
@@ -99,6 +118,40 @@ def _sync_backend_url_from_db(app: Flask) -> None:
         url = row.get("base_url", "")
         if url:
             app.config["BACKEND_URL"] = url
+
+
+def _register_template_filters(app: Flask) -> None:
+    """Register custom Jinja2 template filters.
+
+    Provides a ``md`` filter that converts markdown-formatted text (typically
+    produced by the LLM agents) to sanitised HTML using ``bleach``.
+
+    Args:
+        app: The Flask application instance.
+    """
+
+    @app.template_filter("md")
+    def _markdown_to_html(text: str) -> str:
+        """Convert a markdown string to sanitised HTML.
+
+        Args:
+            text: Markdown-formatted string.
+
+        Returns:
+            Safe HTML string with unsafe tags stripped.
+        """
+        if not text:
+            return Markup("")
+        raw_html: str = md_lib.markdown(
+            str(text),
+            extensions=["tables", "fenced_code", "nl2br"],
+        )
+        return Markup(bleach.clean(
+            raw_html,
+            tags=_BLEACH_ALLOWED_TAGS,
+            attributes=_BLEACH_ALLOWED_ATTRS,
+            strip=True,
+        ))
 
 
 def _register_blueprints(app: Flask) -> None:

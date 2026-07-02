@@ -27,10 +27,10 @@
     </div>
 </div>
 <p><strong>Statistical Summary:</strong></p>
-<p>{{ s.get('summary', '') }}</p>
+<p>{{ s.get('summary', '') | md }}</p>
 <h5>STL Decomposition</h5>
 {% if stl_json %}
-<div class="chart-container" data-chart="{{ stl_json }}" data-chart-type="dynamic"></div>
+<div class="chart-container" data-chart='{{ stl_json | safe }}'></div>
 {% else %}
 <p style="color:var(--text-muted-custom);">STL chart unavailable.</p>
 {% endif %}
@@ -48,8 +48,8 @@
         <div class="reasoning-step mb-2">
             <strong>Step {{ loop.index }}</strong>
             {% set thought = (step.get('thought') or step.get('log') or '') %}
-            {% if thought %}<p class="small mb-0" style="color:var(--text-muted-custom);">{{ thought }}</p>{% endif %}
-            {% if step.get('observation') %}<p class="small mb-0"><em>Observation: {{ step['observation'] }}</em></p>{% endif %}
+            {% if thought %}<p class="small mb-0" style="color:var(--text-muted-custom);">{{ thought | md }}</p>{% endif %}
+            {% if step.get('observation') %}<p class="small mb-0"><em>Observation: {{ step['observation'] | md }}</em></p>{% endif %}
         </div>
         {% endfor %}
     </div>
