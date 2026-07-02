@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <title>{% block title %}Time Series Forecaster{% endblock %}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="{{ url_for('static', filename='css/main.css') }}" rel="stylesheet">
+</head>
+<body>
+<div class="app-shell">
+    <nav class="sidebar">
+        <div class="sidebar-inner">
+            <div class="sidebar-heading">Data Forecaster</div>
+            <ul class="nav flex-column">
+                <li class="nav-item"><a class="nav-link" href="{{ url_for('main.chat') }}">💬 Chat</a></li>
+                <li class="nav-item"><a class="nav-link" href="{{ url_for('main.started') }}">ℹ️ Get Started</a></li>
+                {% if session.get('analysis_result') %}
+                <li class="nav-item"><a class="nav-link" href="{{ url_for('main.report') }}">📄 Report</a></li>
+                <li class="nav-item"><a class="nav-link" href="{{ url_for('main.overview') }}">📊 Overview</a></li>
+                <li class="nav-item"><a class="nav-link" href="{{ url_for('main.quality') }}">🔍 Quality</a></li>
+                <li class="nav-item"><a class="nav-link" href="{{ url_for('main.stats') }}">📐 Statistics</a></li>
+                <li class="nav-item"><a class="nav-link" href="{{ url_for('main.model') }}">🤖 Model</a></li>
+                <li class="nav-item"><a class="nav-link" href="{{ url_for('main.forecast') }}">🔮 Forecast</a></li>
+                <li class="nav-item"><a class="nav-link" href="{{ url_for('main.trace') }}">🕵️ AI Trace</a></li>
+                {% endif %}
+            </ul>
+            <hr class="sidebar-hr">
+            <div class="sidebar-heading">Analysis</div>
+            <div id="progress-area" class="d-none">
+                <div class="small" style="color:var(--text-muted-custom);" id="progress-text">Queued…</div>
+                <div class="progress mt-1" style="height:6px;">
+                    <div class="progress-bar" id="progress-bar" style="width:0%"></div>
+                </div>
+            </div>
+            <hr class="sidebar-hr">
+            <ul class="nav flex-column">
+                {% if current_user.is_authenticated %}
+                <li class="nav-item"><a class="nav-link" href="{{ url_for('admin.dashboard') }}">Admin Panel</a></li>
+                <li class="nav-item"><a class="nav-link" href="{{ url_for('auth.logout') }}">Logout ({{ current_user.username }})</a></li>
+                {% endif %}
+            </ul>
+        </div>
+    </nav>
+    <div class="main-content">
+        <header class="app-header d-flex align-items-center justify-content-between">
+            <span class="fw-semibold">{% block header %}Data Forecaster{% endblock %}</span>
+        </header>
+        <div class="tab-content-area p-4">
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    {% for category, message in messages %}
+                        <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                            {{ message }}
+                            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                        </div>
+                    {% endfor %}
+                {% endif %}
+            {% endwith %}
+            {% block content %}{% endblock %}
+        </div>
+    </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<script src="{{ url_for('static', filename='js/charts.js') }}"></script>
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+<script src="{{ url_for('static', filename='js/chat.js') }}"></script>
+<script src="{{ url_for('static', filename='js/polling.js') }}"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

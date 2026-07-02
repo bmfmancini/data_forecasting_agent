@@ -1,0 +1,23 @@
+{% extends "admin/base.html" %}
+{% block title %}Settings — Admin{% endblock %}
+{% block header %}Application Settings{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-body">
+                <form method="post" novalidate>
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="mb-3">
+                        <label class="form-label">Application Name</label>
+                        <input type="text" name="app_name" class="form-control" value="{{ config.get('app_name', '') }}">
+                    </div>
+                    <div class="d-flex justify-content-end">
+                        <button type="submit" class="btn btn-primary btn-sm">Save Settings</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

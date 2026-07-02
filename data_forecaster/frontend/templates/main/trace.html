@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}AI Trace — Forecaster{% endblock %}
+{% block header %}🕵️ AI Reasoning Trace{% endblock %}
+{% block content %}
+<h5>Full AI Reasoning Trace</h5>
+<p style="color:var(--text-muted-custom);">This log shows the internal 'monologue' and tool usage of the AI agents as they processed your request.</p>
+{% for agent in agents %}
+<div class="card mb-3">
+    <div class="card-body">
+        <h6 class="mb-2">{{ agent.label }}</h6>
+        {% if agent.steps %}
+        {% for step in agent.steps %}
+        <div class="reasoning-step mb-2">
+            <strong>Step {{ loop.index }}</strong>
+            {% set thought = (step.get('thought') or step.get('log') or '') %}
+            {% if thought %}<p class="small mb-0" style="color:var(--text-muted-custom);">{{ thought }}</p>{% endif %}
+            {% if step.get('observation') %}<p class="small mb-0"><em>Observation: {{ step['observation'] }}</em></p>{% endif %}
+        </div>
+        {% endfor %}
+        {% else %}
+        <p class="small" style="color:var(--text-muted-custom);">No detailed reasoning trace captured for this step.</p>
+        {% endif %}
+    </div>
+</div>
+{% endfor %}
+<div class="alert alert-info">💡 These reasoning traces are also shown inline within each specific analysis tab.</div>
+{% endblock %}

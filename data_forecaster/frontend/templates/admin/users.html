@@ -1,0 +1,28 @@
+{% extends "admin/base.html" %}
+{% block title %}Users — Admin{% endblock %}
+{% block header %}User Management{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="mb-0">Application Users</h4>
+    <a href="{{ url_for('admin.user_new') }}" class="btn btn-primary btn-sm">+ Create User</a>
+</div>
+<div class="card">
+    <div class="card-body">
+        <table class="table table-dark table-hover align-middle mb-0">
+            <thead><tr><th>ID</th><th>Username</th><th>Role</th><th>Active</th><th>Created</th><th class="text-end">Actions</th></tr></thead>
+            <tbody>
+                {% for user in users %}
+                <tr>
+                    <td>{{ user.id }}</td>
+                    <td class="fw-semibold">{{ user.username }}</td>
+                    <td>{{ user.role }}</td>
+                    <td>{% if user.active %}<span class="badge text-bg-success">Active</span>{% else %}<span class="badge text-bg-secondary">Inactive</span>{% endif %}</td>
+                    <td style="color:var(--text-muted-custom);">{{ user.created_at or '—' }}</td>
+                    <td class="text-end"><a href="{{ url_for('admin.user_edit', user_id=user.id) }}" class="btn btn-outline-secondary btn-sm">Edit</a></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

@@ -364,10 +364,21 @@
     });
   }
 
+  /** Wire up the Run Analysis button. */
+  function initRunButton() {
+    const runBtn = document.getElementById("btn-run");
+    if (runBtn) {
+      runBtn.addEventListener("click", function () {
+        runAnalysis();
+      });
+    }
+  }
+
   function init() {
     initHorizonSlider();
     initFileInput();
     initColumnSelectors();
+    initRunButton();
   }
 
   document.addEventListener("DOMContentLoaded", init);

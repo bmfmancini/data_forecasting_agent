@@ -177,7 +177,12 @@ def chat() -> str:
         Rendered HTML for the chat page.
     """
     chat_history: list[dict[str, Any]] = session.get("chat_history") or []
-    return render_template("main/chat.html", chat_history=chat_history)
+    upload_info: dict[str, Any] = session.get("upload_info") or {}
+    return render_template(
+        "main/chat.html",
+        chat_history=chat_history,
+        upload_info=upload_info,
+    )
 
 
 @main_bp.route("/started")
@@ -415,7 +420,7 @@ def report_export() -> Response:
     )
 
 
-@main_bp.route("/load-demo")
+@main_bp.route("/load-demo", methods=["GET", "POST"])
 @_login_required
 def load_demo() -> Response:
     """Upload the bundled airline-passengers demo dataset to the backend.

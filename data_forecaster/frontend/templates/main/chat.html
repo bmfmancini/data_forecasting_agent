@@ -1,0 +1,194 @@
+{% extends "base.html" %}
+{% block title %}Chat — Forecaster{% endblock %}
+{% block header %}💬 Data Explorer{% endblock %}
+
+{% block content %}
+<div class="row" style="min-height: calc(100vh - 120px);">
+    {# ── Left panel: Configuration ───────────────────────────── #}
+    <div class="col-md-4 col-lg-3">
+        <div class="card mb-3">
+            <div class="card-body">
+                <h6 class="mb-2">Configuration</h6>
+
+                {# Upload #}
+                <div class="mb-2">
+                    <label class="form-label-sm">Upload Time Series (CSV or XLSX)</label>
+                    <input type="file" id="file-input" class="form-control form-control-sm" accept=".csv,.xlsx">
+                    <div id="upload-status" class="mt-1 small"></div>
+                </div>
+
+                <hr class="my-2">
+
+                {# Demo data #}
+                <form method="post" action="{{ url_for('main.load_demo') }}" class="mb-2">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-outline-secondary btn-sm w-100">📂 Load Demo Data</button>
+                </form>
+
+                <hr class="my-2">
+
+                {# Column selectors #}
+                <div class="mb-2">
+                    <label class="form-label-sm">Date Column</label>
+                    <select id="sel-date" class="form-select form-select-sm" disabled>
+                        <option value="">Upload a file first</option>
+                    </select>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label-sm">Value Column</label>
+                    <select id="sel-value" class="form-select form-select-sm" disabled>
+                        <option value="">Upload a file first</option>
+                    </select>
+                </div>
+
+                {# Frequency display #}
+                <p class="small mb-2" style="color:var(--text-muted-custom);">
+                    Frequency: <strong>—</strong>
+                </p>
+
+                {# Preflight status #}
+                <div id="preflight-status" class="mb-2"></div>
+
+                {# Model selection #}
+                <div class="mb-2">
+                    <label class="form-label-sm">Model</label>
+                    <select id="sel-model" class="form-select form-select-sm" disabled>
+                        <option value="Auto (AI selects)">Auto (AI selects)</option>
+                        <option value="ARIMA">ARIMA</option>
+                        <option value="SARIMA">SARIMA</option>
+                        <option value="Holt-Winters">Holt-Winters</option>
+                    </select>
+                </div>
+
+                {# Forecast horizon #}
+                <div class="mb-2">
+                    <label class="form-label-sm">
+                        Forecast Horizon: <span id="horizon-val">12</span>
+                    </label>
+                    <input type="range" id="inp-horizon" class="form-range"
+                           min="1" max="100" value="12" disabled>
+                </div>
+
+                {# Additional prompt #}
+                <div class="mb-2">
+                    <label class="form-label-sm">Additional Instructions (optional)</label>
+                    <textarea id="inp-prompt" class="form-control form-control-sm" rows="2"
+                              placeholder="e.g. Focus on seasonal patterns" disabled></textarea>
+                </div>
+
+                {# Run button #}
+                <button type="button" class="btn btn-success btn-sm w-100" id="btn-run" disabled>
+                    Run Analysis
+                </button>
+            </div>
+        </div>
+    </div>
+
+    {# ── Right panel: Chat ────────────────────────────────────── #}
+    <div class="col-md-8 col-lg-9">
+        <div class="card" style="height: 100%; display: flex; flex-direction: column;">
+            <div class="card-header d-flex align-items-center justify-content-between">
+                <span class="fw-semibold">💬 Data Explorer</span>
+                <span class="small" style="color:var(--text-muted-custom);">
+                    Ask questions about time series data analysis or general forecasting concepts.
+                </span>
+            </div>
+            <div class="card-body flex-grow-1 overflow-hidden" style="min-height: 400px;">
+                <div class="chat-messages" id="chat-messages" style="max-height: 100%; overflow-y: auto;">
+                    {% if chat_history %}
+                        {% for msg in chat_history %}
+                        <div class="chat-message {{ msg.role }}">
+                            <div class="chat-bubble">
+                                <div class="chat-content">{{ msg.content }}</div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <div class="text-center mt-5" style="color:var(--text-muted-custom);">
+                            Upload a file and run an analysis, then ask questions about your data.<br>
+                            You can also ask general forecasting questions without uploading data.
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="chat-input-area p-2 border-top" style="border-color: var(--border-color);">
+                <div class="input-group">
+                    <input type="text" id="chat-input" class="form-control"
+                           placeholder="Ask about time series forecasting...">
+                    <span id="chat-spinner" class="input-group-text d-none" style="background:var(--bg-card); border-color:var(--border-color);">
+                        <span class="spinner-border spinner-border-sm" role="status"></span>
+                    </span>
+                    <button class="btn btn-primary" id="chat-send" type="button">Send</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{# ── Preflight Modal ───────────────────────────────────────── #}
+<div class="modal fade" id="preflightModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content bg-dark-subtle">
+            <div class="modal-header">
+                <h5 class="modal-title">Preflight Review</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="preflight-modal-body"></div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary btn-sm" onclick="App.savePreflightChoices()">
+                    Apply Preflight Choices
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById("chat-send").addEventListener("click", function() { Chat.send(); });
+Chat.init();
+
+{# Auto-populate dropdowns if upload_info exists in session (e.g. after demo load) #}
+{% if upload_info %}
+(function() {
+    var info = {{ upload_info | tojson }};
+    var dateSel = document.getElementById("sel-date");
+    var valueSel = document.getElementById("sel-value");
+    if (!dateSel || !valueSel) return;
+
+    [dateSel, valueSel].forEach(function(sel) {
+        sel.innerHTML = "";
+        sel.disabled = false;
+    });
+
+    (info.columns || []).forEach(function(col) {
+        dateSel.options.add(new Option(col, col, false, col === info.detected_date_col));
+        valueSel.options.add(new Option(col, col, false, col === info.detected_value_col));
+    });
+
+    var freqEls = document.querySelectorAll(".text-muted-custom strong, p.small strong");
+    freqEls.forEach(function(el) {
+        if (el.textContent === "—") el.textContent = info.detected_frequency || "—";
+    });
+
+    ["sel-model", "inp-horizon", "inp-prompt", "btn-run"].forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) el.disabled = false;
+    });
+
+    var statusEl = document.getElementById("upload-status");
+    if (statusEl) {
+        statusEl.textContent = "Uploaded — " + info.rows + " rows detected.";
+        statusEl.className = "mt-1 small text-success";
+    }
+
+    {# Trigger preflight check #}
+    if (typeof App !== "undefined" && App.triggerPreflight) {
+        setTimeout(function() { App.triggerPreflight(); }, 100);
+    }
+})();
+{% endif %}
+</script>
+{% endblock %}

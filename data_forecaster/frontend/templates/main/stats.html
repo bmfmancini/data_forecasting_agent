@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Statistical Analysis — Forecaster{% endblock %}
+{% block header %}📐 Statistical Analysis{% endblock %}
+{% block content %}
+<div class="row">
+    <div class="col-md-6">
+        <h5>Stationarity Tests</h5>
+        <div class="card mb-3">
+            <div class="card-body">
+                {% set adf_status = '✅ Stationary' if s.get('is_stationary_adf') else '⚠️ Non-stationary' %}
+                {% set kpss_status = '✅ Stationary' if s.get('is_stationary_kpss') else '⚠️ Non-stationary' %}
+                <p><strong>ADF Test:</strong> {{ adf_status }}<br>p-value = <code>{{ '%.4f' % s.get('adf_p_value', 0) }}</code>, statistic = <code>{{ '%.4f' % s.get('adf_statistic', 0) }}</code></p>
+                <p><strong>KPSS Test:</strong> {{ kpss_status }}<br>p-value = <code>{{ '%.4f' % s.get('kpss_p_value', 0) }}</code>, statistic = <code>{{ '%.4f' % s.get('kpss_statistic', 0) }}</code></p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <h5>Trend &amp; Seasonality</h5>
+        <div class="card mb-3">
+            <div class="card-body">
+                {% set trend_status = '✅ Detected' if s.get('has_trend') else '➖ Not detected' %}
+                <p><strong>Trend:</strong> {{ trend_status }} (slope=<code>{{ '%.6f' % s.get('trend_slope', 0) }}</code>)</p>
+                <p><strong>Seasonal period:</strong> <code>{{ s.get('seasonal_period', '—') }}</code></p>
+                <p><strong>Dominant periodogram period:</strong> <code>{{ '%.2f' % s.get('dominant_period', 0) if s.get('dominant_period') else 'N/A' }}</code></p>
+            </div>
+        </div>
+    </div>
+</div>
+<p><strong>Statistical Summary:</strong></p>
+<p>{{ s.get('summary', '') }}</p>
+<h5>STL Decomposition</h5>
+{% if stl_json %}
+<div class="chart-container" data-chart="{{ stl_json }}" data-chart-type="dynamic"></div>
+{% else %}
+<p style="color:var(--text-muted-custom);">STL chart unavailable.</p>
+{% endif %}
+<h5 class="mt-3">ACF / PACF</h5>
+{% if acf_b64 %}
+<img src="data:image/png;base64,{{ acf_b64 }}" class="img-fluid" alt="ACF/PACF plot">
+{% else %}
+<p style="color:var(--text-muted-custom);">ACF/PACF chart unavailable.</p>
+{% endif %}
+{% if s.get('reasoning_steps') %}
+<div class="card mt-3">
+    <div class="card-body">
+        <h6>🕵️ Statistical Analysis Reasoning</h6>
+        {% for step in s.get('reasoning_steps', []) %}
+        <div class="reasoning-step mb-2">
+            <strong>Step {{ loop.index }}</strong>
+            {% set thought = (step.get('thought') or step.get('log') or '') %}
+            {% if thought %}<p class="small mb-0" style="color:var(--text-muted-custom);">{{ thought }}</p>{% endif %}
+            {% if step.get('observation') %}<p class="small mb-0"><em>Observation: {{ step['observation'] }}</em></p>{% endif %}
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+{% block scripts %}<script>Charts.renderAll();</script>{% endblock %}
