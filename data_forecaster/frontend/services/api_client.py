@@ -287,6 +287,44 @@ class BackendAPIClient:
             timeout=JOB_STATUS_TIMEOUT,
         )
 
+    def get_auth_status(self) -> requests.Response:
+        """Check whether API auth is enabled on the backend.
+
+        Calls the unauthenticated ``GET /auth-status`` endpoint.
+
+        Returns:
+            The :class:`requests.Response` with ``auth_enabled`` and
+            ``has_users`` boolean fields in the JSON body.
+        """
+        return requests.get(
+            f"{self._base_url}/auth-status",
+            timeout=JOB_STATUS_TIMEOUT,
+        )
+
+    def bootstrap_api_user(
+        self, username: str, api_key: str, admin_key: str
+    ) -> requests.Response:
+        """Create the first API user and enable auth on the backend.
+
+        Calls the ``POST /api-users/bootstrap`` endpoint, protected by
+        the deployment-time ``ADMIN_API_KEY`` sent via the ``X-Admin-Key``
+        header.  No API auth headers are required (auth is still off).
+
+        Args:
+            username:   Desired username for the first API user.
+            api_key:    Desired plaintext API key.
+            admin_key:  The ``ADMIN_API_KEY`` deployment secret.
+
+        Returns:
+            The :class:`requests.Response` from the bootstrap endpoint.
+        """
+        return requests.post(
+            f"{self._base_url}/api-users/bootstrap",
+            json={"username": username, "api_key": api_key},
+            headers={"X-Admin-Key": admin_key},
+            timeout=ANALYSIS_TIMEOUT,
+        )
+
 
 def get_api_client() -> BackendAPIClient:
     """Construct a :class:`BackendAPIClient` for the current request.

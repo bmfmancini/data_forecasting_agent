@@ -19,8 +19,7 @@ from core.logging_config import get_logger
 
 logger = get_logger(__name__)
 
-_BOOTSTRAP_USERNAME: str = "frontend"
-_BOOTSTRAP_DESCRIPTION: str = "Bootstrap API user (auto-created on first run)"
+_BOOTSTRAP_DESCRIPTION: str = "Bootstrap API user (created via admin bootstrap)"
 
 _SCHEMA: str = """
 CREATE TABLE IF NOT EXISTS api_users (
@@ -67,11 +66,12 @@ def _get_connection() -> sqlite3.Connection:
 
 
 def init_db() -> None:
-    """Create the ``api_users`` table if needed and run bootstrap.
+    """Create the ``api_users`` table if needed.
 
     Called once during FastAPI application startup.  Creates the schema
-    and, when no API users exist, generates the initial bootstrap
-    credential and prints it to stdout.
+    only — no users are auto-created.  The first API user is created
+    on-demand via the ``POST /api-users/bootstrap`` endpoint, which is
+    protected by the ``ADMIN_API_KEY`` deployment secret.
     """
     conn: sqlite3.Connection = _get_connection()
     try:
@@ -80,77 +80,80 @@ def init_db() -> None:
     finally:
         conn.close()
 
-    bootstrap_api_user()
 
+def has_any_users() -> bool:
+    """Check whether any API users exist in the database.
 
-def bootstrap_api_user() -> None:
-    """Create an initial API user when the database is empty.
-
-    If one or more API users already exist, this function does nothing
-    (ensuring restarts do not regenerate credentials).  When the table
-    is empty, a ``frontend`` user is created with a cryptographically
-    secure random key hashed via Argon2id.  The plaintext key is printed
-    once to stdout and never stored or logged again.
+    Returns:
+        ``True`` when at least one user exists.
     """
+    conn: sqlite3.Connection = _get_connection()
+    try:
+        row: sqlite3.Row | None = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM api_users"
+        ).fetchone()
+        return int(row["cnt"]) > 0 if row else False
+    finally:
+        conn.close()
+
+
+def create_first_user(username: str, api_key: str) -> dict[str, Any]:
+    """Create the first API user and return a user dict (no key hash).
+
+    This is called by the bootstrap endpoint when an admin enables API
+    authentication for the first time.  The caller chooses the username
+    and plaintext key.
+
+    Args:
+        username:    Username for the first API user.
+        api_key:     Plaintext API key chosen by the admin.
+
+    Returns:
+        A dict with the new user's fields (``id``, ``username``, etc.).
+
+    Raises:
+        ValueError: When users already exist (bootstrap is one-time only)
+            or the username is empty.
+    """
+    if not username or not username.strip():
+        raise ValueError("Username is required.")
+    if not api_key:
+        raise ValueError("API key is required.")
+
     conn: sqlite3.Connection = _get_connection()
     try:
         count_row: sqlite3.Row | None = conn.execute(
             "SELECT COUNT(*) AS cnt FROM api_users"
         ).fetchone()
         count: int = int(count_row["cnt"]) if count_row else 0
-
         if count > 0:
-            logger.info(
-                "API key DB already has %d user(s) — skipping bootstrap.",
-                count,
+            raise ValueError(
+                "API users already exist — bootstrap is no longer available."
             )
-            return
 
-        plaintext_key: str = generate_api_key()
-        key_hash: str = hash_api_key(plaintext_key)
-
+        key_hash: str = hash_api_key(api_key)
         conn.execute(
             """
             INSERT INTO api_users
                 (username, api_key_hash, description, enabled, bootstrap)
             VALUES (?, ?, ?, 1, 1)
             """,
-            (_BOOTSTRAP_USERNAME, key_hash, _BOOTSTRAP_DESCRIPTION),
+            (username.strip(), key_hash, _BOOTSTRAP_DESCRIPTION),
         )
         conn.commit()
+        logger.info("First API user '%s' created via bootstrap.", username)
 
-        _print_bootstrap_banner(_BOOTSTRAP_USERNAME, plaintext_key)
-        logger.info("Bootstrap API user '%s' created.", _BOOTSTRAP_USERNAME)
+        row: sqlite3.Row | None = conn.execute(
+            """
+            SELECT id, username, description, enabled, bootstrap,
+                   created_at, last_used, last_used_ip
+            FROM api_users WHERE username = ?
+            """,
+            (username.strip(),),
+        ).fetchone()
+        return dict(row) if row else {}
     finally:
         conn.close()
-
-
-def _print_bootstrap_banner(username: str, api_key: str) -> None:
-    """Print the one-time bootstrap credential banner to stdout.
-
-    Args:
-        username: The bootstrap username.
-        api_key:  The plaintext API key (displayed once, never stored).
-    """
-    banner: str = f"""
-========================================
-
-Initial API Credentials Created
-
-Username:
-{username}
-
-API Key:
-{api_key}
-
-This key will only be displayed once.
-
-Log into the Admin panel and rotate
-or replace this credential.
-
-========================================
-"""
-    print(banner, flush=True)
 
 
 def verify_api_key(

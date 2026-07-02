@@ -275,6 +275,10 @@ def api_config() -> str | Response:
     Credentials are encrypted at rest using Fernet before being stored in
     the ``api_credentials`` table.
 
+    On GET, also queries the backend's auth status so the template can
+    show whether auth is enabled and offer the "Enable Authentication"
+    workflow when it is off.
+
     Returns:
         Rendered config template on GET or validation error; redirect on success.
     """
@@ -288,6 +292,18 @@ def api_config() -> str | Response:
     if request.method == "GET" and current_row and isinstance(current_row, dict):
         form.base_url.data = str(current_row.get("base_url", ""))
         form.timeout.data = int(current_row.get("timeout", 30))
+
+    # Query backend auth status for the template
+    auth_status: dict[str, Any] = {"auth_enabled": False, "has_users": False}
+    try:
+        from services.api_client import get_api_client
+
+        client = get_api_client()
+        resp = client.get_auth_status()
+        if resp.status_code == 200:
+            auth_status = resp.json()
+    except Exception:
+        pass  # Backend unreachable — show defaults
 
     if form.validate_on_submit():
         base_url: str = str(form.base_url.data or "").rstrip("/")
@@ -305,7 +321,9 @@ def api_config() -> str | Response:
                 enc_pass = encrypt(api_password)
             except RuntimeError as exc:
                 flash(str(exc), "danger")
-                return render_template("admin/api_config.html", form=form)
+                return render_template(
+                    "admin/api_config.html", form=form, auth_status=auth_status
+                )
 
         execute_db(
             """
@@ -324,7 +342,9 @@ def api_config() -> str | Response:
         flash("API configuration saved.", "success")
         return redirect(url_for("admin.api_config"))
 
-    return render_template("admin/api_config.html", form=form)
+    return render_template(
+        "admin/api_config.html", form=form, auth_status=auth_status
+    )
 
 
 @admin_bp.route("/api-config/test", methods=["POST"])
@@ -355,6 +375,89 @@ def api_config_test() -> Response:
     except Exception as exc:
         safe_message = _sanitise_connection_error(str(exc))
         return jsonify({"ok": False, "message": safe_message})
+
+
+@admin_bp.route("/api-config/enable-auth", methods=["POST"])
+@admin_required
+def api_config_enable_auth() -> Response:
+    """Enable API authentication on the backend via the bootstrap endpoint.
+
+    Reads the admin key, desired username, and API key from the form,
+    calls the backend's ``POST /api-users/bootstrap`` endpoint, and
+    stores the returned credentials encrypted in the frontend database.
+
+    Returns:
+        Redirect to the API config page with a flash message.
+    """
+    admin_key: str = str(request.form.get("admin_key", "")).strip()
+    api_username: str = str(request.form.get("api_username", "")).strip()
+    api_key: str = str(request.form.get("api_key", "")).strip()
+
+    if not admin_key:
+        flash("Admin key is required.", "danger")
+        return redirect(url_for("admin.api_config"))
+    if not api_username or not api_key:
+        flash("Username and API key are required.", "danger")
+        return redirect(url_for("admin.api_config"))
+
+    from services.api_client import get_api_client
+
+    client = get_api_client()
+    try:
+        resp = client.bootstrap_api_user(api_username, api_key, admin_key)
+    except Exception as exc:
+        flash(
+            f"Could not connect to backend: {_sanitise_connection_error(str(exc))}",
+            "danger",
+        )
+        return redirect(url_for("admin.api_config"))
+
+    if resp.status_code == 403:
+        flash(
+            "Invalid admin key. Verify the ADMIN_API_KEY in the backend .env.",
+            "danger",
+        )
+        return redirect(url_for("admin.api_config"))
+    if resp.status_code == 409:
+        flash(
+            "API users already exist on the backend. Bootstrap is no longer available.",
+            "warning",
+        )
+        return redirect(url_for("admin.api_config"))
+    if resp.status_code != 200:
+        detail: str = "Unknown error."
+        try:
+            detail = resp.json().get("detail", detail)
+        except Exception:
+            pass
+        flash(f"Bootstrap failed (HTTP {resp.status_code}): {detail}", "danger")
+        return redirect(url_for("admin.api_config"))
+
+    # Success — store the credentials encrypted in the frontend DB
+    try:
+        from db.crypto import encrypt
+
+        enc_user = encrypt(api_username)
+        enc_pass = encrypt(api_key)
+        execute_db(
+            """
+            UPDATE api_credentials
+            SET encrypted_username = ?,
+                encrypted_password = ?
+            WHERE label = 'default'
+            """,
+            (enc_user, enc_pass),
+        )
+    except RuntimeError as exc:
+        flash(str(exc), "danger")
+        return redirect(url_for("admin.api_config"))
+
+    flash(
+        "API authentication enabled successfully. "
+        "Credentials stored — the frontend can now authenticate with the backend.",
+        "success",
+    )
+    return redirect(url_for("admin.api_config"))
 
 
 def _check_backend_health() -> bool:

@@ -2,16 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_ollama import ChatOllama
 
-from core.config import (
-    GEMINI_MODEL,
-    USE_OLLAMA,
-    OLLAMA_BASE_URL,
-    OLLAMA_MODEL,
-    OLLAMA_API_KEY,
-)
+from core.llm_factory import get_llm
 from core.logging_config import get_logger
 from schemas import ModelSelectionResult, StatisticalResult
 from prompts.model_selection_prompt import MODEL_SELECTION_PROMPT
@@ -159,19 +151,7 @@ def run_model_selection_agent(stat_result: StatisticalResult) -> ModelSelectionR
         ewma_reason = "Series has patterns that ARIMA can better capture."
 
     # ── LLM Setup ────────────────────────────────────────────────────────────
-    if USE_OLLAMA:
-        llm = ChatOllama(
-            model=OLLAMA_MODEL,
-            base_url=OLLAMA_BASE_URL,
-            temperature=0,
-            headers=(
-                {"Authorization": f"Bearer {OLLAMA_API_KEY}"}
-                if OLLAMA_API_KEY
-                else None
-            ),
-        )
-    else:
-        llm = ChatGoogleGenerativeAI(model=GEMINI_MODEL, temperature=0)
+    llm = get_llm(temperature=0)
 
     prompt = MODEL_SELECTION_PROMPT
 

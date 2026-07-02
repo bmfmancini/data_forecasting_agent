@@ -7,13 +7,15 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Dict, cast, Annotated
 
-from fastapi import Depends, FastAPI, File, HTTPException, Response, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 import core.config as settings
 from auth.api_key_db import (
     create_api_user,
+    create_first_user,
     delete_api_user,
+    has_any_users,
     has_bootstrap_user,
     init_db as init_api_key_db,
     list_api_users,
@@ -21,6 +23,7 @@ from auth.api_key_db import (
     set_user_enabled,
 )
 from auth.dependency import require_api_key
+from core.config import set_api_key_enabled
 from core.logging_config import get_logger
 from orchestrator import chat_with_data, index_analysis_results, run_pipeline
 from schemas import (
@@ -31,6 +34,9 @@ from schemas import (
     APIUserToggleRequest,
     AnalysisResponse,
     AnalyzeRequest,
+    AuthStatusResponse,
+    BootstrapRequest,
+    BootstrapResponse,
     ChatRequest,
     ChatResponse,
     JobStatusResponse,
@@ -134,6 +140,13 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     global JOB_QUEUE  # pylint: disable=global-statement
     logger.info("Initializing API key database…")
     init_api_key_db()
+    # If users exist from a prior deployment, re-enable auth automatically
+    # so restarts don't accidentally open the API.
+    if has_any_users():
+        set_api_key_enabled(True)
+        logger.info("API users found — auth enabled.")
+    else:
+        logger.info("No API users — auth disabled (open mode).")
     JOB_QUEUE = asyncio.Queue()
     worker_task = asyncio.create_task(_job_worker())
     yield
@@ -145,7 +158,7 @@ app = FastAPI(title="Data Forecaster API", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8501", "http://frontend:8501"],
+    allow_origins=["http://localhost:5000", "http://frontend:5000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -158,6 +171,84 @@ app.add_middleware(
 def health() -> dict[str, str]:
     """Health check endpoint."""
     return {"status": "ok"}
+
+
+# ── Auth Status & Bootstrap (unauthenticated, guarded) ────────────────────────
+
+
+@app.get("/auth-status", response_model=AuthStatusResponse)
+def auth_status() -> dict[str, Any]:
+    """Return whether API auth is enabled and whether any users exist.
+
+    This endpoint is unauthenticated so the frontend can determine
+    whether to show the "Enable Authentication" workflow.  It reveals
+    only boolean flags — no sensitive data.
+    """
+    return {
+        "auth_enabled": settings.API_KEY_ENABLED,
+        "has_users": has_any_users(),
+    }
+
+
+@app.post("/api-users/bootstrap", response_model=BootstrapResponse)
+def api_users_bootstrap(
+    request: BootstrapRequest,
+    http_request: Request,
+) -> dict[str, Any]:
+    """Create the first API user and enable authentication.
+
+    This is a one-time setup endpoint protected by the ``ADMIN_API_KEY``
+    deployment secret (sent via the ``X-Admin-Key`` header).  It only
+    succeeds when:
+
+    - ``ADMIN_API_KEY`` is set in the backend environment.
+    - The supplied ``X-Admin-Key`` header matches.
+    - No API users exist yet (bootstrap is one-time only).
+
+    On success, creates the user with the admin-supplied username and
+    key, enables ``API_KEY_ENABLED``, and returns the user dict.
+
+    Raises:
+        HTTPException: 403 when the admin key is missing or mismatched.
+        HTTPException: 409 when users already exist (bootstrap expired).
+    """
+    # Verify the deployment-time admin key
+    if not settings.ADMIN_API_KEY:
+        raise HTTPException(
+            status_code=403,
+            detail="ADMIN_API_KEY is not set on the backend. "
+            "Configure it in the backend .env to use bootstrap.",
+        )
+    supplied_key: str | None = http_request.headers.get("X-Admin-Key")
+    if not supplied_key or supplied_key != settings.ADMIN_API_KEY:
+        raise HTTPException(
+            status_code=403,
+            detail="Invalid or missing admin key.",
+        )
+
+    # Bootstrap is one-time only
+    if has_any_users():
+        raise HTTPException(
+            status_code=409,
+            detail="API users already exist — bootstrap is no longer available.",
+        )
+
+    try:
+        user: dict[str, Any] = create_first_user(
+            username=request.username,
+            api_key=request.api_key,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    # Enable auth at runtime
+    set_api_key_enabled(True)
+    logger.info(
+        "API auth enabled by bootstrap. User '%s' created.",
+        request.username,
+    )
+
+    return {"user": user, "auth_enabled": True}
 
 
 @app.post(

@@ -3,16 +3,8 @@ from __future__ import annotations
 from typing import Any
 import pandas as pd
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_ollama import ChatOllama
 
-from core.config import (
-    GEMINI_MODEL,
-    USE_OLLAMA,
-    OLLAMA_BASE_URL,
-    OLLAMA_MODEL,
-    OLLAMA_API_KEY,
-)
+from core.llm_factory import get_llm
 from core.logging_config import get_logger
 from schemas import ValidationResult
 from prompts.data_validation_prompt import DATA_VALIDATION_PROMPT
@@ -76,19 +68,7 @@ def run_validation_agent(
         issues.append("Very short series — forecasting results may be unreliable.")
 
     # ── LLM Setup ────────────────────────────────────────────────────────────
-    if USE_OLLAMA:
-        llm = ChatOllama(
-            model=OLLAMA_MODEL,
-            base_url=OLLAMA_BASE_URL,
-            temperature=0,
-            headers=(
-                {"Authorization": f"Bearer {OLLAMA_API_KEY}"}
-                if OLLAMA_API_KEY
-                else None
-            ),
-        )
-    else:
-        llm = ChatGoogleGenerativeAI(model=GEMINI_MODEL, temperature=0)
+    llm = get_llm(temperature=0)
 
     options = preflight_options or {}
     auto_choices = [k for k, v in options.items() if v == "Let AI Decide"]

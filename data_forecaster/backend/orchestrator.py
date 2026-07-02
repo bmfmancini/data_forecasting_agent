@@ -3,9 +3,6 @@ from __future__ import annotations
 from typing import Any, Callable
 import json
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_ollama import ChatOllama
-import core.config as settings
 import pandas as pd
 import re
 
@@ -14,8 +11,9 @@ from agents.forecasting_agent import run_forecasting_agent
 from agents.model_selection_agent import run_model_selection_agent
 from agents.report_generation_agent import run_report_agent
 from agents.statistical_analysis_agent import run_statistical_agent
-from utils.ingestion_manager import load_file_to_dataframe
+from core.llm_factory import get_llm
 from core.logging_config import get_logger
+from utils.ingestion_manager import load_file_to_dataframe
 from rag.knowledge_base import RAGKnowledgeBase
 from schemas import AnalysisResponse, ModelSelectionResult
 from utils.preflight import prepare_series_frame
@@ -339,25 +337,7 @@ def chat_with_data(
     """
 
     # 3. Setup LLM based on configuration
-    if settings.USE_OLLAMA and not settings.USE_OLLAMA_CLOUD:
-        llm = ChatOllama(
-            model=settings.OLLAMA_MODEL,
-            base_url=settings.OLLAMA_BASE_URL,
-            temperature=0,
-        )
-    elif settings.USE_OLLAMA_CLOUD:
-        llm = ChatOllama(
-            model=settings.OLLAMA_MODEL,
-            base_url=settings.OLLAMA_BASE_URL,
-            temperature=0,
-            api_key=settings.OLLAMA_API_KEY,
-        )
-    else:
-        llm = ChatGoogleGenerativeAI(
-            model=settings.GEMINI_MODEL,
-            google_api_key=settings.GEMINI_API_KEY,
-            temperature=0,
-        )
+    llm = get_llm(temperature=0)
 
     prompt = ORCHESTRATOR_CHAT_PROMPT
 
@@ -434,18 +414,7 @@ def chat_general(query: str, chroma_persist_dir: str) -> dict[str, Any]:
         logger.warning("RAG retrieval failed for general chat: %s", exc)
 
     # 2. Setup LLM based on configuration
-    if settings.USE_OLLAMA:
-        llm = ChatOllama(
-            model=settings.OLLAMA_MODEL,
-            base_url=settings.OLLAMA_BASE_URL,
-            temperature=0,
-        )
-    else:
-        llm = ChatGoogleGenerativeAI(
-            model=settings.GEMINI_MODEL,
-            google_api_key=settings.GEMINI_API_KEY,
-            temperature=0,
-        )
+    llm = get_llm(temperature=0)
 
     # Create a prompt for general questions
     general_prompt = ChatPromptTemplate.from_messages(

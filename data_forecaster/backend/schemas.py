@@ -198,3 +198,32 @@ class APIUserToggleRequest(BaseModel):
     """Request schema for enabling/disabling an API user."""
 
     enabled: bool
+
+
+# ── Bootstrap / Auth Status Schemas ──────────────────────────────────────────
+
+
+class BootstrapRequest(BaseModel):
+    """Request schema for the one-time bootstrap endpoint.
+
+    The admin supplies the desired username and API key for the first
+    API user.  The ``admin_key`` field is sent via the ``X-Admin-Key``
+    header rather than the body.
+    """
+
+    username: str
+    api_key: str
+
+
+class BootstrapResponse(BaseModel):
+    """Response schema after a successful bootstrap — confirms the user."""
+
+    user: APIUserResponse
+    auth_enabled: bool = True
+
+
+class AuthStatusResponse(BaseModel):
+    """Response schema for the auth-status endpoint."""
+
+    auth_enabled: bool
+    has_users: bool

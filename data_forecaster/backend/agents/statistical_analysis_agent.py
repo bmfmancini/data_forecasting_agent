@@ -6,16 +6,8 @@ import re
 import numpy as np
 import pandas as pd
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_ollama import ChatOllama
 
-from core.config import (
-    GEMINI_MODEL,
-    USE_OLLAMA,
-    OLLAMA_BASE_URL,
-    OLLAMA_MODEL,
-    OLLAMA_API_KEY,
-)
+from core.llm_factory import get_llm
 from core.logging_config import get_logger
 from schemas import StatisticalResult
 from utils.statistical import (
@@ -148,19 +140,7 @@ def run_statistical_agent(
     )
 
     # ── LLM Setup ────────────────────────────────────────────────────────────
-    if USE_OLLAMA:
-        llm = ChatOllama(
-            model=OLLAMA_MODEL,
-            base_url=OLLAMA_BASE_URL,
-            temperature=0,
-            headers=(
-                {"Authorization": f"Bearer {OLLAMA_API_KEY}"}
-                if OLLAMA_API_KEY
-                else None
-            ),
-        )
-    else:
-        llm = ChatGoogleGenerativeAI(model=GEMINI_MODEL, temperature=0)
+    llm = get_llm(temperature=0)
 
     prompt = STATISTICAL_ANALYSIS_PROMPT
 

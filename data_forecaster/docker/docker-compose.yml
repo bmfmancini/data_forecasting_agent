@@ -31,11 +31,12 @@ services:
       dockerfile: ../docker/Dockerfile.flask
     ports:
       - "5000:5000"
+    env_file:
+      - ../.env
     environment:
       - FLASK_ENV=production
       - BACKEND_URL=http://backend:8000
       - SECRET_KEY=${FLASK_SECRET_KEY:-change-me-in-production}
-      - FLASK_ENCRYPTION_KEY=${FLASK_ENCRYPTION_KEY:-}
     volumes:
       - flask_instance:/app/instance
     depends_on:

@@ -4,6 +4,37 @@
 {% block content %}
 <div class="row justify-content-center">
     <div class="col-md-7">
+        {% if auth_status and not auth_status.auth_enabled %}
+        <div class="card mb-3 border-warning">
+            <div class="card-body">
+                <h5 class="card-title text-warning">API Authentication: Disabled</h5>
+                <p class="small text-muted mb-2">The backend API is currently open (no auth required). Enable authentication to secure it.</p>
+                <form method="post" action="{{ url_for('admin.api_config_enable_auth') }}">
+                    {{ form.hidden_tag() }}
+                    <div class="mb-2">
+                        <label class="form-label small">Admin Key <span class="text-muted">(ADMIN_API_KEY from backend .env)</span></label>
+                        <input type="password" name="admin_key" class="form-control form-control-sm" placeholder="Deployment admin key" required>
+                    </div>
+                    <div class="row mb-2">
+                        <div class="col">
+                            <label class="form-label small">API Username</label>
+                            <input type="text" name="api_username" class="form-control form-control-sm" placeholder="e.g. frontend" required>
+                        </div>
+                        <div class="col">
+                            <label class="form-label small">API Key</label>
+                            <input type="text" name="api_key" class="form-control form-control-sm" placeholder="Choose a strong key" required>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-warning btn-sm">Create User &amp; Enable Auth</button>
+                </form>
+            </div>
+        </div>
+        {% elif auth_status and auth_status.auth_enabled %}
+        <div class="alert alert-success py-2 px-3 small mb-3">
+            API Authentication: <strong>Enabled</strong> — the backend requires API key credentials.
+        </div>
+        {% endif %}
+
         <div class="card">
             <div class="card-body">
                 <form method="post" novalidate>
