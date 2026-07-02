@@ -155,3 +155,46 @@ class JobStatusResponse(BaseModel):
     step: str
     result: Optional[dict] = None
     error: Optional[str] = None
+
+
+# ── API Key Management Schemas ────────────────────────────────────────────────
+
+
+class APIUserCreateRequest(BaseModel):
+    """Request schema for creating a new API user."""
+
+    username: str
+    description: str = ""
+
+
+class APIUserResponse(BaseModel):
+    """Response schema for a single API user (never includes the key hash)."""
+
+    id: int
+    username: str
+    description: str
+    enabled: bool
+    bootstrap: bool
+    created_at: str
+    last_used: Optional[str] = None
+    last_used_ip: Optional[str] = None
+
+
+class APIUserCreatedResponse(BaseModel):
+    """Response schema after creating a user — includes one-time plaintext key."""
+
+    user: APIUserResponse
+    api_key: str
+
+
+class APIKeyRotatedResponse(BaseModel):
+    """Response schema after rotating a key — includes one-time plaintext key."""
+
+    user_id: int
+    api_key: str
+
+
+class APIUserToggleRequest(BaseModel):
+    """Request schema for enabling/disabling an API user."""
+
+    enabled: bool

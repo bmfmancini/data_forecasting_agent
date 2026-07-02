@@ -26,3 +26,6 @@ ALLOWED_MIME_TYPES: list[str] = [
 ]
 
 CHROMA_PERSIST_DIR: str = os.getenv("CHROMA_PERSIST_DIR", "./chroma_db")
+
+API_KEY_DB_PATH: str = os.getenv("API_KEY_DB_PATH", "./data")
+API_KEY_ENABLED: bool = os.getenv("API_KEY_ENABLED", "true").lower() == "true"

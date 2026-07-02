@@ -5,15 +5,30 @@ from __future__ import annotations
 import asyncio
 import uuid
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator, Dict, Optional, cast, Annotated
+from typing import Any, AsyncIterator, Dict, cast, Annotated
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 import core.config as settings
+from auth.api_key_db import (
+    create_api_user,
+    delete_api_user,
+    has_bootstrap_user,
+    init_db as init_api_key_db,
+    list_api_users,
+    rotate_api_key,
+    set_user_enabled,
+)
+from auth.dependency import require_api_key
 from core.logging_config import get_logger
 from orchestrator import chat_with_data, index_analysis_results, run_pipeline
 from schemas import (
+    APIKeyRotatedResponse,
+    APIUserCreateRequest,
+    APIUserCreatedResponse,
+    APIUserResponse,
+    APIUserToggleRequest,
     AnalysisResponse,
     AnalyzeRequest,
     ChatRequest,
@@ -117,6 +132,8 @@ async def _job_worker() -> None:
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """Manage the lifecycle of the job worker queue."""
     global JOB_QUEUE  # pylint: disable=global-statement
+    logger.info("Initializing API key database…")
+    init_api_key_db()
     JOB_QUEUE = asyncio.Queue()
     worker_task = asyncio.create_task(_job_worker())
     yield
@@ -150,7 +167,10 @@ def health() -> dict[str, str]:
         500: {"description": "File parsing failed"},
     },
 )
-async def upload_file(file: Annotated[UploadFile, File(...)]) -> UploadResponse:
+async def upload_file(
+    file: Annotated[UploadFile, File(...)],
+    _user: Annotated[dict, Depends(require_api_key)],
+) -> UploadResponse:
     """Handle file uploads, validate types, and store in memory."""
     logger.info(
         "POST /upload  filename=%s  content_type=%s", file.filename, file.content_type
@@ -241,7 +261,10 @@ async def upload_file(file: Annotated[UploadFile, File(...)]) -> UploadResponse:
         404: {"description": "Session data not found"},
     },
 )
-async def preflight_check(request: AnalyzeRequest) -> PreflightResponse:
+async def preflight_check(
+    request: AnalyzeRequest,
+    _user: Annotated[dict, Depends(require_api_key)],
+) -> PreflightResponse:
     """Run data quality checks before starting the full analysis pipeline."""
     stored = _file_store.get(request.file_id)
     if not stored:
@@ -270,7 +293,10 @@ async def preflight_check(request: AnalyzeRequest) -> PreflightResponse:
         503: {"description": "Background worker service not ready"},
     },
 )
-def analyze(request: AnalyzeRequest) -> JobSubmitResponse:
+def analyze(
+    request: AnalyzeRequest,
+    _user: Annotated[dict, Depends(require_api_key)],
+) -> JobSubmitResponse:
     """Enqueue a forecasting analysis job."""
     logger.info(
         "POST /analyze  file_id=%s horizon=%d",
@@ -318,7 +344,10 @@ def analyze(request: AnalyzeRequest) -> JobSubmitResponse:
 
 
 @app.get("/jobs/{job_id}", responses={404: {"description": "Job ID not found"}})
-def get_job_status(job_id: str) -> JobStatusResponse:
+def get_job_status(
+    job_id: str,
+    _user: Annotated[dict, Depends(require_api_key)],
+) -> JobStatusResponse:
     """Retrieve the status and results of a specific background job."""
     job = _job_store.get(job_id)
     if job is None:
@@ -340,7 +369,10 @@ def get_job_status(job_id: str) -> JobStatusResponse:
         500: {"description": "Chat agent processing error"},
     },
 )
-async def chat_explorer(request: ChatRequest) -> ChatResponse:
+async def chat_explorer(
+    request: ChatRequest,
+    _user: Annotated[dict, Depends(require_api_key)],
+) -> ChatResponse:
     """Allows users to chat with the agent about the uploaded data and results."""
     # If file_id is provided, use the specific file data
     if request.file_id:
@@ -384,3 +416,96 @@ async def chat_explorer(request: ChatRequest) -> ChatResponse:
             # Provide a basic response
             answer = f"I can help with general time series forecasting questions. Technical details: {str(exc)}"
             return ChatResponse(answer=answer)
+
+
+# ── API User Management Endpoints (admin) ─────────────────────────────────────
+
+
+@app.get("/api-users", response_model=list[APIUserResponse])
+def api_users_list(
+    _user: Annotated[dict, Depends(require_api_key)],
+) -> list[dict[str, Any]]:
+    """List all API key users (never includes key hashes)."""
+    return list_api_users()
+
+
+@app.post("/api-users", response_model=APIUserCreatedResponse, status_code=201)
+def api_users_create(
+    request: APIUserCreateRequest,
+    _user: Annotated[dict, Depends(require_api_key)],
+) -> dict[str, Any]:
+    """Create a new API user and return the plaintext key once."""
+    try:
+        plaintext_key: str = create_api_user(
+            username=request.username,
+            description=request.description,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    users: list[dict[str, Any]] = list_api_users()
+    new_user: dict[str, Any] | None = next(
+        (u for u in users if u["username"] == request.username), None
+    )
+    if new_user is None:
+        raise HTTPException(status_code=500, detail="User created but not found.")
+
+    return {"user": new_user, "api_key": plaintext_key}
+
+
+@app.post(
+    "/api-users/{user_id}/rotate",
+    response_model=APIKeyRotatedResponse,
+)
+def api_users_rotate(
+    user_id: int,
+    _user: Annotated[dict, Depends(require_api_key)],
+) -> dict[str, Any]:
+    """Rotate an API user's key and return the new plaintext key once."""
+    try:
+        plaintext_key: str = rotate_api_key(user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    return {"user_id": user_id, "api_key": plaintext_key}
+
+
+@app.post("/api-users/{user_id}/toggle", response_model=APIUserResponse)
+def api_users_toggle(
+    user_id: int,
+    request: APIUserToggleRequest,
+    _user: Annotated[dict, Depends(require_api_key)],
+) -> dict[str, Any]:
+    """Enable or disable an API user."""
+    try:
+        set_user_enabled(user_id, request.enabled)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    user: dict[str, Any] | None = next(
+        (u for u in list_api_users() if u["id"] == user_id), None
+    )
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found after update.")
+    return user
+
+
+@app.delete("/api-users/{user_id}", status_code=204, response_class=Response)
+def api_users_delete(
+    user_id: int,
+    _user: Annotated[dict, Depends(require_api_key)],
+) -> Response:
+    """Permanently delete an API user."""
+    try:
+        delete_api_user(user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return Response(status_code=204)
+
+
+@app.get("/api-users/bootstrap-status")
+def api_users_bootstrap_status(
+    _user: Annotated[dict, Depends(require_api_key)],
+) -> dict[str, bool]:
+    """Check whether a bootstrap API user still exists."""
+    return {"has_bootstrap": has_bootstrap_user()}

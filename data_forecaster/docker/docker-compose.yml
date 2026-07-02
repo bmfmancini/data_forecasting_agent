@@ -13,6 +13,7 @@ services:
       - logs_data:/app/logs
       - chroma_data:/app/chroma_db
       - ../data:/app/data
+      - api_key_data:/app/data/api_keys
     restart: unless-stopped
     networks:
       - forecasting_network
@@ -57,3 +58,4 @@ volumes:
   logs_data:
   chroma_data:
   flask_instance:
+  api_key_data:

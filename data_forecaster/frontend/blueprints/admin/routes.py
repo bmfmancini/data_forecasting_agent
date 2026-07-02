@@ -24,7 +24,12 @@ from werkzeug.security import generate_password_hash
 from werkzeug.wrappers import Response
 
 from blueprints.admin import admin_bp
-from blueprints.admin.forms import APIConfigForm, UserCreateForm, UserEditForm
+from blueprints.admin.forms import (
+    APIConfigForm,
+    APIKeyCreateForm,
+    UserCreateForm,
+    UserEditForm,
+)
 from db.db import execute_db, query_db
 
 _F = TypeVar("_F", bound=Callable[..., Any])
@@ -70,10 +75,26 @@ def dashboard() -> str:
 
     backend_ok = _check_backend_health()
 
+    api_key_count: int = 0
+    has_bootstrap: bool = False
+    try:
+        from services.api_client import get_api_client
+
+        client = get_api_client()
+        resp = client.list_api_users()
+        if resp.status_code == 200:
+            api_users_list: list[dict[str, Any]] = resp.json()
+            api_key_count = len(api_users_list)
+            has_bootstrap = any(u.get("bootstrap") for u in api_users_list)
+    except Exception:
+        pass
+
     return render_template(
         "admin/dashboard.html",
         user_count=user_count,
         backend_ok=backend_ok,
+        api_key_count=api_key_count,
+        has_bootstrap=has_bootstrap,
     )
 
 
@@ -371,3 +392,193 @@ def _sanitise_connection_error(error_message: str) -> str:
     if "401" in error_message or "Unauthorized" in error_message:
         return "Authentication failed. Check the configured credentials."
     return "Connection failed. Verify the backend URL and network accessibility."
+
+
+# ── API Key User Management ───────────────────────────────────────────────────
+
+
+@admin_bp.route("/api-keys")
+@admin_required
+def api_keys() -> str | Response:
+    """List all API key users from the backend.
+
+    Returns:
+        Rendered HTML for the API key management list page, or a redirect
+        with an error message when the backend is unreachable.
+    """
+    from services.api_client import get_api_client
+
+    client = get_api_client()
+    try:
+        resp = client.list_api_users()
+        if resp.status_code == 200:
+            api_users: list[dict[str, Any]] = resp.json()
+        else:
+            flash(
+                f"Failed to retrieve API users (HTTP {resp.status_code}).",
+                "danger",
+            )
+            api_users = []
+    except Exception as exc:
+        flash(
+            f"Could not connect to backend: {_sanitise_connection_error(str(exc))}",
+            "danger",
+        )
+        api_users = []
+
+    has_bootstrap: bool = any(u.get("bootstrap") for u in api_users)
+    return render_template(
+        "admin/api_keys.html",
+        api_users=api_users,
+        has_bootstrap=has_bootstrap,
+    )
+
+
+@admin_bp.route("/api-keys/new", methods=["GET", "POST"])
+@admin_required
+def api_key_new() -> str | Response:
+    """Render and process the create-API-key-user form.
+
+    On success, displays the plaintext API key once.
+
+    Returns:
+        Rendered form template on GET or validation error; rendered
+        key-display template on successful creation.
+    """
+    form = APIKeyCreateForm()
+
+    if form.validate_on_submit():
+        username: str = str(form.username.data or "").strip()
+        description: str = str(form.description.data or "").strip()
+
+        from services.api_client import get_api_client
+
+        client = get_api_client()
+        try:
+            resp = client.create_api_user(username, description)
+            if resp.status_code == 201:
+                data: dict[str, Any] = resp.json()
+                return render_template(
+                    "admin/api_key_created.html",
+                    username=username,
+                    api_key=data.get("api_key", ""),
+                )
+            if resp.status_code == 409:
+                flash(resp.json().get("detail", "Username already exists."), "danger")
+            else:
+                flash(
+                    f"Failed to create API user (HTTP {resp.status_code}).",
+                    "danger",
+                )
+        except Exception as exc:
+            flash(
+                f"Could not connect to backend: {_sanitise_connection_error(str(exc))}",
+                "danger",
+            )
+
+    return render_template("admin/api_key_create.html", form=form)
+
+
+@admin_bp.route("/api-keys/<int:user_id>/rotate", methods=["POST"])
+@admin_required
+def api_key_rotate(user_id: int) -> Response:
+    """Rotate an API user's key.
+
+    Args:
+        user_id: Primary key of the API user.
+
+    Returns:
+        Redirect to the API keys list with the new key flashed once, or
+        a redirect with an error message on failure.
+    """
+    from services.api_client import get_api_client
+
+    client = get_api_client()
+    try:
+        resp = client.rotate_api_key(user_id)
+        if resp.status_code == 200:
+            data: dict[str, Any] = resp.json()
+            new_key: str = data.get("api_key", "")
+            flash(
+                f"API key rotated successfully. New key (copy now — shown once): "
+                f"{new_key}",
+                "success",
+            )
+        else:
+            flash(
+                f"Failed to rotate key (HTTP {resp.status_code}).",
+                "danger",
+            )
+    except Exception as exc:
+        flash(
+            f"Could not connect to backend: {_sanitise_connection_error(str(exc))}",
+            "danger",
+        )
+
+    return redirect(url_for("admin.api_keys"))
+
+
+@admin_bp.route("/api-keys/<int:user_id>/toggle", methods=["POST"])
+@admin_required
+def api_key_toggle(user_id: int) -> Response:
+    """Enable or disable an API user.
+
+    Args:
+        user_id: Primary key of the API user.
+
+    Returns:
+        Redirect to the API keys list with a flash message.
+    """
+    from services.api_client import get_api_client
+
+    enabled: bool = request.form.get("enabled", "").lower() in ("true", "1", "on")
+    client = get_api_client()
+    try:
+        resp = client.toggle_api_user(user_id, enabled)
+        if resp.status_code == 200:
+            action: str = "enabled" if enabled else "disabled"
+            flash(f"API user {action} successfully.", "success")
+        else:
+            flash(
+                f"Failed to toggle user (HTTP {resp.status_code}).",
+                "danger",
+            )
+    except Exception as exc:
+        flash(
+            f"Could not connect to backend: {_sanitise_connection_error(str(exc))}",
+            "danger",
+        )
+
+    return redirect(url_for("admin.api_keys"))
+
+
+@admin_bp.route("/api-keys/<int:user_id>/delete", methods=["POST"])
+@admin_required
+def api_key_delete(user_id: int) -> Response:
+    """Permanently delete an API user.
+
+    Args:
+        user_id: Primary key of the API user to delete.
+
+    Returns:
+        Redirect to the API keys list with a flash message.
+    """
+    from services.api_client import get_api_client
+
+    client = get_api_client()
+    try:
+        resp = client.delete_api_user(user_id)
+        if resp.status_code == 204:
+            flash("API user deleted successfully.", "success")
+        else:
+            flash(
+                f"Failed to delete user (HTTP {resp.status_code}).",
+                "danger",
+            )
+    except Exception as exc:
+        flash(
+            f"Could not connect to backend: {_sanitise_connection_error(str(exc))}",
+            "danger",
+        )
+
+    return redirect(url_for("admin.api_keys"))
