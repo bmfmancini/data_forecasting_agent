@@ -54,3 +54,26 @@ def set_api_key_enabled(enabled: bool) -> None:
     """
     global API_KEY_ENABLED
     API_KEY_ENABLED = enabled
+
+
+def validate_llm_config() -> None:
+    """Validate that at least one LLM provider is properly configured.
+
+    Called at startup to fail fast when the backend cannot reach any LLM
+    provider.  Raises ``RuntimeError`` with a descriptive message when
+    the configuration is incomplete.
+
+    Raises:
+        RuntimeError: When no LLM provider is available.
+    """
+    if USE_OLLAMA:
+        if USE_OLLAMA_CLOUD and not OLLAMA_API_KEY:
+            raise RuntimeError(
+                "USE_OLLAMA_CLOUD is enabled but OLLAMA_API_KEY is not set. "
+                "Configure it in the backend .env file."
+            )
+    elif not GOOGLE_API_KEY:
+        raise RuntimeError(
+            "No LLM provider configured. Either set USE_OLLAMA=true with a "
+            "running Ollama instance, or set GOOGLE_API_KEY for Gemini."
+        )

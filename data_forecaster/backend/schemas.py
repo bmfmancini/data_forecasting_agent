@@ -57,7 +57,7 @@ class ChatRequest(BaseModel):
     """Request schema for the data explorer chat."""
 
     file_id: Optional[str] = None
-    query: str
+    query: str = Field(..., max_length=2000)
 
 
 class ChatResponse(BaseModel):

@@ -393,7 +393,10 @@ def chat_with_data(
     except Exception as exc:
         logger.exception("LLM Chat failed")
         return {
-            "answer": f"I encountered an error while processing your request: {str(exc)}"
+            "answer": (
+                "I encountered an error while processing your request. "
+                "Please try again later."
+            )
         }
 
 
@@ -444,7 +447,10 @@ def chat_general(query: str, chroma_persist_dir: str) -> dict[str, Any]:
     except Exception as exc:
         logger.exception("LLM General Chat failed")
         return {
-            "answer": f"I encountered an error while processing your request: {str(exc)}"
+            "answer": (
+                "I encountered an error while processing your request. "
+                "Please try again later."
+            )
         }
 
 

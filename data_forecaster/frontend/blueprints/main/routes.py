@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import re
 from functools import wraps
 from typing import Any, Callable, TypeVar
@@ -35,6 +36,8 @@ from blueprints.main import main_bp
 from services.api_client import get_api_client
 
 _F = TypeVar("_F", bound=Callable[..., Any])
+
+logger = logging.getLogger(__name__)
 
 _VISUAL_TAG_RE: re.Pattern[str] = re.compile(r"\[VISUAL:([A-Z_]+)\]")
 
@@ -512,8 +515,9 @@ def api_upload() -> Response:
             session["preview_data"] = _parse_preview(content, filename)
             return jsonify(upload_info)
         return jsonify({"error": resp.json().get("detail", "Upload failed.")}), resp.status_code
-    except Exception as exc:
-        return jsonify({"error": f"Backend connection error: {exc}"}), 503
+    except Exception:
+        logger.exception("Backend connection error during upload")
+        return jsonify({"error": "Backend connection error."}), 503
 
 
 @main_bp.route("/api/columns", methods=["POST"])
@@ -552,8 +556,9 @@ def api_columns() -> Response:
             session["preflight_options"] = _preflight_defaults(preflight)
             return jsonify({"preflight": preflight})
         return jsonify({"error": resp.json().get("detail", "Preflight failed.")}), resp.status_code
-    except Exception as exc:
-        return jsonify({"error": f"Backend connection error: {exc}"}), 503
+    except Exception:
+        logger.exception("Backend connection error during preflight")
+        return jsonify({"error": "Backend connection error."}), 503
 
 
 @main_bp.route("/api/preflight-choices", methods=["POST"])
@@ -631,8 +636,9 @@ def api_analyze() -> Response:
             jsonify({"error": resp.json().get("detail", "Failed to submit job.")}),
             resp.status_code,
         )
-    except Exception as exc:
-        return jsonify({"error": f"Backend connection error: {exc}"}), 503
+    except Exception:
+        logger.exception("Backend connection error during preflight")
+        return jsonify({"error": "Backend connection error."}), 503
 
 
 @main_bp.route("/api/jobs/status")
@@ -751,8 +757,9 @@ def api_chat() -> Response:
             jsonify({"error": resp.json().get("detail", "Chat request failed.")}),
             resp.status_code,
         )
-    except Exception as exc:
-        return jsonify({"error": f"Backend connection error: {exc}"}), 503
+    except Exception:
+        logger.exception("Backend connection error during chat")
+        return jsonify({"error": "Backend connection error."}), 503
 
 
 @main_bp.route("/api/clear", methods=["POST"])

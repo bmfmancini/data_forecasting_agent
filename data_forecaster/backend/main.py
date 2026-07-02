@@ -160,9 +160,32 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5000", "http://frontend:5000"],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=[
+        "X-API-Username",
+        "X-API-Key",
+        "Content-Type",
+        "X-Admin-Key",
+    ],
 )
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next: Any) -> Any:
+    """Add standard security headers to every response.
+
+    Sets ``X-Content-Type-Options``, ``X-Frame-Options``, and
+    ``Strict-Transport-Security`` to mitigate MIME sniffing, clickjacking,
+    and protocol downgrade attacks.
+    """
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Strict-Transport-Security"] = (
+        "max-age=31536000; includeSubDomains"
+    )
+    return response
+
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
@@ -298,6 +321,26 @@ async def upload_file(
             ),
         )
 
+    # ── Validate file signature (magic bytes) ─────────────────────────────────
+    if not contents:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    if ext == "xlsx" and not contents[:4] == b"PK\x03\x04":
+        raise HTTPException(
+            status_code=400,
+            detail="File content does not match XLSX format (expected ZIP signature).",
+        )
+    if ext == "csv":
+        try:
+            contents[:4096].decode("utf-8")
+        except UnicodeDecodeError:
+            try:
+                contents[:4096].decode("latin-1")
+            except UnicodeDecodeError:
+                raise HTTPException(
+                    status_code=400,
+                    detail="File content does not appear to be a valid text/CSV file.",
+                ) from None
+
     # ── Parse ─────────────────────────────────────────────────────────────────
     try:
         df, date_col, value_col, freq = parse_upload(
@@ -308,7 +351,8 @@ async def upload_file(
     except Exception as exc:
         logger.exception("Unexpected error during file parsing")
         raise HTTPException(
-            status_code=500, detail=f"Failed to parse file: {exc}"
+            status_code=500,
+            detail="An internal error occurred while parsing the file.",
         ) from exc
 
     # ── Store & return ────────────────────────────────────────────────────────
@@ -489,7 +533,10 @@ async def chat_explorer(
             return ChatResponse(**response)
         except Exception as exc:
             logger.exception("Chat exploration failed")
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=500,
+                detail="An internal error occurred while processing the chat request.",
+            ) from exc
     else:
         # General chat without specific file - use RAG knowledge base
         try:
@@ -505,7 +552,10 @@ async def chat_explorer(
         except Exception as exc:
             logger.exception("General chat failed")
             # Provide a basic response
-            answer = f"I can help with general time series forecasting questions. Technical details: {str(exc)}"
+            answer = (
+                "I encountered an error while processing your request. "
+                "Please try again later."
+            )
             return ChatResponse(answer=answer)
 
 
