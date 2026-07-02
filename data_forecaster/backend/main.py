@@ -5,17 +5,38 @@ from __future__ import annotations
 import asyncio
 import uuid
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator, Dict, Optional, cast, Annotated
+from typing import Any, AsyncIterator, Dict, cast, Annotated
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 import core.config as settings
+from auth.api_key_db import (
+    create_api_user,
+    create_first_user,
+    delete_api_user,
+    has_any_users,
+    has_bootstrap_user,
+    init_db as init_api_key_db,
+    list_api_users,
+    rotate_api_key,
+    set_user_enabled,
+)
+from auth.dependency import require_api_key
+from core.config import set_api_key_enabled
 from core.logging_config import get_logger
 from orchestrator import chat_with_data, index_analysis_results, run_pipeline
 from schemas import (
+    APIKeyRotatedResponse,
+    APIUserCreateRequest,
+    APIUserCreatedResponse,
+    APIUserResponse,
+    APIUserToggleRequest,
     AnalysisResponse,
     AnalyzeRequest,
+    AuthStatusResponse,
+    BootstrapRequest,
+    BootstrapResponse,
     ChatRequest,
     ChatResponse,
     JobStatusResponse,
@@ -117,6 +138,15 @@ async def _job_worker() -> None:
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """Manage the lifecycle of the job worker queue."""
     global JOB_QUEUE  # pylint: disable=global-statement
+    logger.info("Initializing API key database…")
+    init_api_key_db()
+    # If users exist from a prior deployment, re-enable auth automatically
+    # so restarts don't accidentally open the API.
+    if has_any_users():
+        set_api_key_enabled(True)
+        logger.info("API users found — auth enabled.")
+    else:
+        logger.info("No API users — auth disabled (open mode).")
     JOB_QUEUE = asyncio.Queue()
     worker_task = asyncio.create_task(_job_worker())
     yield
@@ -128,7 +158,7 @@ app = FastAPI(title="Data Forecaster API", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8501", "http://frontend:8501"],
+    allow_origins=["http://localhost:5000", "http://frontend:5000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -143,6 +173,84 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+# ── Auth Status & Bootstrap (unauthenticated, guarded) ────────────────────────
+
+
+@app.get("/auth-status", response_model=AuthStatusResponse)
+def auth_status() -> dict[str, Any]:
+    """Return whether API auth is enabled and whether any users exist.
+
+    This endpoint is unauthenticated so the frontend can determine
+    whether to show the "Enable Authentication" workflow.  It reveals
+    only boolean flags — no sensitive data.
+    """
+    return {
+        "auth_enabled": settings.API_KEY_ENABLED,
+        "has_users": has_any_users(),
+    }
+
+
+@app.post("/api-users/bootstrap", response_model=BootstrapResponse)
+def api_users_bootstrap(
+    request: BootstrapRequest,
+    http_request: Request,
+) -> dict[str, Any]:
+    """Create the first API user and enable authentication.
+
+    This is a one-time setup endpoint protected by the ``ADMIN_API_KEY``
+    deployment secret (sent via the ``X-Admin-Key`` header).  It only
+    succeeds when:
+
+    - ``ADMIN_API_KEY`` is set in the backend environment.
+    - The supplied ``X-Admin-Key`` header matches.
+    - No API users exist yet (bootstrap is one-time only).
+
+    On success, creates the user with the admin-supplied username and
+    key, enables ``API_KEY_ENABLED``, and returns the user dict.
+
+    Raises:
+        HTTPException: 403 when the admin key is missing or mismatched.
+        HTTPException: 409 when users already exist (bootstrap expired).
+    """
+    # Verify the deployment-time admin key
+    if not settings.ADMIN_API_KEY:
+        raise HTTPException(
+            status_code=403,
+            detail="ADMIN_API_KEY is not set on the backend. "
+            "Configure it in the backend .env to use bootstrap.",
+        )
+    supplied_key: str | None = http_request.headers.get("X-Admin-Key")
+    if not supplied_key or supplied_key != settings.ADMIN_API_KEY:
+        raise HTTPException(
+            status_code=403,
+            detail="Invalid or missing admin key.",
+        )
+
+    # Bootstrap is one-time only
+    if has_any_users():
+        raise HTTPException(
+            status_code=409,
+            detail="API users already exist — bootstrap is no longer available.",
+        )
+
+    try:
+        user: dict[str, Any] = create_first_user(
+            username=request.username,
+            api_key=request.api_key,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    # Enable auth at runtime
+    set_api_key_enabled(True)
+    logger.info(
+        "API auth enabled by bootstrap. User '%s' created.",
+        request.username,
+    )
+
+    return {"user": user, "auth_enabled": True}
+
+
 @app.post(
     "/upload",
     responses={
@@ -150,7 +258,10 @@ def health() -> dict[str, str]:
         500: {"description": "File parsing failed"},
     },
 )
-async def upload_file(file: Annotated[UploadFile, File(...)]) -> UploadResponse:
+async def upload_file(
+    file: Annotated[UploadFile, File(...)],
+    _user: Annotated[dict, Depends(require_api_key)],
+) -> UploadResponse:
     """Handle file uploads, validate types, and store in memory."""
     logger.info(
         "POST /upload  filename=%s  content_type=%s", file.filename, file.content_type
@@ -241,7 +352,10 @@ async def upload_file(file: Annotated[UploadFile, File(...)]) -> UploadResponse:
         404: {"description": "Session data not found"},
     },
 )
-async def preflight_check(request: AnalyzeRequest) -> PreflightResponse:
+async def preflight_check(
+    request: AnalyzeRequest,
+    _user: Annotated[dict, Depends(require_api_key)],
+) -> PreflightResponse:
     """Run data quality checks before starting the full analysis pipeline."""
     stored = _file_store.get(request.file_id)
     if not stored:
@@ -270,7 +384,10 @@ async def preflight_check(request: AnalyzeRequest) -> PreflightResponse:
         503: {"description": "Background worker service not ready"},
     },
 )
-def analyze(request: AnalyzeRequest) -> JobSubmitResponse:
+def analyze(
+    request: AnalyzeRequest,
+    _user: Annotated[dict, Depends(require_api_key)],
+) -> JobSubmitResponse:
     """Enqueue a forecasting analysis job."""
     logger.info(
         "POST /analyze  file_id=%s horizon=%d",
@@ -318,7 +435,10 @@ def analyze(request: AnalyzeRequest) -> JobSubmitResponse:
 
 
 @app.get("/jobs/{job_id}", responses={404: {"description": "Job ID not found"}})
-def get_job_status(job_id: str) -> JobStatusResponse:
+def get_job_status(
+    job_id: str,
+    _user: Annotated[dict, Depends(require_api_key)],
+) -> JobStatusResponse:
     """Retrieve the status and results of a specific background job."""
     job = _job_store.get(job_id)
     if job is None:
@@ -340,7 +460,10 @@ def get_job_status(job_id: str) -> JobStatusResponse:
         500: {"description": "Chat agent processing error"},
     },
 )
-async def chat_explorer(request: ChatRequest) -> ChatResponse:
+async def chat_explorer(
+    request: ChatRequest,
+    _user: Annotated[dict, Depends(require_api_key)],
+) -> ChatResponse:
     """Allows users to chat with the agent about the uploaded data and results."""
     # If file_id is provided, use the specific file data
     if request.file_id:
@@ -384,3 +507,96 @@ async def chat_explorer(request: ChatRequest) -> ChatResponse:
             # Provide a basic response
             answer = f"I can help with general time series forecasting questions. Technical details: {str(exc)}"
             return ChatResponse(answer=answer)
+
+
+# ── API User Management Endpoints (admin) ─────────────────────────────────────
+
+
+@app.get("/api-users", response_model=list[APIUserResponse])
+def api_users_list(
+    _user: Annotated[dict, Depends(require_api_key)],
+) -> list[dict[str, Any]]:
+    """List all API key users (never includes key hashes)."""
+    return list_api_users()
+
+
+@app.post("/api-users", response_model=APIUserCreatedResponse, status_code=201)
+def api_users_create(
+    request: APIUserCreateRequest,
+    _user: Annotated[dict, Depends(require_api_key)],
+) -> dict[str, Any]:
+    """Create a new API user and return the plaintext key once."""
+    try:
+        plaintext_key: str = create_api_user(
+            username=request.username,
+            description=request.description,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    users: list[dict[str, Any]] = list_api_users()
+    new_user: dict[str, Any] | None = next(
+        (u for u in users if u["username"] == request.username), None
+    )
+    if new_user is None:
+        raise HTTPException(status_code=500, detail="User created but not found.")
+
+    return {"user": new_user, "api_key": plaintext_key}
+
+
+@app.post(
+    "/api-users/{user_id}/rotate",
+    response_model=APIKeyRotatedResponse,
+)
+def api_users_rotate(
+    user_id: int,
+    _user: Annotated[dict, Depends(require_api_key)],
+) -> dict[str, Any]:
+    """Rotate an API user's key and return the new plaintext key once."""
+    try:
+        plaintext_key: str = rotate_api_key(user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    return {"user_id": user_id, "api_key": plaintext_key}
+
+
+@app.post("/api-users/{user_id}/toggle", response_model=APIUserResponse)
+def api_users_toggle(
+    user_id: int,
+    request: APIUserToggleRequest,
+    _user: Annotated[dict, Depends(require_api_key)],
+) -> dict[str, Any]:
+    """Enable or disable an API user."""
+    try:
+        set_user_enabled(user_id, request.enabled)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    user: dict[str, Any] | None = next(
+        (u for u in list_api_users() if u["id"] == user_id), None
+    )
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found after update.")
+    return user
+
+
+@app.delete("/api-users/{user_id}", status_code=204, response_class=Response)
+def api_users_delete(
+    user_id: int,
+    _user: Annotated[dict, Depends(require_api_key)],
+) -> Response:
+    """Permanently delete an API user."""
+    try:
+        delete_api_user(user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return Response(status_code=204)
+
+
+@app.get("/api-users/bootstrap-status")
+def api_users_bootstrap_status(
+    _user: Annotated[dict, Depends(require_api_key)],
+) -> dict[str, bool]:
+    """Check whether a bootstrap API user still exists."""
+    return {"has_bootstrap": has_bootstrap_user()}

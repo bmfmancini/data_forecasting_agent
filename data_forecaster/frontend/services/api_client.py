@@ -28,18 +28,49 @@ class BackendAPIClient:
     """HTTP client for the FastAPI forecasting backend.
 
     Args:
-        base_url: Root URL of the backend service, e.g. ``http://localhost:8000``.
-        auth:     Optional ``(username, password)`` tuple for HTTP Basic Auth.
-                  Pass ``None`` when the backend does not require authentication.
+        base_url:      Root URL of the backend service, e.g. ``http://localhost:8000``.
+        api_username:  Optional username for the ``X-API-Username`` header.
+        api_key:       Optional API key for the ``X-API-Key`` header.
+                       Pass ``None`` when the backend does not require authentication.
     """
 
     def __init__(
         self,
         base_url: str,
-        auth: tuple[str, str] | None = None,
+        api_username: str | None = None,
+        api_key: str | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
-        self._auth = auth
+        self._api_username = api_username
+        self._api_key = api_key
+
+    def _auth_headers(self) -> dict[str, str]:
+        """Return authentication headers when credentials are configured.
+
+        Returns:
+            A dict with ``X-API-Username`` and ``X-API-Key`` keys, or an
+            empty dict when no credentials are set.
+        """
+        if self._api_username and self._api_key:
+            return {
+                "X-API-Username": self._api_username,
+                "X-API-Key": self._api_key,
+            }
+        return {}
+
+    def _headers(self, extra: dict[str, str] | None = None) -> dict[str, str]:
+        """Merge auth headers with any extra headers.
+
+        Args:
+            extra: Optional additional headers to merge.
+
+        Returns:
+            Combined headers dict.
+        """
+        headers: dict[str, str] = self._auth_headers()
+        if extra:
+            headers.update(extra)
+        return headers
 
     def upload_file(
         self,
@@ -60,7 +91,7 @@ class BackendAPIClient:
         return requests.post(
             f"{self._base_url}/upload",
             files={"file": (filename, content, content_type)},
-            auth=self._auth,
+            headers=self._headers(),
             timeout=UPLOAD_TIMEOUT,
         )
 
@@ -90,7 +121,7 @@ class BackendAPIClient:
                 "date_col": date_col,
                 "value_col": value_col,
             },
-            auth=self._auth,
+            headers=self._headers(),
             timeout=PREFLIGHT_TIMEOUT,
         )
 
@@ -109,7 +140,7 @@ class BackendAPIClient:
         return requests.post(
             f"{self._base_url}/analyze",
             json=payload,
-            auth=self._auth,
+            headers=self._headers(),
             timeout=ANALYSIS_TIMEOUT,
         )
 
@@ -124,7 +155,7 @@ class BackendAPIClient:
         """
         return requests.get(
             f"{self._base_url}/jobs/{job_id}",
-            auth=self._auth,
+            headers=self._headers(),
             timeout=JOB_STATUS_TIMEOUT,
         )
 
@@ -149,7 +180,7 @@ class BackendAPIClient:
         return requests.post(
             f"{self._base_url}/chat",
             json=payload,
-            auth=self._auth,
+            headers=self._headers(),
             timeout=CHAT_TIMEOUT,
         )
 
@@ -161,8 +192,137 @@ class BackendAPIClient:
         """
         return requests.get(
             f"{self._base_url}/health",
-            auth=self._auth,
+            headers=self._headers(),
             timeout=5,
+        )
+
+    # ── API User Management ───────────────────────────────────────────────
+
+    def list_api_users(self) -> requests.Response:
+        """List all API key users from the backend.
+
+        Returns:
+            The :class:`requests.Response` from ``GET /api-users``.
+        """
+        return requests.get(
+            f"{self._base_url}/api-users",
+            headers=self._headers(),
+            timeout=JOB_STATUS_TIMEOUT,
+        )
+
+    def create_api_user(self, username: str, description: str) -> requests.Response:
+        """Create a new API user on the backend.
+
+        Args:
+            username:    Unique username for the new API user.
+            description: Human-readable description.
+
+        Returns:
+            The :class:`requests.Response` from ``POST /api-users``.
+        """
+        return requests.post(
+            f"{self._base_url}/api-users",
+            json={"username": username, "description": description},
+            headers=self._headers(),
+            timeout=ANALYSIS_TIMEOUT,
+        )
+
+    def rotate_api_key(self, user_id: int) -> requests.Response:
+        """Rotate an API user's key on the backend.
+
+        Args:
+            user_id: Primary key of the API user.
+
+        Returns:
+            The :class:`requests.Response` from ``POST /api-users/{id}/rotate``.
+        """
+        return requests.post(
+            f"{self._base_url}/api-users/{user_id}/rotate",
+            headers=self._headers(),
+            timeout=ANALYSIS_TIMEOUT,
+        )
+
+    def toggle_api_user(self, user_id: int, enabled: bool) -> requests.Response:
+        """Enable or disable an API user on the backend.
+
+        Args:
+            user_id: Primary key of the API user.
+            enabled: ``True`` to enable, ``False`` to disable.
+
+        Returns:
+            The :class:`requests.Response` from ``POST /api-users/{id}/toggle``.
+        """
+        return requests.post(
+            f"{self._base_url}/api-users/{user_id}/toggle",
+            json={"enabled": enabled},
+            headers=self._headers(),
+            timeout=ANALYSIS_TIMEOUT,
+        )
+
+    def delete_api_user(self, user_id: int) -> requests.Response:
+        """Delete an API user on the backend.
+
+        Args:
+            user_id: Primary key of the API user to delete.
+
+        Returns:
+            The :class:`requests.Response` from ``DELETE /api-users/{id}``.
+        """
+        return requests.delete(
+            f"{self._base_url}/api-users/{user_id}",
+            headers=self._headers(),
+            timeout=ANALYSIS_TIMEOUT,
+        )
+
+    def bootstrap_status(self) -> requests.Response:
+        """Check whether a bootstrap API user still exists.
+
+        Returns:
+            The :class:`requests.Response` from
+            ``GET /api-users/bootstrap-status``.
+        """
+        return requests.get(
+            f"{self._base_url}/api-users/bootstrap-status",
+            headers=self._headers(),
+            timeout=JOB_STATUS_TIMEOUT,
+        )
+
+    def get_auth_status(self) -> requests.Response:
+        """Check whether API auth is enabled on the backend.
+
+        Calls the unauthenticated ``GET /auth-status`` endpoint.
+
+        Returns:
+            The :class:`requests.Response` with ``auth_enabled`` and
+            ``has_users`` boolean fields in the JSON body.
+        """
+        return requests.get(
+            f"{self._base_url}/auth-status",
+            timeout=JOB_STATUS_TIMEOUT,
+        )
+
+    def bootstrap_api_user(
+        self, username: str, api_key: str, admin_key: str
+    ) -> requests.Response:
+        """Create the first API user and enable auth on the backend.
+
+        Calls the ``POST /api-users/bootstrap`` endpoint, protected by
+        the deployment-time ``ADMIN_API_KEY`` sent via the ``X-Admin-Key``
+        header.  No API auth headers are required (auth is still off).
+
+        Args:
+            username:   Desired username for the first API user.
+            api_key:    Desired plaintext API key.
+            admin_key:  The ``ADMIN_API_KEY`` deployment secret.
+
+        Returns:
+            The :class:`requests.Response` from the bootstrap endpoint.
+        """
+        return requests.post(
+            f"{self._base_url}/api-users/bootstrap",
+            json={"username": username, "api_key": api_key},
+            headers={"X-Admin-Key": admin_key},
+            timeout=ANALYSIS_TIMEOUT,
         )
 
 
@@ -180,7 +340,8 @@ def get_api_client() -> BackendAPIClient:
     from db.db import query_db
 
     base_url: str = current_app.config.get("BACKEND_URL", "http://localhost:8000")
-    auth: tuple[str, str] | None = None
+    api_username: str | None = None
+    api_key: str | None = None
 
     row = query_db(
         """
@@ -205,8 +366,14 @@ def get_api_client() -> BackendAPIClient:
             try:
                 from db.crypto import decrypt
 
-                auth = (decrypt(str(enc_user)), decrypt(str(enc_pass)))
+                api_username = decrypt(str(enc_user))
+                api_key = decrypt(str(enc_pass))
             except Exception:
-                auth = None
+                api_username = None
+                api_key = None
 
-    return BackendAPIClient(base_url=base_url, auth=auth)
+    return BackendAPIClient(
+        base_url=base_url,
+        api_username=api_username,
+        api_key=api_key,
+    )

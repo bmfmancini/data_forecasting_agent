@@ -4,16 +4,8 @@ from typing import Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_ollama import ChatOllama
 
-from core.config import (
-    GEMINI_MODEL,
-    USE_OLLAMA,
-    OLLAMA_BASE_URL,
-    OLLAMA_MODEL,
-    OLLAMA_API_KEY,
-)
+from core.llm_factory import get_llm
 from core.logging_config import get_logger
 from forecasting.arima_model import fit_arima
 from forecasting.holt_winters import fit_holt_winters
@@ -59,19 +51,7 @@ def run_forecasting_agent(
         comparison_summary += f"- {name}: RMSE={res['rmse']:.4f}, MAE={res['mae']:.4f}, MAPE={res['mape']:.2f}%\n"
 
     # ── LLM Setup ────────────────────────────────────────────────────────────
-    if USE_OLLAMA:
-        llm = ChatOllama(
-            model=OLLAMA_MODEL,
-            base_url=OLLAMA_BASE_URL,
-            temperature=0,
-            headers=(
-                {"Authorization": f"Bearer {OLLAMA_API_KEY}"}
-                if OLLAMA_API_KEY
-                else None
-            ),
-        )
-    else:
-        llm = ChatGoogleGenerativeAI(model=GEMINI_MODEL, temperature=0)
+    llm = get_llm(temperature=0)
 
     prompt = FORECASTING_PROMPT
 

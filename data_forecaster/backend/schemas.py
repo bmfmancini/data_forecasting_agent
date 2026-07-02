@@ -155,3 +155,75 @@ class JobStatusResponse(BaseModel):
     step: str
     result: Optional[dict] = None
     error: Optional[str] = None
+
+
+# ── API Key Management Schemas ────────────────────────────────────────────────
+
+
+class APIUserCreateRequest(BaseModel):
+    """Request schema for creating a new API user."""
+
+    username: str
+    description: str = ""
+
+
+class APIUserResponse(BaseModel):
+    """Response schema for a single API user (never includes the key hash)."""
+
+    id: int
+    username: str
+    description: str
+    enabled: bool
+    bootstrap: bool
+    created_at: str
+    last_used: Optional[str] = None
+    last_used_ip: Optional[str] = None
+
+
+class APIUserCreatedResponse(BaseModel):
+    """Response schema after creating a user — includes one-time plaintext key."""
+
+    user: APIUserResponse
+    api_key: str
+
+
+class APIKeyRotatedResponse(BaseModel):
+    """Response schema after rotating a key — includes one-time plaintext key."""
+
+    user_id: int
+    api_key: str
+
+
+class APIUserToggleRequest(BaseModel):
+    """Request schema for enabling/disabling an API user."""
+
+    enabled: bool
+
+
+# ── Bootstrap / Auth Status Schemas ──────────────────────────────────────────
+
+
+class BootstrapRequest(BaseModel):
+    """Request schema for the one-time bootstrap endpoint.
+
+    The admin supplies the desired username and API key for the first
+    API user.  The ``admin_key`` field is sent via the ``X-Admin-Key``
+    header rather than the body.
+    """
+
+    username: str
+    api_key: str
+
+
+class BootstrapResponse(BaseModel):
+    """Response schema after a successful bootstrap — confirms the user."""
+
+    user: APIUserResponse
+    auth_enabled: bool = True
+
+
+class AuthStatusResponse(BaseModel):
+    """Response schema for the auth-status endpoint."""
+
+    auth_enabled: bool
+    has_users: bool

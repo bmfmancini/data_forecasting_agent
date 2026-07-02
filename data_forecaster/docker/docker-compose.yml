@@ -13,6 +13,7 @@ services:
       - logs_data:/app/logs
       - chroma_data:/app/chroma_db
       - ../data:/app/data
+      - api_key_data:/app/data/api_keys
     restart: unless-stopped
     networks:
       - forecasting_network
@@ -30,11 +31,12 @@ services:
       dockerfile: ../docker/Dockerfile.flask
     ports:
       - "5000:5000"
+    env_file:
+      - ../.env
     environment:
       - FLASK_ENV=production
       - BACKEND_URL=http://backend:8000
       - SECRET_KEY=${FLASK_SECRET_KEY:-change-me-in-production}
-      - FLASK_ENCRYPTION_KEY=${FLASK_ENCRYPTION_KEY:-}
     volumes:
       - flask_instance:/app/instance
     depends_on:
@@ -57,3 +59,4 @@ volumes:
   logs_data:
   chroma_data:
   flask_instance:
+  api_key_data:

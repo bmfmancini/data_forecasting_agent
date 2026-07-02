@@ -96,7 +96,7 @@ class APIConfigForm(FlaskForm):  # type: ignore[misc]
         validators=[Optional(), Length(max=128)],
     )
     api_password = PasswordField(
-        "API Password (optional)",
+        "API Key (optional)",
         validators=[Optional()],
     )
     timeout = IntegerField(
@@ -105,3 +105,23 @@ class APIConfigForm(FlaskForm):  # type: ignore[misc]
         validators=[DataRequired(), NumberRange(min=1, max=300)],
     )
     submit = SubmitField("Save Configuration")
+
+
+class APIKeyCreateForm(FlaskForm):  # type: ignore[misc]
+    """Form for creating a new API key user.
+
+    Fields:
+        username:    Login name for the new API user.
+        description: Human-readable description / purpose.
+        submit:      Submission button.
+    """
+
+    username = StringField(
+        "Username",
+        validators=[DataRequired(), Length(min=1, max=64)],
+    )
+    description = StringField(
+        "Description (optional)",
+        validators=[Optional(), Length(max=256)],
+    )
+    submit = SubmitField("Create API User")

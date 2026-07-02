@@ -113,6 +113,7 @@ The system consists of five specialized agents working in sequence:
 data_forecaster/
 ├── backend/                 # FastAPI backend service
 │   ├── agents/             # Specialized AI agents
+│   ├── auth/               # API key authentication (Argon2id)
 │   ├── core/               # Configuration and logging
 │   ├── forecasting/        # Statistical forecasting models
 │   ├── prompts/            # LLM prompts for agents
@@ -178,12 +179,26 @@ data_forecaster/
 
 ### Backend (http://localhost:8000)
 
+**Public endpoints (no authentication):**
+
 - `GET /health` - Health check
+
+**Protected endpoints (require `X-API-Username` and `X-API-Key` headers):**
+
 - `POST /upload` - Upload time series data
 - `POST /preflight` - Run data quality checks
 - `POST /analyze` - Start forecasting analysis
 - `GET /jobs/{job_id}` - Get job status and results
 - `POST /chat` - Chat with the analysis results
+
+**API key management endpoints (require authentication):**
+
+- `GET /api-users` - List all API key users
+- `POST /api-users` - Create a new API key user
+- `POST /api-users/{id}/rotate` - Rotate an API user's key
+- `POST /api-users/{id}/toggle` - Enable or disable an API user
+- `DELETE /api-users/{id}` - Delete an API user
+- `GET /api-users/bootstrap-status` - Check if a bootstrap user exists
 
 ## Configuration
 
@@ -204,6 +219,10 @@ ALLOWED_EXTENSIONS=csv,xlsx
 # Storage
 CHROMA_PERSIST_DIR=./chroma_db
 
+# API Key Authentication (backend)
+API_KEY_ENABLED=true                      # set to false to disable auth (dev only)
+API_KEY_DB_PATH=./data                     # directory for the API key SQLite DB
+
 # Flask Frontend
 FLASK_ENV=production
 SECRET_KEY=your-secret-key
@@ -213,6 +232,99 @@ FLASK_ENCRYPTION_KEY=your-encryption-key   # used to encrypt stored API credenti
 ### First-run setup
 
 On first startup the Flask app auto-seeds the SQLite database (`instance/forecaster.db`) with two default roles (`admin`, `user`).  Create users and configure the backend URL via the **Admin** panel at `/admin/` (accessible to accounts with the `admin` role).
+
+## API Key Authentication
+
+The FastAPI backend requires API key authentication for all protected endpoints.  API keys are hashed with **Argon2id** (via `argon2-cffi`) and stored in a dedicated SQLite database (`api_keys.db`) inside the backend container.  Plaintext keys are never stored — they are displayed only once at creation or rotation time.
+
+### How It Works
+
+1. **Request headers**: Clients send `X-API-Username` and `X-API-Key` headers with every request to a protected endpoint.
+2. **Validation**: The backend looks up the username in SQLite, checks the account is enabled, and verifies the supplied key against the stored Argon2id hash.
+3. **Audit trail**: On successful authentication, the backend updates the `last_used` and `last_used_ip` columns.
+4. **Failure handling**: Any authentication failure returns a generic `401 Unauthorized` — the error never reveals whether the username or the key was invalid.
+
+### Bootstrap API User
+
+On first startup (when the API key database is empty), the backend automatically creates a bootstrap API user:
+
+- **Username**: `frontend`
+- **API Key**: A cryptographically secure random string generated with `secrets.token_urlsafe(32)`
+- **Bootstrap flag**: `true` — the admin UI displays a warning until this account is replaced or removed
+
+The plaintext key is printed **once** to the backend container's stdout in a banner:
+
+```
+========================================
+
+Initial API Credentials Created
+
+Username:
+frontend
+
+API Key:
+xxxxxxxxxxxxxxxxxxxxxxxx
+
+This key will only be displayed once.
+
+Log into the Admin panel and rotate
+or replace this credential.
+
+========================================
+```
+
+Retrieve it with:
+
+```bash
+docker logs <backend-container-name> 2>&1 | grep -A 20 "Initial API Credentials"
+```
+
+On subsequent restarts, the bootstrap check finds existing users and does nothing — credentials are never regenerated.  The API key database is persisted via a Docker volume (`api_key_data`) so it survives container restarts.
+
+### Initial Deployment Steps
+
+1. **Start the stack**: `docker-compose up --build`
+2. **Read the bootstrap credentials** from the backend logs (see above).
+3. **Log into the Flask admin panel** at `http://localhost:5000` (default: `admin` / `admin`).
+4. **Go to Admin → API Config** and enter:
+   - **Backend API Base URL**: `http://backend:8000`
+   - **API Username**: `frontend`
+   - **API Key**: *(the bootstrap key from the logs)*
+   - Click **Save Configuration**.
+5. **Go to Admin → API Keys** — you will see the `frontend` bootstrap user with a ⚠ badge.
+6. **Create a replacement API user** — click "+ Create API User", enter a username and description.  The plaintext key is displayed once — **copy it immediately**.
+7. **Update the API Config** with the new username and key.
+8. **Delete the bootstrap account** — return to API Keys and delete the `frontend` user.  The ⚠ warning disappears from the dashboard.
+
+### Admin API Key Management
+
+The Flask admin panel (`/admin/api-keys`) provides full CRUD for API key users:
+
+| Action | Description |
+|---|---|
+| **List** | Shows username, description, enabled status, bootstrap badge, created date, last used timestamp, and last used IP.  Never displays the key or hash. |
+| **Create** | Generates a new API key, hashes it with Argon2id, stores the hash, and displays the plaintext key once. |
+| **Rotate** | Generates a new key, replaces the stored hash, and displays the new plaintext key once.  The old key is invalidated immediately. |
+| **Enable / Disable** | Toggles the `enabled` flag.  Disabled users cannot authenticate. |
+| **Delete** | Permanently removes the API user. |
+
+### How the Frontend Authenticates
+
+The Flask frontend stores the API username and key (Fernet-encrypted) in its own `api_credentials` SQLite table.  On every request to the backend, the `BackendAPIClient` decrypts the stored credentials and sends them as `X-API-Username` and `X-API-Key` headers.  The plaintext key never exists in the frontend's memory beyond the duration of a single request.
+
+### Rotating Compromised Credentials
+
+If an API key is compromised:
+
+1. Go to **Admin → API Keys**.
+2. Click 🔄 (rotate) on the affected user.
+3. Copy the new plaintext key (displayed once).
+4. Go to **Admin → API Config** and update the stored credentials with the new key.
+5. The old key is immediately invalid — any client still using it will receive `401 Unauthorized`.
+
+### Disabling Authentication (Development Only)
+
+Set `API_KEY_ENABLED=false` in the backend environment to make the `require_api_key` dependency a no-op.  This is intended for local development only — **never disable authentication in production**.
 
 ## Testing
 

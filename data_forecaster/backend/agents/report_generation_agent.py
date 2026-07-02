@@ -1,19 +1,9 @@
 from __future__ import annotations
 
 from typing import Any
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_ollama import ChatOllama
 
-from core.config import (
-    GEMINI_MAX_TOKENS,
-    GEMINI_MODEL,
-    GEMINI_TEMPERATURE,
-    USE_OLLAMA,
-    OLLAMA_BASE_URL,
-    OLLAMA_MODEL,
-    OLLAMA_API_KEY,
-)
+from core.config import GEMINI_TEMPERATURE
+from core.llm_factory import get_llm
 from core.logging_config import get_logger
 from rag.knowledge_base import RAGKnowledgeBase
 from schemas import (
@@ -200,23 +190,7 @@ Visual Strategy Recommendations: {visual_strategy}
     except Exception as exc:
         logger.warning("RAG retrieval failed: %s", exc)
 
-    if USE_OLLAMA:
-        llm = ChatOllama(
-            model=OLLAMA_MODEL,
-            base_url=OLLAMA_BASE_URL,
-            temperature=GEMINI_TEMPERATURE,
-            headers=(
-                {"Authorization": f"Bearer {OLLAMA_API_KEY}"}
-                if OLLAMA_API_KEY
-                else None
-            ),
-        )
-    else:
-        llm = ChatGoogleGenerativeAI(
-            model=GEMINI_MODEL,
-            temperature=GEMINI_TEMPERATURE,
-            max_output_tokens=GEMINI_MAX_TOKENS,
-        )
+    llm = get_llm(temperature=GEMINI_TEMPERATURE)
 
     reasoning_steps: list[dict[str, Any]] = [
         {"thought": "Pre-retrieving methodology from RAG...", "observation": "Success"}

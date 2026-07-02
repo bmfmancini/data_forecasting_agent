@@ -10,7 +10,13 @@ GEMINI_MAX_TOKENS: int = int(os.getenv("GEMINI_MAX_TOKENS", "8192"))
 
 USE_OLLAMA: bool = os.getenv("USE_OLLAMA", "False").lower() == "true"
 USE_OLLAMA_CLOUD: bool = os.getenv("USE_OLLAMA_CLOUD", "False").lower() == "true"
-OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://host.docker.internal:11434")
+# Single base URL for both local and cloud Ollama.  When USE_OLLAMA_CLOUD
+# is true, set this to https://ollama.com (or your cloud endpoint).  When
+# false, set it to your local Ollama daemon URL.
+OLLAMA_BASE_URL: str = os.getenv(
+    "OLLAMA_BASE_URL",
+    "https://ollama.com" if USE_OLLAMA_CLOUD else "http://host.docker.internal:11434",
+)
 OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "llama3")
 OLLAMA_API_KEY: str | None = os.getenv("OLLAMA_API_KEY")
 
@@ -26,3 +32,25 @@ ALLOWED_MIME_TYPES: list[str] = [
 ]
 
 CHROMA_PERSIST_DIR: str = os.getenv("CHROMA_PERSIST_DIR", "./chroma_db")
+
+API_KEY_DB_PATH: str = os.getenv("API_KEY_DB_PATH", "./data")
+API_KEY_ENABLED: bool = os.getenv("API_KEY_ENABLED", "false").lower() == "true"
+
+# Deployment-time secret used to protect the one-time bootstrap endpoint
+# (POST /api-users/bootstrap).  Set this to a strong random value in .env
+# and share it with the admin who will enable API authentication.
+ADMIN_API_KEY: str | None = os.getenv("ADMIN_API_KEY")
+
+
+def set_api_key_enabled(enabled: bool) -> None:
+    """Update ``API_KEY_ENABLED`` at runtime (without restarting).
+
+    Used by the bootstrap endpoint to flip auth on after the first API
+    user is created, and by the startup lifespan to re-enable auth when
+    the database already contains users from a prior deployment.
+
+    Args:
+        enabled: ``True`` to require API key auth, ``False`` for open mode.
+    """
+    global API_KEY_ENABLED
+    API_KEY_ENABLED = enabled
