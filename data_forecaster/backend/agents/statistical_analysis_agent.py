@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 import re
 
 import numpy as np
@@ -85,7 +85,7 @@ def run_statistical_agent(
 
     # Infer seasonal period: prefer explicit arg, validate against periodogram
     dom_period = periodogram["dominant_period"]
-    inferred_period: Optional[int] = seasonal_period
+    inferred_period: int | None = seasonal_period
     if dom_period < 100:
         pg_period = int(round(dom_period))
         if pg_period > 1:

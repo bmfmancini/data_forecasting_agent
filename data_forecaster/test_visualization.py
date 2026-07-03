@@ -2,12 +2,6 @@
 Test script for the dynamic visualization system.
 """
 
-import sys
-import os
-
-# Add the frontend directory to the path
-sys.path.append(os.path.join(os.path.dirname(__file__), "frontend"))
-
 from utils.visualization_utils import DynamicVisualizer
 import plotly.graph_objects as go
 import plotly.express as px

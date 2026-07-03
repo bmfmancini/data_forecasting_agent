@@ -11,7 +11,7 @@ schema validation.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, Literal
 
 import numpy as np
 import pandas as pd
@@ -114,7 +114,7 @@ def reindex_series(series: pd.Series, freq: str) -> pd.Series:
 def impute_missing(
     series: pd.Series,
     method: Literal["forward-fill", "interpolate", "seasonal-decompose"],
-    limit: Optional[int] = None,
+    limit: int | None = None,
 ) -> pd.Series:
     """Impute missing values using the specified strategy.
 

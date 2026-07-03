@@ -1,14 +1,8 @@
 """Tests for z-score outlier detection and clipping functions."""
 
-import sys
-import os
 import numpy as np
 import pandas as pd
 import pytest
-
-# Add the backend directory to the path
-backend_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "backend")
-sys.path.insert(0, backend_dir)
 
 from utils.data_cleaning import detect_outliers_zscore, apply_zscore_clipping
 

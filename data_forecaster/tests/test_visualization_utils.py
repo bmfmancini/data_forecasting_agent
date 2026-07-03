@@ -2,13 +2,8 @@
 Unit tests for the visualization utilities.
 """
 
-import sys
-import os
 import unittest
 from unittest.mock import patch, MagicMock
-
-# Add the frontend directory to the path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "frontend"))
 
 
 class TestVisualizationUtils(unittest.TestCase):

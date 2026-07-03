@@ -1,7 +1,7 @@
 # Production Readiness Code Review
 
 **Project:** Time Series Data Forecaster Agent  
-**Date:** 2026-07-02  
+**Date:** 2026-07-02 (last updated 2026-07-03)  
 **Reviewer:** Principal Software Engineer / Application Security Engineer / Software Architect  
 
 ---
@@ -12,7 +12,9 @@ This report presents a comprehensive production-readiness review of the Time Ser
 
 The codebase demonstrates a **significant security posture** with API key authentication (Argon2id hashing), Flask-Login session management, CSRF protection, encrypted credential storage (Fernet), admin role-based access control, and a bootstrap workflow for initial setup. The domain logic (multi-agent forecasting pipeline, preflight checks, RAG-augmented reporting) is sound.
 
-However, several production-readiness gaps remain: no rate limiting, in-memory state management without per-user isolation (BOLA risk), no observability/metrics, low test coverage, and some exception detail leakage. These are addressable without architectural rewrites.
+**Remediation progress (Phases 1, 2, 5 complete):** Type hints standardized, lazy logging, deduplicated constants, magic numbers extracted to config, API error docs and `ARCHITECTURE.md` added, `octet-stream` fallback removed, frontend exception leaks fixed, admin swallowed exceptions now logged, global exception handler added, thread-safety locks on stores, service layer extracted (`file_service`, `job_service`, `pipeline_service`, `chat_service`, `rag_service`), `orchestrator.py` deleted, `sys.path`/`__path__` hacks removed, `pyproject.toml` + `conftest.py` added, lightweight job status polling endpoint added.
+
+However, several production-readiness gaps remain (Phases 3, 4, 6 pending): no rate limiting, in-memory state management without per-user isolation (BOLA risk), no observability/metrics, low test coverage, LLM output validation, API versioning, and Docker hardening. These are addressable without architectural rewrites.
 
 ---
 
@@ -129,7 +131,7 @@ def analyze(request: Request, body: AnalyzeRequest, _user=Depends(require_api_ke
 
 ---
 
-### SEC-004: ✅ Fixed — Exception Details No Longer Leaked to Clients
+### SEC-004: ✅ Fixed — Exception Details No Longer Leaked to Clients (Phase 2)
 
 **Severity:** Medium  
 **Category:** Security  
@@ -165,7 +167,7 @@ except Exception as exc:
 
 ---
 
-### SEC-005: ✅ Fixed — File Upload Magic-Byte Validation Added
+### SEC-005: ✅ Fixed — File Upload Magic-Byte Validation Added (Phase 2 — `octet-stream` fallback removed)
 
 **Severity:** Medium  
 **Category:** Security  
@@ -257,7 +259,7 @@ if not stored or stored.get("owner_id") != user["id"]:
 
 ---
 
-### SEC-009: Thread-Safety Issues with Global Mutable State
+### SEC-009: ✅ Fixed — Thread-Safety Issues with Global Mutable State (Phase 2 + Phase 5)
 
 **Severity:** Medium  
 **Category:** Security / Reliability  
@@ -378,7 +380,7 @@ Enforce HTTPS at the reverse proxy level and add HSTS headers.
 
 ## 2. Python Code Quality Review
 
-### CQ-001: Inconsistent Type Hint Styles
+### CQ-001: ✅ Fixed — Inconsistent Type Hint Styles (Phase 1)
 
 **Severity:** Low  
 **Category:** Code Quality  
@@ -392,7 +394,7 @@ Standardize on `str | None` since the project targets Python 3.11+.
 
 ---
 
-### CQ-002: Duplicate `ALLOWED_EXTENSIONS` Definition
+### CQ-002: ✅ Fixed — Duplicate `ALLOWED_EXTENSIONS` Definition (Phase 1)
 
 **Severity:** Low  
 **Category:** Code Quality / DRY  
@@ -406,7 +408,7 @@ Define in one place and import everywhere.
 
 ---
 
-### CQ-003: f-string Logging
+### CQ-003: ✅ Fixed — f-string Logging (Phase 1)
 
 **Severity:** Low  
 **Category:** Code Quality / Performance  
@@ -422,7 +424,7 @@ Use lazy `%s` formatting: `logger.info("...%d...", len(all_docs))`.
 
 ---
 
-### CQ-004: Magic Numbers Without Named Constants
+### CQ-004: ✅ Fixed — Magic Numbers Without Named Constants (Phase 1)
 
 **Severity:** Low  
 **Category:** Code Quality  
@@ -444,7 +446,7 @@ The newly written code (auth module, Flask blueprints, API client, config) consi
 
 ---
 
-### CQ-006: Broad Exception Handling
+### CQ-006: ✅ Fixed — Broad Exception Handling (Phase 2 — admin `pass` blocks now log)
 
 **Severity:** Medium  
 **Category:** Code Quality  
@@ -458,7 +460,7 @@ Catch specific exception types where possible. Log swallowed exceptions rather t
 
 ---
 
-### CQ-007: `sys.path` Manipulation in Tests and `__init__.py`
+### CQ-007: ✅ Fixed — `sys.path` Manipulation in Tests and `__init__.py` (Phase 5)
 
 **Severity:** Medium  
 **Category:** Code Quality / Architecture  
@@ -496,7 +498,7 @@ The backend correctly uses FastAPI's `Depends()` system for the `require_api_key
 
 ---
 
-### FA-002: No Service Layer Separation
+### FA-002: ✅ Fixed — No Service Layer Separation (Phase 5)
 
 **Severity:** Medium  
 **Category:** Architecture  
@@ -510,7 +512,7 @@ Extract a service layer (`services/job_service.py`, `services/file_service.py`).
 
 ---
 
-### FA-003: No Global Exception Handler
+### FA-003: ✅ Fixed — No Global Exception Handler (Phase 2)
 
 **Severity:** Low  
 **Category:** Architecture  
@@ -715,7 +717,7 @@ The `copilot-instructions.md` accurately describes the actual codebase: Flask fr
 
 ---
 
-### ARCH-002: Circular Cross-Package Path Manipulation
+### ARCH-002: ✅ Fixed — Circular Cross-Package Path Manipulation (Phase 5)
 
 **Severity:** Medium  
 **Category:** Architecture  
@@ -729,7 +731,7 @@ Extract shared utilities into a dedicated `common/` package.
 
 ---
 
-### ARCH-003: Global Singleton RAG Knowledge Base Without Thread Safety
+### ARCH-003: ✅ Fixed — Global Singleton RAG Knowledge Base Without Thread Safety (Phase 5)
 
 **Severity:** Medium  
 **Category:** Architecture  
@@ -743,7 +745,7 @@ Use a dependency-injected singleton with a lock, or manage via FastAPI lifespan.
 
 ---
 
-### ARCH-004: No Separation of Concerns in Orchestrator
+### ARCH-004: ✅ Fixed — No Separation of Concerns in Orchestrator (Phase 5)
 
 **Severity:** Medium  
 **Category:** Architecture  
@@ -875,7 +877,7 @@ Achieve 70%+ coverage. Prioritize:
 
 ---
 
-### TEST-002: Tests Use `sys.path` Manipulation
+### TEST-002: ✅ Fixed — Tests Use `sys.path` Manipulation (Phase 5)
 
 **Severity:** Medium  
 **Category:** Testing / Architecture  
@@ -946,7 +948,7 @@ Add response caching for deterministic RAG retrievals and common chat queries.
 
 ---
 
-### PERF-004: Large JSON Payloads in Job Status Polling
+### PERF-004: ✅ Fixed — Large JSON Payloads in Job Status Polling (Phase 5)
 
 **Severity:** Medium  
 **Category:** Performance  
@@ -970,7 +972,7 @@ The README is comprehensive, covering: prerequisites, Docker setup, local develo
 
 ---
 
-### DOC-002: No API Error Response Documentation
+### DOC-002: ✅ Fixed — No API Error Response Documentation (Phase 1)
 
 **Severity:** Low  
 **Category:** Documentation  
@@ -981,7 +983,7 @@ Link to FastAPI's auto-generated OpenAPI docs at `/docs` and document error resp
 
 ---
 
-### DOC-003: No Architecture Documentation
+### DOC-003: ✅ Fixed — No Architecture Documentation (Phase 1)
 
 **Severity:** Low  
 **Category:** Documentation
@@ -999,7 +1001,7 @@ Add an `ARCHITECTURE.md` with system diagrams and data flow.
 | Health endpoints | ✅ Present | `/health` returns `{"status": "ok"}` — minimal, no dependency checks |
 | Metrics | ❌ Missing | No Prometheus metrics, no request latency tracking |
 | Monitoring hooks | ❌ Missing | No Sentry, no APM integration |
-| Error reporting | ⚠️ Partial | `logger.exception()` used; some exception details leaked to clients |
+| Error reporting | ✅ Present | `logger.exception()` used; global exception handler added (Phase 2); frontend exception leaks fixed (Phase 2) |
 | Graceful shutdown | ⚠️ Partial | Lifespan cancels worker but doesn't drain in-progress jobs |
 | Retry strategies | ❌ Missing | LLM calls have no retry logic |
 | Timeouts | ⚠️ Partial | Frontend has HTTP timeouts; backend LLM calls have no timeout |
@@ -1008,14 +1010,14 @@ Add an `ARCHITECTURE.md` with system diagrams and data flow.
 | Environment separation | ✅ Present | Frontend has dev/prod/test configs; backend has `API_KEY_ENABLED` toggle |
 | Secret management | ⚠️ Partial | Fernet encryption for stored credentials; `.env` for deployment secrets |
 | Authentication | ✅ Present | API key auth with Argon2id; Flask-Login with password hashing |
-| Authorization | ⚠️ Partial | Admin role-based access on frontend; no per-user BOLA on backend stores |
+| Authorization | ⚠️ Partial | Admin role-based access on frontend; no per-user BOLA on backend stores (Phase 4 pending) |
 | Rate limiting | ❌ Missing | No rate limiting on any endpoint |
 | API versioning | ❌ Missing | No version prefix |
-| Pagination | ❌ Missing | Full results in single response |
+| Pagination | ⚠️ Partial | Lightweight status endpoint added (Phase 5); full results still in single response |
 | Security headers | ✅ Present | `X-Content-Type-Options`, `X-Frame-Options`, `Strict-Transport-Security` added via middleware |
 | HTTPS enforcement | ⚠️ Partial | HSTS header added via middleware; full enforcement still needs reverse proxy TLS termination |
 | Input validation | ✅ Present | Pydantic on request bodies; chat query limited to 2000 chars via `Field(max_length=2000)` |
-| Output validation | ⚠️ Partial | Pydantic response models; LLM output unvalidated |
+| Output validation | ⚠️ Partial | Pydantic response models; LLM visualization output unvalidated (Phase 3 pending) |
 | Backup/DR | ❌ Missing | In-memory stores have no persistence or backup |
 | CSRF protection | ✅ Present | Flask-WTF CSRF on all forms |
 | Session security | ✅ Present | Secure/HttpOnly/SameSite cookies in production |
@@ -1028,115 +1030,126 @@ Add an `ARCHITECTURE.md` with system diagrams and data flow.
 
 | Dimension | Score (0–100) | Assessment |
 |-----------|---------------|------------|
-| **Security** | **62** | Auth implemented (Argon2id, Flask-Login, CSRF); gaps in rate limiting, BOLA, CORS, prompt injection |
-| **Code Quality** | **68** | Good docstrings and type hints in new code; some legacy inconsistencies and broad exception handling |
-| **Architecture** | **60** | Flask factory pattern with blueprints is solid; backend has global state and no service layer |
-| **API Design** | **55** | Pydantic models and auth dependency used; no versioning, pagination, or error standardization |
-| **Test Coverage** | **20** | 16 tests across 3 files; no API, auth, route, or security tests |
-| **Production Readiness** | **40** | Auth, CSRF, env configs present; missing metrics, monitoring, rate limiting, observability |
+| **Security** | **68** | Auth implemented (Argon2id, Flask-Login, CSRF); CORS hardened, exception leaks fixed, thread-safety locks added; gaps remain in rate limiting, BOLA, LLM output validation (Phases 3–4 pending) |
+| **Code Quality** | **78** | Type hints standardized to `str | None`; lazy logging; deduplicated constants; admin exceptions logged; `sys.path` hacks removed; service layer extracted |
+| **Architecture** | **78** | Flask factory pattern solid; backend service layer extracted (file/job/pipeline/chat/RAG services); orchestrator split; thread-safe RAG singleton; `pyproject.toml` added |
+| **API Design** | **60** | Pydantic models and auth dependency used; global exception handler added; lightweight status endpoint added; no versioning or RFC 7807 yet (Phase 3 pending) |
+| **Test Coverage** | **22** | 16 tests across 3 files; `sys.path` hacks replaced with `conftest.py`; no API, auth, route, or security tests yet (Phase 6 pending) |
+| **Production Readiness** | **48** | Auth, CSRF, env configs, security headers, global exception handler, service layer, lightweight polling present; missing metrics, monitoring, rate limiting, observability (Phases 4–6 pending) |
 
 ---
 
 ### 1. Critical Issues That Must Be Fixed Before Deployment
 
-1. **SEC-008: BOLA — No per-user isolation on `_file_store`/`_job_store`** — Any authenticated user can access any resource.
-2. **SEC-003: No rate limiting** — Brute-force and cost abuse are possible.
-3. **SEC-006: Prompt injection** — Chat queries have no length limits or sanitization.
+1. **SEC-008: BOLA — No per-user isolation on `_file_store`/`_job_store`** — Any authenticated user can access any resource. *(Phase 4 pending)*
+2. **SEC-003: No rate limiting** — Brute-force and cost abuse are possible. *(Phase 4 pending)*
+3. ~~**SEC-006: Prompt injection** — Chat queries have no length limits or sanitization.~~ ✅ Fixed — `max_length=2000` enforced on `ChatRequest.query`.
 4. ~~**FE-007: Default admin credentials** — `admin`/`admin` seeded without forced rotation.~~ ✅ Fixed — forced password rotation on first login implemented.
-5. **TEST-001: Low test coverage** — No tests for auth, API endpoints, or Flask routes.
+5. **TEST-001: Low test coverage** — No tests for auth, API endpoints, or Flask routes. *(Phase 6 pending)*
 
 ### 2. High-Priority Improvements
 
-1. **SEC-002: Fix CORS configuration** — Restrict methods and headers.
-2. **SEC-004: Stop leaking exception details** — Return generic error messages.
-3. **SEC-005: Fix file upload MIME bypass** — Validate file content, not just headers.
-4. **SEC-007: Validate LLM-generated visualization configs** — Prevent injection via Plotly.
-5. **SEC-009: Fix thread-safety of global stores** — Use locks or Redis.
-6. **SEC-011: Validate backend LLM config at startup** — Fail fast on missing secrets.
-7. **PERF-001: Move file storage out of process memory** — Use disk or S3.
-8. **DOCKER-001/004: Non-root containers and secret management** — Security hardening.
+1. ~~**SEC-002: Fix CORS configuration** — Restrict methods and headers.~~ ✅ Fixed.
+2. ~~**SEC-004: Stop leaking exception details** — Return generic error messages.~~ ✅ Fixed (Phase 2).
+3. ~~**SEC-005: Fix file upload MIME bypass** — Validate file content, not just headers.~~ ✅ Fixed — magic-byte validation + `octet-stream` fallback removed (Phase 2).
+4. **SEC-007: Validate LLM-generated visualization configs** — Prevent injection via Plotly. *(Phase 3 pending)*
+5. ~~**SEC-009: Fix thread-safety of global stores** — Use locks or Redis.~~ ✅ Fixed — `threading.Lock` added (Phase 2); service layer encapsulates locks (Phase 5).
+6. ~~**SEC-011: Validate backend LLM config at startup** — Fail fast on missing secrets.~~ ✅ Fixed.
+7. **PERF-001: Move file storage out of process memory** — Use disk or S3. *(Deferred — Further Considerations)*
+8. **DOCKER-001/004: Non-root containers and secret management** — Security hardening. *(Phase 4 pending)*
 
 ### 3. Medium-Priority Improvements
 
-1. **FA-002: Extract service layer** — Separate business logic from routes.
-2. **FA-005: Replace single-worker queue** — Use Celery or concurrent workers.
-3. **ARCH-002: Remove cross-package path manipulation** — Create shared package.
-4. **ARCH-004: Split orchestrator** — Separate pipeline, chat, and RAG concerns.
-5. **CQ-006: Reduce broad exception handling** — Catch specific exceptions.
-6. **CQ-007: Remove `sys.path` hacks in tests** — Use proper packaging.
-7. **PERF-004: Optimize job status polling** — Separate status from full results.
-8. **API-001: Fix HTTP status codes** — Use 201 for creation.
-9. **FA-003: Add global exception handler** — Standardize error responses.
+1. ~~**FA-002: Extract service layer** — Separate business logic from routes.~~ ✅ Fixed (Phase 5) — `services/file_service.py`, `services/job_service.py`.
+2. **FA-005: Replace single-worker queue** — Use Celery or concurrent workers. *(Deferred — Further Considerations)*
+3. ~~**ARCH-002: Remove cross-package path manipulation** — Create shared package.~~ ✅ Fixed (Phase 5) — `__path__` hack removed; `pyproject.toml` added.
+4. ~~**ARCH-004: Split orchestrator** — Separate pipeline, chat, and RAG concerns.~~ ✅ Fixed (Phase 5) — `services/pipeline_service.py`, `services/chat_service.py`, `services/rag_service.py`; `orchestrator.py` deleted.
+5. ~~**CQ-006: Reduce broad exception handling** — Catch specific exceptions.~~ ✅ Fixed (Phase 2) — admin `pass` blocks now log via `logger.exception()`.
+6. ~~**CQ-007: Remove `sys.path` hacks in tests** — Use proper packaging.~~ ✅ Fixed (Phase 5) — `conftest.py` replaces per-file hacks.
+7. ~~**PERF-004: Optimize job status polling** — Separate status from full results.~~ ✅ Fixed (Phase 5) — `GET /jobs/{job_id}/status` lightweight endpoint; frontend polls status only, fetches results on completion.
+8. **API-001: Fix HTTP status codes** — Use 201 for creation. *(Phase 3 pending)*
+9. ~~**FA-003: Add global exception handler** — Standardize error responses.~~ ✅ Fixed (Phase 2).
 
 ### 4. Low-Priority Improvements
 
-1. **CQ-001: Standardize type hint style** — Use `str | None` consistently.
-2. **CQ-002: Deduplicate `ALLOWED_EXTENSIONS`** — Single source of truth.
-3. **CQ-003: Use lazy logging** — Replace f-strings with `%s`.
-4. **CQ-004: Extract magic numbers** — Named constants.
-5. **SEC-010: Add security headers** — Middleware.
-6. **SEC-014: Enforce HTTPS** — HSTS header.
-7. **FA-004: Add API versioning** — `/api/v1/` prefix.
-8. **FA-006: RFC 7807 error responses** — Standardized problem details.
-9. **DOC-002/003: Expand documentation** — API docs, architecture docs.
-10. **PERF-003: Add caching** — Cache RAG retrievals and common queries.
+1. ~~**CQ-001: Standardize type hint style** — Use `str | None` consistently.~~ ✅ Fixed (Phase 1).
+2. ~~**CQ-002: Deduplicate `ALLOWED_EXTENSIONS`** — Single source of truth.~~ ✅ Fixed (Phase 1).
+3. ~~**CQ-003: Use lazy logging** — Replace f-strings with `%s`.~~ ✅ Fixed (Phase 1).
+4. ~~**CQ-004: Extract magic numbers** — Named constants.~~ ✅ Fixed (Phase 1) — `MAX_INMEMORY_FILES`/`MAX_INMEMORY_JOBS` in `core/config.py`.
+5. ~~**SEC-010: Add security headers** — Middleware.~~ ✅ Fixed.
+6. ~~**SEC-014: Enforce HTTPS** — HSTS header.~~ ✅ Fixed.
+7. **FA-004: Add API versioning** — `/api/v1/` prefix. *(Phase 3 pending)*
+8. **FA-006: RFC 7807 error responses** — Standardized problem details. *(Phase 3 pending)*
+9. ~~**DOC-002/003: Expand documentation** — API docs, architecture docs.~~ ✅ Fixed (Phase 1) — API error response table in README; `ARCHITECTURE.md` with Mermaid diagrams.
+10. **PERF-003: Add caching** — Cache RAG retrievals and common queries. *(Deferred)*
 
 ### 5. Technical Debt
 
-1. **In-memory state management** — `_file_store` and `_job_store` need Redis or a database for durability and per-user isolation.
-2. **No packaging** — `sys.path` hacks instead of proper `pyproject.toml` packages.
-3. **No CI/CD pipeline visible** — No GitHub Actions, automated testing, or linting.
-4. **Single-worker job processing** — Not horizontally scalable.
-5. **No observability** — No metrics, tracing, or structured logging with correlation IDs.
-6. **Legacy Streamlit artifacts** — `frontend/utils/ui_utils.py` and `frontend/api_service.py` still reference Streamlit (`st.session_state`, `st.selectbox`). These appear to be leftover files from the Streamlit-to-Flask migration and should be removed.
-7. **`uv.txt` instead of `requirements.txt`** — README references `pip install -r requirements.txt` but dependency files are named `uv.txt`.
+1. **In-memory state management** — `_file_store` and `_job_store` need Redis or a database for durability and per-user isolation. *(Now encapsulated in `services/file_service.py` and `services/job_service.py` — Phase 5; Redis migration deferred)*
+2. ~~**No packaging** — `sys.path` hacks instead of proper `pyproject.toml` packages.~~ ✅ Fixed (Phase 5) — `pyproject.toml` added; `sys.path` hacks removed; `conftest.py` centralizes test path setup.
+3. **No CI/CD pipeline visible** — No GitHub Actions, automated testing, or linting. *(Phase 6 pending)*
+4. **Single-worker job processing** — Not horizontally scalable. *(Deferred — Further Considerations)*
+5. **No observability** — No metrics, tracing, or structured logging with correlation IDs. *(Phase 6 pending)*
+6. ~~**Legacy Streamlit artifacts** — `frontend/utils/ui_utils.py` and `frontend/api_service.py` still reference Streamlit.~~ ✅ Fixed — files removed.
+7. ~~**`uv.txt` instead of `requirements.txt`** — README references `pip install -r requirements.txt` but dependency files are named `uv.txt`.~~ ✅ Fixed — README now documents both `requirements.txt` and `uv.txt` (Phase 1).
 
-### 6. Suggested Refactoring Roadmap
+### 6. Remediation Roadmap & Progress
 
-**Phase 1: Security Hardening (Weeks 1–2)**
-- Add per-user ownership to `_file_store`/`_job_store` (BOLA fix).
-- Add rate limiting (authentication + endpoint limits).
-- Add chat query length limits.
-- Stop leaking exception details to clients.
-- Validate backend LLM config at startup.
-- Force default admin password rotation on first login.
-- Fix CORS configuration.
+> **Phases 1, 2, and 5 are complete.** Phases 3, 4, and 6 are pending.
+> The original roadmap was reordered from least-to-most breaking changes.
 
-**Phase 2: Architecture (Weeks 3–4)**
-- Extract service layer from route handlers.
-- Replace global stores with Redis-backed store.
-- Remove cross-package `sys.path` hacks; create proper packages.
-- Add API versioning (`/api/v1/`).
-- Remove legacy Streamlit artifacts.
-- Add global exception handler.
+**Phase 1: Zero-Impact Cleanup & Documentation ✅ Complete**
+- ✅ Lazy logging in `ingestion_manager.py` (CQ-003)
+- ✅ Deduplicate `ALLOWED_EXTENSIONS` — single source in `core.config` (CQ-002)
+- ✅ Extract magic numbers to `core/config.py` with env overrides (CQ-004)
+- ✅ Standardize type hints to `str | None` across all backend files (CQ-001)
+- ✅ API error response documentation in README (DOC-002)
+- ✅ `ARCHITECTURE.md` with Mermaid diagrams (DOC-003)
+- ✅ README dependency file note (`uv.txt` vs `requirements.txt`)
 
-**Phase 3: Testing & CI (Weeks 5–6)**
-- Achieve 70%+ test coverage.
-- Add API endpoint tests (with and without auth).
-- Add Flask route tests.
-- Add security tests (BOLA, unauthorized access, injection).
-- Set up CI/CD with linting (ruff), type checking (mypy), and testing.
+**Phase 2: Low-Breaking Security & Error-Handling Fixes ✅ Complete**
+- ✅ Remove `application/octet-stream` fallback from upload (SEC-005)
+- ✅ Stop leaking exception details in frontend AJAX handlers (SEC-004)
+- ✅ Log swallowed admin exceptions instead of `pass` (CQ-006)
+- ✅ Global exception handler in backend — generic 500, logs server-side (FA-003)
+- ✅ Thread-safety locks on `_file_store` and `_job_store` (SEC-009)
 
-**Phase 4: Production Readiness (Weeks 7–8)**
-- Add structured JSON logging with request IDs.
-- Add Prometheus metrics.
-- Add Sentry/error reporting.
-- Implement graceful shutdown with job draining.
-- Add LLM call retries with exponential backoff.
-- Add health check with dependency verification.
-- Docker hardening (non-root, multi-stage, health checks).
-- Secret management via Vault or cloud secrets.
+**Phase 3: API Contract Fixes ⏳ Pending**
+- API-001: `/upload` returns 201 (requires frontend coordination)
+- FA-004 / API-003: API versioning (`/api/v1/` prefix)
+- SEC-007: Validate LLM-generated visualization JSON
+- FA-006: RFC 7807 problem details (optional)
 
-**Phase 5: Performance & Polish (Weeks 9–10)**
-- Replace single-worker queue with Celery/RQ.
-- Add response caching.
-- Optimize job status polling (SSE/WebSocket).
-- Add pagination for large results.
-- Add security headers and HTTPS enforcement.
+**Phase 4: Security-Critical Hardening ⏳ Pending**
+- SEC-008: BOLA fix — per-user ownership on `_file_store`/`_job_store`
+- SEC-003: Rate limiting via `slowapi`
+- DOCKER-001: Non-root container user
+- DOCKER-004: Document secret management (Vault/Docker Secrets)
+
+**Phase 5: Architectural Refactors ✅ Complete**
+- ✅ Remove `sys.path`/`__path__` hacks; add `pyproject.toml` + `conftest.py` (ARCH-002, CQ-007, TEST-002)
+- ✅ Extract service layer — `services/file_service.py`, `services/job_service.py` (FA-002)
+- ✅ Split orchestrator — `services/pipeline_service.py`, `services/chat_service.py`, `services/rag_service.py`; `orchestrator.py` deleted (ARCH-004)
+- ✅ Lightweight job status endpoint `GET /jobs/{job_id}/status`; frontend polls status only, fetches results on completion (PERF-004)
+- ✅ Thread-safe RAG singleton with `threading.Lock` + double-check locking (ARCH-003)
+
+**Phase 6: Test Coverage, Docker Hardening & Production Readiness ⏳ Pending**
+- TEST-001/004: Test suite expansion (API, auth, security, Flask routes, orchestrator)
+- DOCKER-002: Multi-stage builds
+- Structured JSON logging with request-ID correlation
+- Prometheus `/metrics` endpoint
+- Graceful shutdown with job draining
+- LLM call retry with exponential backoff
+- Health check with dependency verification
 
 ### 7. Overall Assessment
 
-**This project has a solid foundation but is not yet ready for production deployment.**
+**This project has a solid foundation and has made significant progress toward production readiness.**
+
+Phases 1, 2, and 5 of the remediation roadmap have been completed:
+- ✅ **Phase 1** — Code quality cleanup, type hint standardization, lazy logging, deduplicated constants, magic numbers extracted to config, API error docs, `ARCHITECTURE.md`
+- ✅ **Phase 2** — `octet-stream` fallback removed, frontend exception leaks fixed, admin swallowed exceptions now logged, global exception handler added, thread-safety locks on stores
+- ✅ **Phase 5** — Service layer extracted (`file_service`, `job_service`, `pipeline_service`, `chat_service`, `rag_service`), `orchestrator.py` deleted, `sys.path`/`__path__` hacks removed, `pyproject.toml` + `conftest.py` added, lightweight job status endpoint + frontend polling optimization
 
 The codebase demonstrates strong security fundamentals:
 - ✅ API key authentication with Argon2id hashing
@@ -1149,16 +1162,28 @@ The codebase demonstrates strong security fundamentals:
 - ✅ Application factory pattern with blueprints
 - ✅ Bleach sanitization of LLM output
 - ✅ Gunicorn WSGI entry point
+- ✅ CORS hardened (restricted methods/headers)
+- ✅ Security headers middleware (X-Content-Type-Options, X-Frame-Options, HSTS)
+- ✅ Chat query length limit (max 2000 chars)
+- ✅ File upload magic-byte validation (no octet-stream bypass)
+- ✅ Global exception handler (no exception detail leakage)
+- ✅ Thread-safe in-memory stores (threading.Lock)
+- ✅ Service layer separation (file/job/pipeline/chat/RAG services)
+- ✅ Thread-safe RAG singleton with double-check locking
+- ✅ Lightweight job status polling endpoint
+- ✅ `pyproject.toml` packaging; no `sys.path` hacks
 
-However, several critical gaps remain:
-- ❌ **BOLA** — No per-user resource isolation on backend stores
-- ❌ **No rate limiting** — Brute-force and cost abuse possible
-- ❌ **Low test coverage** — No tests for auth, API, or routes
-- ❌ **In-memory state** — Not durable or scalable
-- ❌ **No observability** — No metrics, monitoring, or structured logging
-- ❌ **Prompt injection risk** — No chat query limits
+However, several critical gaps remain (Phases 3–4–6 pending):
+- ❌ **BOLA** — No per-user resource isolation on backend stores *(Phase 4)*
+- ❌ **No rate limiting** — Brute-force and cost abuse possible *(Phase 4)*
+- ❌ **Low test coverage** — No tests for auth, API, or routes *(Phase 6)*
+- ❌ **In-memory state** — Not durable or scalable *(Deferred)*
+- ❌ **No observability** — No metrics, monitoring, or structured logging *(Phase 6)*
+- ❌ **LLM output validation** — Visualization configs unvalidated *(Phase 3)*
+- ❌ **API versioning** — No `/api/v1/` prefix *(Phase 3)*
+- ❌ **Docker hardening** — No non-root user, no multi-stage builds *(Phase 4)*
 
-The codebase would require an estimated **6–8 weeks of focused engineering effort** to reach production readiness, following the roadmap above. The security architecture is well-designed — the remaining work is primarily in authorization (BOLA), rate limiting, testing, observability, and operational hardening.
+The codebase would require an estimated **3–4 weeks of focused engineering effort** to reach production readiness, following the remaining roadmap (Phases 3–4–6). The security architecture is well-designed — the remaining work is primarily in authorization (BOLA), rate limiting, testing, observability, and operational hardening.
 
 ---
 

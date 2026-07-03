@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import json
 from io import BytesIO
-from typing import Any, Optional
+from typing import Any
 
 import matplotlib
 

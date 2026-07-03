@@ -8,6 +8,7 @@ role.  The ``admin_required`` decorator enforces this.
 from __future__ import annotations
 
 from functools import wraps
+import logging
 from typing import Any, Callable, TypeVar
 
 from flask import (
@@ -33,6 +34,8 @@ from blueprints.admin.forms import (
 from db.db import execute_db, query_db
 
 _F = TypeVar("_F", bound=Callable[..., Any])
+
+logger = logging.getLogger(__name__)
 
 
 def admin_required(f: _F) -> _F:
@@ -87,7 +90,7 @@ def dashboard() -> str:
             api_key_count = len(api_users_list)
             has_bootstrap = any(u.get("bootstrap") for u in api_users_list)
     except Exception:
-        pass
+        logger.exception("Failed to fetch API users for admin dashboard")
 
     return render_template(
         "admin/dashboard.html",
@@ -469,7 +472,7 @@ def api_config_enable_auth() -> Response:
         try:
             detail = resp.json().get("detail", detail)
         except Exception:
-            pass
+            logger.exception("Failed to parse bootstrap error response")
         flash(f"Bootstrap failed (HTTP {resp.status_code}): {detail}", "danger")
         return redirect(url_for("admin.api_config"))
 

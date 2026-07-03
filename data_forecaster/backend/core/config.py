@@ -23,6 +23,12 @@ OLLAMA_API_KEY: str | None = os.getenv("OLLAMA_API_KEY")
 MAX_UPLOAD_MB: int = int(os.getenv("MAX_UPLOAD_MB", "100"))
 MAX_UPLOAD_BYTES: int = MAX_UPLOAD_MB * 1024 * 1024
 
+# Bounds for in-memory storage to prevent OOM restarts.  Each uploaded
+# DataFrame is held in process memory; these caps limit how many files
+# and jobs can accumulate before the oldest is evicted.
+MAX_INMEMORY_FILES: int = int(os.getenv("MAX_INMEMORY_FILES", "50"))
+MAX_INMEMORY_JOBS: int = int(os.getenv("MAX_INMEMORY_JOBS", "100"))
+
 ALLOWED_EXTENSIONS: list[str] = os.getenv("ALLOWED_EXTENSIONS", "csv,xlsx").split(",")
 
 ALLOWED_MIME_TYPES: list[str] = [

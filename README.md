@@ -81,6 +81,10 @@ The system consists of five specialized agents working in sequence:
    pip install -r requirements.txt
    ```
 
+   > **Note:** The backend also ships a `uv.txt` for [uv](https://github.com/astral-sh/uv)-based
+   > installs (used in the Docker image).  Both files contain the same dependencies — use
+   > `requirements.txt` with pip, or `uv pip install -r uv.txt` with uv.
+
 3. Install frontend dependencies:
    ```bash
    cd frontend
@@ -199,6 +203,32 @@ data_forecaster/
 - `POST /api-users/{id}/toggle` - Enable or disable an API user
 - `DELETE /api-users/{id}` - Delete an API user
 - `GET /api-users/bootstrap-status` - Check if a bootstrap user exists
+
+### API Error Responses
+
+All errors return a JSON object with a `detail` field containing a human-readable message:
+
+```json
+{"detail": "Unauthorized"}
+```
+
+Common status codes:
+
+| Status | Meaning | When |
+|--------|---------|------|
+| `400` | Bad Request | Invalid file format, unsupported extension, file too large, empty file, invalid preflight options |
+| `401` | Unauthorized | Missing or invalid `X-API-Username` / `X-API-Key` headers, or disabled account |
+| `403` | Forbidden | Missing or invalid `X-Admin-Key` on the bootstrap endpoint |
+| `404` | Not Found | Unknown `file_id` or `job_id`, or session data evicted from memory |
+| `409` | Conflict | Bootstrap attempted when users already exist; duplicate username on create |
+| `422` | Unprocessable Entity | Pydantic validation failure (e.g. chat query exceeds 2000 characters) |
+| `500` | Internal Server Error | Unexpected server-side failure (generic message; details logged server-side) |
+| `503` | Service Unavailable | Background worker not ready, or backend unreachable from frontend |
+
+> **Interactive docs:** FastAPI auto-generates OpenAPI/Swagger documentation at
+> [`http://localhost:8000/docs`](http://localhost:8000/docs) and ReDoc at
+> [`http://localhost:8000/redoc`](http://localhost:8000/redoc).  These include request/response
+> schemas for every endpoint.
 
 ## Configuration
 

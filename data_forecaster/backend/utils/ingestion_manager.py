@@ -26,7 +26,7 @@ def load_file_to_dataframe(file_path: str) -> pd.DataFrame:
         else:
             raise ValueError(f"Unsupported file format for forecasting: {ext}")
     except Exception as e:
-        logger.error(f"Failed to load dataframe from {file_path}: {e}")
+        logger.error("Failed to load dataframe from %s: %s", file_path, e)
         raise
 
 
@@ -45,12 +45,12 @@ def load_document_to_rag(file_path: str) -> List[Document]:
         elif ext in ["xls", "xlsx"]:
             loader = UnstructuredExcelLoader(file_path)
         else:
-            logger.warning(f"Unsupported format {ext} for RAG. Falling back to text.")
+            logger.warning("Unsupported format %s for RAG. Falling back to text.", ext)
             loader = TextLoader(file_path)
 
         return loader.load()
     except Exception as e:
-        logger.error(f"Failed to process document {file_path} for RAG: {e}")
+        logger.error("Failed to process document %s for RAG: %s", file_path, e)
         return []
 
 

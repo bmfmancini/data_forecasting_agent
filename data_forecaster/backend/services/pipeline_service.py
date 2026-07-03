@@ -1,21 +1,26 @@
+"""Pipeline orchestration service for the Data Forecaster backend.
+
+Contains the :func:`run_pipeline` function that executes the full
+5-agent forecasting pipeline.  Extracted from ``orchestrator.py`` to
+separate concerns (pipeline, chat, RAG).
+"""
+
 from __future__ import annotations
 
 from typing import Any, Callable
-import json
-from langchain_core.prompts import ChatPromptTemplate
+
 import pandas as pd
-import re
 
 from agents.data_validation_agent import run_validation_agent
 from agents.forecasting_agent import run_forecasting_agent
 from agents.model_selection_agent import run_model_selection_agent
 from agents.report_generation_agent import run_report_agent
 from agents.statistical_analysis_agent import run_statistical_agent
-from core.llm_factory import get_llm
 from core.logging_config import get_logger
-from utils.ingestion_manager import load_file_to_dataframe
 from rag.knowledge_base import RAGKnowledgeBase
 from schemas import AnalysisResponse, ModelSelectionResult
+from services.rag_service import get_rag_kb
+from utils.ingestion_manager import load_file_to_dataframe
 from utils.preflight import prepare_series_frame
 from utils.statistical import compute_acf_pacf, run_stl_decomposition, apply_boxcox
 from utils.visualization import (
@@ -26,21 +31,7 @@ from utils.visualization import (
     plot_stl,
 )
 
-# Import the prompt from the dedicated prompt module
-from prompts.orchestrator_prompt import ORCHESTRATOR_CHAT_PROMPT
-
 logger = get_logger(__name__)
-
-# Shared RAG knowledge base (initialised once on startup)
-_rag_kb: RAGKnowledgeBase | None = None
-
-
-def get_rag_kb(persist_directory: str = "./chroma_db") -> RAGKnowledgeBase:
-    global _rag_kb
-    if _rag_kb is None:
-        _rag_kb = RAGKnowledgeBase(persist_directory=persist_directory)
-        _rag_kb.load_documents()
-    return _rag_kb
 
 
 def run_pipeline_from_file(
@@ -49,11 +40,20 @@ def run_pipeline_from_file(
     value_col: str,
     freq: str,
     forecast_horizon: int,
-    **kwargs,
+    **kwargs: Any,
 ) -> AnalysisResponse:
-    """
-    Entry point for Task 3: Ingests enterprise documents (CSV/Excel)
-    directly into the forecasting pipeline.
+    """Ingest a file directly into the forecasting pipeline.
+
+    Args:
+        file_path:        Path to the CSV or Excel file.
+        date_col:         Name of the date column.
+        value_col:        Name of the value column.
+        freq:             Frequency string.
+        forecast_horizon: Number of periods to forecast.
+        **kwargs:         Additional arguments forwarded to :func:`run_pipeline`.
+
+    Returns:
+        The complete :class:`AnalysisResponse`.
     """
     logger.info("Ingesting file for pipeline: %s", file_path)
     df = load_file_to_dataframe(file_path)
@@ -76,7 +76,26 @@ def run_pipeline(
     chroma_persist_dir: str = "./chroma_db",
     progress_callback: Callable[[int, str], None] | None = None,
 ) -> AnalysisResponse:
-    """Execute the full 5-agent pipeline and return the complete AnalysisResponse."""
+    """Execute the full 5-agent pipeline and return the complete AnalysisResponse.
+
+    Args:
+        df:                Input DataFrame.
+        file_id:           Identifier for the uploaded file.
+        date_col:          Name of the date column.
+        value_col:         Name of the value column.
+        freq:              Frequency string.
+        forecast_horizon:  Number of future periods to forecast.
+        forced_model:      Optional model override (``"ARIMA"``, ``"SARIMA"``,
+                           ``"Holt-Winters"``).
+        user_prompt:       Optional extra instructions for the report agent.
+        preflight_options: Optional preflight configuration dict.
+        chroma_persist_dir: Path to the ChromaDB persistence directory.
+        progress_callback: Optional callback ``(pct, step)`` for progress updates.
+
+    Returns:
+        The complete :class:`AnalysisResponse`.
+    """
+    # pylint: disable=too-many-locals, too-many-branches, too-many-statements
 
     def _progress(pct: int, step: str) -> None:
         if progress_callback:
@@ -116,7 +135,6 @@ def run_pipeline(
     _progress(35, "Statistical analysis complete")
 
     # ── Agent-Driven Remediation ─────────────────────────────────────────────
-    # If the user selected 'Let AI Decide' in preflight, we follow the agent's recommendation
     if (preflight_options or {}).get("outlier_strategy") == "Let AI Decide":
         if "iqr_clip" in stat_result.recommended_remediation:
             logger.info("Agent decided to APPLY IQR clipping.")
@@ -132,14 +150,18 @@ def run_pipeline(
             logger.info("Z-score clipping applied successfully.")
         else:
             logger.info(
-                "Agent decided to SKIP outlier clipping (likely determined outliers are signal)."
+                "Agent decided to SKIP outlier clipping "
+                "(likely determined outliers are signal)."
             )
 
     if "box_cox" in stat_result.recommended_remediation:
         logger.info("Agent decided to APPLY Box-Cox transformation.")
         try:
             series, _ = apply_boxcox(series)
-            stat_result.summary += "\n\n(Note: A Box-Cox transformation was applied to stabilize variance based on agent recommendation.)"
+            stat_result.summary += (
+                "\n\n(Note: A Box-Cox transformation was applied to stabilize "
+                "variance based on agent recommendation.)"
+            )
         except Exception as e:
             logger.warning("Box-Cox application failed: %s", e)
 
@@ -147,7 +169,10 @@ def run_pipeline(
         logger.info(
             "Agent detected significant change points. Adding note to analysis."
         )
-        stat_result.summary += "\n\n(Note: Change point analysis detected structural breaks. Consider segmenting the data for improved forecasting accuracy.)"
+        stat_result.summary += (
+            "\n\n(Note: Change point analysis detected structural breaks. "
+            "Consider segmenting the data for improved forecasting accuracy.)"
+        )
 
     # ── Agent 3: Model Selection ──────────────────────────────────────────────
     if forced_model:
@@ -175,7 +200,10 @@ def run_pipeline(
             ),
             reasoning_steps=[
                 {
-                    "thought": f"User explicitly requested the {forced_model} model. Skipping automated model selection logic.",
+                    "thought": (
+                        f"User explicitly requested the {forced_model} model. "
+                        "Skipping automated model selection logic."
+                    ),
                     "observation": f"Manual selection active: {forced_model}",
                 }
             ],
@@ -255,206 +283,15 @@ def run_pipeline(
     )
 
 
-def index_analysis_results(
-    file_id: str, analysis_result: AnalysisResponse, chroma_persist_dir: str
-) -> None:
-    """
-    Requirement 1: Store the output results in the agent's memory.
-    Summarizes and indexes the analysis results into the RAG knowledge base.
-    """
-    logger.info("Indexing analysis results for file_id=%s", file_id)
-    rag_kb = get_rag_kb(chroma_persist_dir)
-
-    # Create a summary document for the vector store
-    summary = (
-        f"Forecasting Analysis Results for {file_id}:\n"
-        f"Summary Report: {analysis_result.report}\n"
-        f"Model Selection: {analysis_result.model_selection.selected_model}\n"
-        f"Statistical Insights: {analysis_result.statistical.model_dump_json()}\n"
-    )
-
-    # Persist the summary to the RAG knowledge base
-    if hasattr(rag_kb, "add_texts"):
-        rag_kb.add_texts(
-            texts=[summary], metadatas=[{"file_id": file_id, "type": "analysis_result"}]
-        )
-    else:
-        logger.warning(
-            "RAGKnowledgeBase does not support direct text indexing. Result memory not persisted."
-        )
-
-
-def chat_with_data(
-    query: str, df: pd.DataFrame, file_id: str, chroma_persist_dir: str
-) -> dict[str, Any]:
-    """
-    Requirement 2: Data Explorer - Allow user to prompt the agent with questions about data.
-    """
-    logger.info("Data Explorer query for file_id=%s: %s", file_id, query)
-
-    # 1. Retrieve Analysis Memory from RAG
-    rag_kb = get_rag_kb(chroma_persist_dir)
-    memory_context = ""
-    try:
-        # Search for previous analysis results stored during the pipeline run
-        chunks = rag_kb.retrieve(query, k=3)
-        memory_context = "\n".join(chunks)
-    except Exception as exc:
-        logger.warning("RAG retrieval failed for chat: %s", exc)
-
-    # 2. Prepare Data Summary for the LLM
-    # Truncate statistical summary for wide datasets to avoid LLM context overflow
-    stats_dict = df.describe().iloc[:, :20].to_dict()
-
-    # ── Enhanced Data Visibility ─────────────────────────────────────────────
-    # Instead of just stats, we provide a "sorted snapshot" so the LLM can
-    # see specific dates for peaks and troughs.
-    data_snapshots = ""
-    try:
-        date_cols = df.select_dtypes(
-            include=["datetime", "datetimetz"]
-        ).columns.tolist()
-        num_cols = df.select_dtypes(include=["number"]).columns.tolist()
-        if date_cols and num_cols:
-            main_date = date_cols[0]
-            val_col = num_cols[0]
-
-            top_5 = df.nlargest(5, val_col)[[main_date, val_col]].to_string(index=False)
-            bottom_5 = df.nsmallest(5, val_col)[[main_date, val_col]].to_string(
-                index=False
-            )
-
-            data_snapshots = f"\nHIGHEST 5 RECORDS (Sorted by {val_col}):\n{top_5}\n"
-            data_snapshots += f"\nLOWEST 5 RECORDS (Sorted by {val_col}):\n{bottom_5}\n"
-    except Exception as exc:
-        logger.warning("Failed to generate data highlights for chat: %s", exc)
-
-    data_summary = f"""
-    Dataset Stats:
-    - Rows: {len(df)}
-    - Statistical Summary: {stats_dict}
-    {data_snapshots}
-    """
-
-    # 3. Setup LLM based on configuration
-    llm = get_llm(temperature=0)
-
-    prompt = ORCHESTRATOR_CHAT_PROMPT
-
-    try:
-        chain = prompt | llm
-        response = chain.invoke(
-            {
-                "analysis_context": memory_context,
-                "data_summary": data_summary,
-                "query": query,
-            }
-        )
-
-        content = response.content
-
-        # Handle potential JSON visualization responses from LLM
-        if "visualization_type" in content:
-            # Strip markdown code blocks if present
-            clean_content = re.sub(r"```json\s*|\s*```", "", content).strip()
-            try:
-                return json.loads(clean_content)
-            except json.JSONDecodeError:
-                pass
-
-        # Try to parse any JSON visualization configuration from the response
-        # Look for JSON objects in the response that might contain visualization configs
-        # Use a simpler pattern to match JSON objects (this is a basic approach)
-        json_pattern = r"\{[^{}]*\{[^{}]*\}[^{}]*\}|\{[^{}]*\}"
-        matches = re.findall(json_pattern, content, re.DOTALL)
-
-        for match in matches:
-            try:
-                potential_config = json.loads(match)
-                # Check if this looks like a visualization configuration
-                if isinstance(potential_config, dict) and (
-                    "data" in potential_config
-                    or "type" in potential_config
-                    or "layout" in potential_config
-                ):
-                    # Return the response with the visualization configuration
-                    # Remove the JSON from the answer text for cleaner display
-                    clean_answer = content.replace(match, "").strip()
-                    return {
-                        "answer": clean_answer,
-                        "visualization_data": potential_config,
-                        "visualization_type": "dynamic",
-                    }
-            except json.JSONDecodeError:
-                continue
-
-        return {"answer": content}
-
-    except Exception as exc:
-        logger.exception("LLM Chat failed")
-        return {
-            "answer": (
-                "I encountered an error while processing your request. "
-                "Please try again later."
-            )
-        }
-
-
-def chat_general(query: str, chroma_persist_dir: str) -> dict[str, Any]:
-    """
-    Handle general questions using only the RAG knowledge base without requiring a dataset.
-    """
-    logger.info("General chat query: %s", query)
-
-    # 1. Retrieve relevant information from RAG
-    rag_kb = get_rag_kb(chroma_persist_dir)
-    memory_context = ""
-    try:
-        # Search for relevant documentation
-        chunks = rag_kb.retrieve(query, k=5)
-        memory_context = "\n".join(chunks)
-    except Exception as exc:
-        logger.warning("RAG retrieval failed for general chat: %s", exc)
-
-    # 2. Setup LLM based on configuration
-    llm = get_llm(temperature=0)
-
-    # Create a prompt for general questions
-    general_prompt = ChatPromptTemplate.from_messages(
-        [
-            (
-                "system",
-                """You are an expert in time series forecasting and data analysis. 
-         Use the provided context to answer questions about time series forecasting concepts, methodologies, and best practices.
-         If the context doesn't contain enough information to fully answer the question, provide the best answer you can based on your general knowledge.
-         
-         Context from documentation:
-         {context}
-         
-         Answer the question in a clear, concise, and helpful manner.""",
-            ),
-            ("human", "{query}"),
-        ]
-    )
-
-    try:
-        chain = general_prompt | llm
-        response = chain.invoke({"context": memory_context, "query": query})
-
-        content = response.content
-        return {"answer": content}
-
-    except Exception as exc:
-        logger.exception("LLM General Chat failed")
-        return {
-            "answer": (
-                "I encountered an error while processing your request. "
-                "Please try again later."
-            )
-        }
-
-
 def _freq_to_period(freq: str) -> int:
+    """Convert a frequency string to a seasonal period integer.
+
+    Args:
+        freq: Pandas frequency string (e.g. ``"MS"``, ``"Q"``, ``"D"``).
+
+    Returns:
+        The number of periods in one seasonal cycle (default 12).
+    """
     f = (freq or "").upper().lstrip("-")
     if f.startswith("MS") or f.startswith("M"):
         return 12

@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "data-forecaster"
+version = "1.0.0"
+description = "Multi-agent time series forecasting system"
+requires-python = ">=3.11"
+
+[tool.setuptools]
+# The backend and frontend are not standard installable packages — they
+# are service directories whose dependencies are managed via
+# requirements.txt / uv.txt.  This pyproject.toml exists primarily to
+# provide a project root for editable installs and tool configuration.
+packages = []
