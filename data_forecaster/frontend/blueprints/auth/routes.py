@@ -13,6 +13,7 @@ from werkzeug.wrappers import Response
 
 from blueprints.auth import auth_bp
 from blueprints.auth.forms import ChangePasswordForm, LoginForm
+from blueprints.decorators import password_change_required
 from db.db import execute_db, query_db
 from models import User
 
@@ -79,6 +80,7 @@ def login() -> str | Response:
 
 
 @auth_bp.route("/logout")
+@password_change_required
 def logout() -> Response:
     """Log out the current user and redirect to the login page.
 
@@ -93,6 +95,7 @@ def logout() -> Response:
 
 @auth_bp.route("/change-password", methods=["GET", "POST"])
 @login_required
+@password_change_required
 def change_password() -> str | Response:
     """Force a password change when ``must_change_password`` is set.
 
@@ -104,8 +107,6 @@ def change_password() -> str | Response:
     Returns:
         The rendered change-password template or a redirect response.
     """
-    if not current_user.must_change_password:  # type: ignore[union-attr]
-        return redirect(url_for("main.index"))
 
     form = ChangePasswordForm()
     if form.validate_on_submit():

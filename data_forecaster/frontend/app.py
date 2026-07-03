@@ -13,9 +13,11 @@ from typing import Any
 
 import bleach
 import markdown as md_lib
-from flask import Flask, session
+from flask import Flask, jsonify, redirect, request, session, url_for
+from flask_login import current_user
 from flask_session import Session  # type: ignore[import-untyped]
 from markupsafe import Markup
+from werkzeug.wrappers import Response
 
 from config import get_config
 from db.db import init_app as db_init_app, init_db, query_db
@@ -79,6 +81,7 @@ def create_app(config_name: str | None = None) -> Flask:
     _register_blueprints(app)
     _register_context_processors(app)
     _register_user_loader()
+    _register_password_change(app)
 
     from manage import register_commands
     register_commands(app)
@@ -235,3 +238,42 @@ def _register_user_loader() -> None:
                 must_change_password=bool(row.get("must_change_password", 0)),
             )
         return None
+
+
+def _register_password_change(app: Flask) -> None:
+    """Enforce a forced password change across all blueprints.
+
+    A user whose ``must_change_password`` flag is set may only access the
+    ``auth.change_password`` and ``auth.logout`` endpoints.  Every other
+    request — page or AJAX — is redirected (or, for JSON requests, rejected
+    with a 403) to the change-password page.
+
+    Args:
+        app: The Flask application instance.
+    """
+
+    @app.before_request
+    def _enforce_password_change() -> Response | tuple[str, int] | None:
+        """Redirect or reject requests when a password change is required."""
+        if not current_user.is_authenticated:
+            return None
+
+        if not getattr(current_user, "must_change_password", False):
+            return None
+
+        endpoint = request.endpoint or ""
+        # Allow the user to reach the change-password page and log out.
+        if endpoint in ("auth.change_password", "auth.logout", "static"):
+            return None
+
+        # AJAX/JSON callers get a structured error instead of a redirect.
+        if request.path.startswith("/api/") or _wants_json():
+            return jsonify({"error": "Password change required."}), 403
+
+        return redirect(url_for("auth.change_password"))
+
+
+def _wants_json() -> bool:
+    """Return True when the client prefers a JSON response."""
+    accept = request.accept_mimetypes
+    return accept.best_match(["application/json", "text/html"]) == "application/json"

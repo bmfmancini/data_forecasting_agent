@@ -108,7 +108,8 @@ def users() -> str:
     """
     rows = query_db(
         """
-        SELECT u.id, u.username, r.name AS role, u.active, u.created_at
+        SELECT u.id, u.username, r.name AS role, u.active, u.created_at,
+               u.must_change_password
         FROM users u
         JOIN roles r ON r.id = u.role_id
         ORDER BY u.id
@@ -116,6 +117,42 @@ def users() -> str:
     )
     user_list: list[dict[str, Any]] = rows if isinstance(rows, list) else []
     return render_template("admin/users.html", users=user_list)
+
+
+@admin_bp.route("/users/<int:user_id>/force-reset", methods=["POST"])
+@admin_required
+def user_force_reset(user_id: int) -> Response:
+    """Force a user to change their password on next login.
+
+    Sets the ``must_change_password`` flag for *user_id* and redirects back
+    to the user list.
+
+    Args:
+        user_id: Primary key of the user to flag.
+
+    Returns:
+        A redirect response to the user management page.
+    """
+    row = query_db(
+        "SELECT id, username FROM users WHERE id = ?", (user_id,), one=True
+    )
+    if not row or not isinstance(row, dict):
+        flash("User not found.", "danger")
+        return redirect(url_for("admin.users"))
+
+    if int(row["id"]) == current_user.id:  # type: ignore[union-attr]
+        flash("You cannot force a password reset on yourself.", "warning")
+        return redirect(url_for("admin.users"))
+
+    execute_db(
+        "UPDATE users SET must_change_password = 1 WHERE id = ?",
+        (user_id,),
+    )
+    flash(
+        f"'{row['username']}' will be required to change their password on next login.",
+        "success",
+    )
+    return redirect(url_for("admin.users"))
 
 
 @admin_bp.route("/users/new", methods=["GET", "POST"])
@@ -175,7 +212,8 @@ def user_edit(user_id: int) -> str | Response:
     """
     row = query_db(
         """
-        SELECT u.id, u.username, r.name AS role_name, u.active
+        SELECT u.id, u.username, r.name AS role_name, u.active,
+               u.must_change_password
         FROM users u
         JOIN roles r ON r.id = u.role_id
         WHERE u.id = ?
@@ -191,12 +229,14 @@ def user_edit(user_id: int) -> str | Response:
     if request.method == "GET":
         form.role.data = str(row["role_name"])
         form.active.data = bool(row["active"])
+        form.force_password_reset.data = bool(row.get("must_change_password", 0))
 
     if form.validate_on_submit():
         new_password: str = str(form.password.data or "").strip()
         confirm_password: str = str(form.confirm_password.data or "").strip()
         new_role: str = str(form.role.data or "user")
         new_active: bool = bool(form.active.data)
+        force_reset: bool = bool(form.force_password_reset.data)
 
         if new_password and new_password != confirm_password:
             flash("Passwords do not match.", "danger")
@@ -212,13 +252,13 @@ def user_edit(user_id: int) -> str | Response:
         if new_password:
             pw_hash = generate_password_hash(new_password)
             execute_db(
-                "UPDATE users SET password_hash = ?, role_id = ?, active = ?, must_change_password = 1 WHERE id = ?",
-                (pw_hash, int(role_row["id"]), int(new_active), user_id),
+                "UPDATE users SET password_hash = ?, role_id = ?, active = ?, must_change_password = ? WHERE id = ?",
+                (pw_hash, int(role_row["id"]), int(new_active), int(force_reset or 1), user_id),
             )
         else:
             execute_db(
-                "UPDATE users SET role_id = ?, active = ? WHERE id = ?",
-                (int(role_row["id"]), int(new_active), user_id),
+                "UPDATE users SET role_id = ?, active = ?, must_change_password = ? WHERE id = ?",
+                (int(role_row["id"]), int(new_active), int(force_reset), user_id),
             )
 
         flash("User updated successfully.", "success")

@@ -32,6 +32,7 @@ from flask import (
 from flask_login import current_user, login_required
 from werkzeug.wrappers import Response
 
+from blueprints.decorators import password_change_required
 from blueprints.main import main_bp
 from services.api_client import get_api_client
 

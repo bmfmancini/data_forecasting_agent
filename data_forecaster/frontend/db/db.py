@@ -119,6 +119,26 @@ def init_db() -> None:
         """,
         ("admin", admin_hash),
     )
+    # Ensure the flag is set on pre-existing admin rows whose password is
+    # still the default.  INSERT OR IGNORE above does not update existing
+    # rows, so a database created before this feature was added would keep
+    # must_change_password = 0.  We cannot compare password_hash directly
+    # because generate_password_hash uses a random salt, so we verify the
+    # plaintext password with check_password_hash instead.
+    from werkzeug.security import check_password_hash
+
+    existing = db.execute(
+        "SELECT password_hash FROM users WHERE username = 'admin'"
+    ).fetchone()
+    if existing and check_password_hash(existing[0], "admin"):
+        db.execute(
+            """
+            UPDATE users
+            SET must_change_password = 1
+            WHERE username = 'admin'
+              AND must_change_password = 0
+            """
+        )
 
     backend_url = current_app.config.get("BACKEND_URL", "http://localhost:8000")
     db.execute(

@@ -73,6 +73,7 @@ class UserEditForm(FlaskForm):  # type: ignore[misc]
         choices=[("user", "User"), ("admin", "Administrator")],
     )
     active = BooleanField("Account active")
+    force_password_reset = BooleanField("Force password change on next login")
     submit = SubmitField("Save Changes")
 
 
