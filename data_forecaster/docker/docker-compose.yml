@@ -12,6 +12,7 @@ services:
     volumes:
       - logs_data:/app/logs
       - chroma_data:/app/chroma_db
+      - file_store_data:/app/file_store
       - ../data:/app/data
       - api_key_data:/app/data/api_keys
     restart: unless-stopped
@@ -58,5 +59,6 @@ networks:
 volumes:
   logs_data:
   chroma_data:
+  file_store_data:
   flask_instance:
   api_key_data:

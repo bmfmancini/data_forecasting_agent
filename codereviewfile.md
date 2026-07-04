@@ -213,7 +213,7 @@ class ChatRequest(BaseModel):
 
 ---
 
-### SEC-007: Unvalidated LLM-Generated JSON Passed to Frontend Visualization
+### SEC-007: ✅ Fixed — Unvalidated LLM-Generated JSON Passed to Frontend Visualization (Phase 3)
 
 **Severity:** Medium  
 **Category:** Security  
@@ -912,7 +912,7 @@ Add `tests/test_security.py` covering: unauthorized access (401), invalid API ke
 
 ## 9. Performance Review
 
-### PERF-001: Entire DataFrame Stored in Memory
+### PERF-001: ✅ Fixed — Entire DataFrame Stored in Memory (Phase 3 — disk-backed parquet storage)
 
 **Severity:** High  
 **Category:** Performance  
@@ -1017,8 +1017,8 @@ Add an `ARCHITECTURE.md` with system diagrams and data flow.
 | Security headers | ✅ Present | `X-Content-Type-Options`, `X-Frame-Options`, `Strict-Transport-Security` added via middleware |
 | HTTPS enforcement | ⚠️ Partial | HSTS header added via middleware; full enforcement still needs reverse proxy TLS termination |
 | Input validation | ✅ Present | Pydantic on request bodies; chat query limited to 2000 chars via `Field(max_length=2000)` |
-| Output validation | ⚠️ Partial | Pydantic response models; LLM visualization output unvalidated (Phase 3 pending) |
-| Backup/DR | ❌ Missing | In-memory stores have no persistence or backup |
+| Output validation | ✅ Present | Pydantic response models; LLM visualization output validated via `_validate_viz_config` whitelist (Phase 3) |
+| Backup/DR | ⚠️ Partial | Uploaded DataFrames persisted to disk as parquet (Phase 3); job results still in-memory only |
 | CSRF protection | ✅ Present | Flask-WTF CSRF on all forms |
 | Session security | ✅ Present | Secure/HttpOnly/SameSite cookies in production |
 
@@ -1030,12 +1030,12 @@ Add an `ARCHITECTURE.md` with system diagrams and data flow.
 
 | Dimension | Score (0–100) | Assessment |
 |-----------|---------------|------------|
-| **Security** | **68** | Auth implemented (Argon2id, Flask-Login, CSRF); CORS hardened, exception leaks fixed, thread-safety locks added; gaps remain in rate limiting, BOLA, LLM output validation (Phases 3–4 pending) |
+| **Security** | **72** | Auth implemented (Argon2id, Flask-Login, CSRF); CORS hardened, exception leaks fixed, thread-safety locks added, LLM visualization output validated; gaps remain in rate limiting, BOLA (Phases 3–4 pending) |
 | **Code Quality** | **78** | Type hints standardized to `str | None`; lazy logging; deduplicated constants; admin exceptions logged; `sys.path` hacks removed; service layer extracted |
-| **Architecture** | **78** | Flask factory pattern solid; backend service layer extracted (file/job/pipeline/chat/RAG services); orchestrator split; thread-safe RAG singleton; `pyproject.toml` added |
+| **Architecture** | **82** | Flask factory pattern solid; backend service layer extracted; orchestrator split; thread-safe RAG singleton; disk-backed file storage; `pyproject.toml` added |
 | **API Design** | **60** | Pydantic models and auth dependency used; global exception handler added; lightweight status endpoint added; no versioning or RFC 7807 yet (Phase 3 pending) |
 | **Test Coverage** | **22** | 16 tests across 3 files; `sys.path` hacks replaced with `conftest.py`; no API, auth, route, or security tests yet (Phase 6 pending) |
-| **Production Readiness** | **48** | Auth, CSRF, env configs, security headers, global exception handler, service layer, lightweight polling present; missing metrics, monitoring, rate limiting, observability (Phases 4–6 pending) |
+| **Production Readiness** | **52** | Auth, CSRF, env configs, security headers, global exception handler, service layer, lightweight polling, disk-backed storage, LLM output validation present; missing metrics, monitoring, rate limiting, observability (Phases 4–6 pending) |
 
 ---
 
@@ -1052,10 +1052,10 @@ Add an `ARCHITECTURE.md` with system diagrams and data flow.
 1. ~~**SEC-002: Fix CORS configuration** — Restrict methods and headers.~~ ✅ Fixed.
 2. ~~**SEC-004: Stop leaking exception details** — Return generic error messages.~~ ✅ Fixed (Phase 2).
 3. ~~**SEC-005: Fix file upload MIME bypass** — Validate file content, not just headers.~~ ✅ Fixed — magic-byte validation + `octet-stream` fallback removed (Phase 2).
-4. **SEC-007: Validate LLM-generated visualization configs** — Prevent injection via Plotly. *(Phase 3 pending)*
+4. ~~**SEC-007: Validate LLM-generated visualization configs** — Prevent injection via Plotly.~~ ✅ Fixed (Phase 3) — `_validate_viz_config` whitelist in `chat_service.py`.
 5. ~~**SEC-009: Fix thread-safety of global stores** — Use locks or Redis.~~ ✅ Fixed — `threading.Lock` added (Phase 2); service layer encapsulates locks (Phase 5).
 6. ~~**SEC-011: Validate backend LLM config at startup** — Fail fast on missing secrets.~~ ✅ Fixed.
-7. **PERF-001: Move file storage out of process memory** — Use disk or S3. *(Deferred — Further Considerations)*
+7. ~~**PERF-001: Move file storage out of process memory** — Use disk or S3.~~ ✅ Fixed (Phase 3) — disk-backed parquet storage in `services/file_service.py`.
 8. **DOCKER-001/004: Non-root containers and secret management** — Security hardening. *(Phase 4 pending)*
 
 ### 3. Medium-Priority Improvements
@@ -1085,7 +1085,7 @@ Add an `ARCHITECTURE.md` with system diagrams and data flow.
 
 ### 5. Technical Debt
 
-1. **In-memory state management** — `_file_store` and `_job_store` need Redis or a database for durability and per-user isolation. *(Now encapsulated in `services/file_service.py` and `services/job_service.py` — Phase 5; Redis migration deferred)*
+1. ~~**In-memory state management** — `_file_store` and `_job_store` need Redis or a database for durability and per-user isolation.~~ ✅ Partially fixed — file storage now disk-backed parquet (`services/file_service.py`); job results still in-memory. Per-user isolation pending (Phase 4 BOLA).
 2. ~~**No packaging** — `sys.path` hacks instead of proper `pyproject.toml` packages.~~ ✅ Fixed (Phase 5) — `pyproject.toml` added; `sys.path` hacks removed; `conftest.py` centralizes test path setup.
 3. **No CI/CD pipeline visible** — No GitHub Actions, automated testing, or linting. *(Phase 6 pending)*
 4. **Single-worker job processing** — Not horizontally scalable. *(Deferred — Further Considerations)*
@@ -1114,11 +1114,12 @@ Add an `ARCHITECTURE.md` with system diagrams and data flow.
 - ✅ Global exception handler in backend — generic 500, logs server-side (FA-003)
 - ✅ Thread-safety locks on `_file_store` and `_job_store` (SEC-009)
 
-**Phase 3: API Contract Fixes ⏳ Pending**
-- API-001: `/upload` returns 201 (requires frontend coordination)
-- FA-004 / API-003: API versioning (`/api/v1/` prefix)
-- SEC-007: Validate LLM-generated visualization JSON
-- FA-006: RFC 7807 problem details (optional)
+**Phase 3: API Contract Fixes ⏳ In Progress**
+- API-001: `/upload` returns 201 (requires frontend coordination) *(pending)*
+- FA-004 / API-003: API versioning (`/api/v1/` prefix) *(pending)*
+- ✅ SEC-007: Validate LLM-generated visualization JSON — `_validate_viz_config` whitelist in `chat_service.py`
+- ✅ PERF-001: Disk-backed parquet file storage — `services/file_service.py` with `FILE_STORAGE_DIR` config
+- FA-006: RFC 7807 problem details (optional) *(pending)*
 
 **Phase 4: Security-Critical Hardening ⏳ Pending**
 - SEC-008: BOLA fix — per-user ownership on `_file_store`/`_job_store`
@@ -1177,9 +1178,9 @@ However, several critical gaps remain (Phases 3–4–6 pending):
 - ❌ **BOLA** — No per-user resource isolation on backend stores *(Phase 4)*
 - ❌ **No rate limiting** — Brute-force and cost abuse possible *(Phase 4)*
 - ❌ **Low test coverage** — No tests for auth, API, or routes *(Phase 6)*
-- ❌ **In-memory state** — Not durable or scalable *(Deferred)*
+- ❌ **In-memory state** — Job results still in-memory; file storage now disk-backed *(Phase 4 BOLA pending)*
 - ❌ **No observability** — No metrics, monitoring, or structured logging *(Phase 6)*
-- ❌ **LLM output validation** — Visualization configs unvalidated *(Phase 3)*
+- ~~**LLM output validation** — Visualization configs unvalidated~~ ✅ Fixed — `_validate_viz_config` whitelist *(Phase 3)*
 - ❌ **API versioning** — No `/api/v1/` prefix *(Phase 3)*
 - ❌ **Docker hardening** — No non-root user, no multi-stage builds *(Phase 4)*
 

@@ -39,6 +39,12 @@ ALLOWED_MIME_TYPES: list[str] = [
 
 CHROMA_PERSIST_DIR: str = os.getenv("CHROMA_PERSIST_DIR", "./chroma_db")
 
+# Directory for disk-backed uploaded file storage.  DataFrames are
+# persisted as parquet files so they survive process restarts and don't
+# consume process memory.  An in-memory metadata index is kept for fast
+# lookups; the DataFrame itself is loaded lazily from disk on demand.
+FILE_STORAGE_DIR: str = os.getenv("FILE_STORAGE_DIR", "./file_store")
+
 API_KEY_DB_PATH: str = os.getenv("API_KEY_DB_PATH", "./data")
 API_KEY_ENABLED: bool = os.getenv("API_KEY_ENABLED", "false").lower() == "true"
 
@@ -46,6 +52,16 @@ API_KEY_ENABLED: bool = os.getenv("API_KEY_ENABLED", "false").lower() == "true"
 # (POST /api-users/bootstrap).  Set this to a strong random value in .env
 # and share it with the admin who will enable API authentication.
 ADMIN_API_KEY: str | None = os.getenv("ADMIN_API_KEY")
+
+# Pre-shared credentials for the frontend service account.  When both are
+# set, the backend auto-creates a ``frontend`` API user on first startup
+# (if no users exist yet) and the frontend auto-stores them in its SQLite
+# DB (if no credentials are stored yet).  This eliminates the need to
+# scrape bootstrap keys from container logs.
+#
+# Generate with: python -c "import secrets; print(secrets.token_urlsafe(32))"
+FRONTEND_API_USERNAME: str | None = os.getenv("FRONTEND_API_USERNAME")
+FRONTEND_API_KEY: str | None = os.getenv("FRONTEND_API_KEY")
 
 
 def set_api_key_enabled(enabled: bool) -> None:

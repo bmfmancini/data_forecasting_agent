@@ -90,14 +90,14 @@ class APIConfigForm(FlaskForm):  # type: ignore[misc]
 
     base_url = StringField(
         "Backend API Base URL",
-        validators=[DataRequired(), URL()],
+        validators=[DataRequired(), URL(require_tld=False)],
     )
     api_username = StringField(
-        "API Username (optional)",
+        "API Username",
         validators=[Optional(), Length(max=128)],
     )
     api_password = PasswordField(
-        "API Key (optional)",
+        "API Key",
         validators=[Optional()],
     )
     timeout = IntegerField(

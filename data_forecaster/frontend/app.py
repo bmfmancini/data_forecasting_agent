@@ -8,6 +8,7 @@ testing) and defers extension initialisation until an app is available.
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any
 
@@ -23,6 +24,8 @@ from config import get_config
 from db.db import init_app as db_init_app, init_db, query_db
 from extensions import csrf, login_manager
 from models import User
+
+logger = logging.getLogger(__name__)
 
 _BLEACH_ALLOWED_TAGS: list[str] = [
     "p", "h1", "h2", "h3", "h4", "h5", "h6",
@@ -75,6 +78,7 @@ def create_app(config_name: str | None = None) -> Flask:
 
     with app.app_context():
         init_db()
+        _auto_configure_api_credentials(app)
         _sync_backend_url_from_db(app)
 
     _register_template_filters(app)
@@ -121,6 +125,63 @@ def _sync_backend_url_from_db(app: Flask) -> None:
         url = row.get("base_url", "")
         if url:
             app.config["BACKEND_URL"] = url
+
+
+def _auto_configure_api_credentials(app: Flask) -> None:
+    """Auto-store backend API credentials from env vars on first startup.
+
+    When ``FRONTEND_API_USERNAME`` and ``FRONTEND_API_KEY`` are both set
+    in the environment and the frontend's SQLite DB has no stored
+    credentials yet, this function encrypts and stores them so the
+    frontend can authenticate with the backend immediately — no admin
+    panel visit or log-scraping required.
+
+    If credentials are already stored, this is a no-op (the admin may
+    have configured different credentials via the UI).
+
+    Args:
+        app: The Flask application instance.
+    """
+    username = os.environ.get("FRONTEND_API_USERNAME")
+    api_key = os.environ.get("FRONTEND_API_KEY")
+    if not username or not api_key:
+        return
+
+    existing = query_db(
+        "SELECT encrypted_username FROM api_credentials"
+        " WHERE label = 'default' LIMIT 1",
+        one=True,
+    )
+    if existing and existing.get("encrypted_username"):
+        logger.info("API credentials already stored — skipping env auto-config.")
+        return
+
+    from db.crypto import encrypt
+    from db.db import execute_db
+
+    backend_url = app.config.get("BACKEND_URL", "http://localhost:8000")
+    enc_user = encrypt(username)
+    enc_key = encrypt(api_key)
+
+    if existing:
+        # Row exists but has no credentials — update it
+        execute_db(
+            "UPDATE api_credentials"
+            " SET base_url = ?, encrypted_username = ?, encrypted_password = ?"
+            " WHERE label = 'default'",
+            (backend_url, enc_user, enc_key),
+        )
+    else:
+        execute_db(
+            "INSERT INTO api_credentials"
+            " (label, base_url, encrypted_username, encrypted_password)"
+            " VALUES (?, ?, ?, ?)",
+            ("default", backend_url, enc_user, enc_key),
+        )
+    logger.info(
+        "API credentials auto-configured from env vars (username='%s').",
+        username,
+    )
 
 
 def _register_template_filters(app: Flask) -> None:

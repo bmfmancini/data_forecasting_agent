@@ -354,6 +354,9 @@ def api_config() -> str | Response:
         api_password: str = str(form.api_password.data or "").strip()
         timeout: int = int(form.timeout.data or 30)
 
+        # Only update credentials when the admin provides new values.
+        # PasswordField doesn't pre-populate from stored data, so leaving
+        # it blank means "keep existing credentials" — not "delete them".
         enc_user: str | None = None
         enc_pass: str | None = None
         if api_username and api_password:
@@ -368,19 +371,35 @@ def api_config() -> str | Response:
                     "admin/api_config.html", form=form, auth_status=auth_status
                 )
 
-        execute_db(
-            """
-            INSERT INTO api_credentials
-                (label, base_url, encrypted_username, encrypted_password, timeout)
-            VALUES ('default', ?, ?, ?, ?)
-            ON CONFLICT(label) DO UPDATE SET
-                base_url           = excluded.base_url,
-                encrypted_username = excluded.encrypted_username,
-                encrypted_password = excluded.encrypted_password,
-                timeout            = excluded.timeout
-            """,
-            (base_url, enc_user, enc_pass, timeout),
-        )
+        if enc_user and enc_pass:
+            # Both username and key provided — update everything
+            execute_db(
+                """
+                INSERT INTO api_credentials
+                    (label, base_url, encrypted_username, encrypted_password, timeout)
+                VALUES ('default', ?, ?, ?, ?)
+                ON CONFLICT(label) DO UPDATE SET
+                    base_url           = excluded.base_url,
+                    encrypted_username = excluded.encrypted_username,
+                    encrypted_password = excluded.encrypted_password,
+                    timeout            = excluded.timeout
+                """,
+                (base_url, enc_user, enc_pass, timeout),
+            )
+        else:
+            # No new credentials provided — update URL and timeout only,
+            # preserving the existing encrypted credentials.
+            execute_db(
+                """
+                INSERT INTO api_credentials
+                    (label, base_url, encrypted_username, encrypted_password, timeout)
+                VALUES ('default', ?, NULL, NULL, ?)
+                ON CONFLICT(label) DO UPDATE SET
+                    base_url = excluded.base_url,
+                    timeout  = excluded.timeout
+                """,
+                (base_url, timeout),
+            )
         current_app.config["BACKEND_URL"] = base_url
         flash("API configuration saved.", "success")
         return redirect(url_for("admin.api_config"))
@@ -641,15 +660,41 @@ def api_key_rotate(user_id: int) -> Response:
 
     client = get_api_client()
     try:
+        # Check if this is the active user — warn if so
+        active_username: str | None = client._api_username
+        is_active_user: bool = False
+        if active_username:
+            list_resp = client.list_api_users()
+            if list_resp.status_code == 200:
+                target = next(
+                    (u for u in list_resp.json() if u.get("id") == user_id), None
+                )
+                is_active_user = bool(
+                    target and target.get("username") == active_username
+                )
+
         resp = client.rotate_api_key(user_id)
         if resp.status_code == 200:
             data: dict[str, Any] = resp.json()
             new_key: str = data.get("api_key", "")
-            flash(
-                f"API key rotated successfully. New key (copy now — shown once): "
-                f"{new_key}",
-                "success",
-            )
+            if is_active_user:
+                flash(
+                    f"API key rotated successfully. New key (copy now — shown once): "
+                    f"{new_key}",
+                    "success",
+                )
+                flash(
+                    "⚠ This user is currently used by the frontend. "
+                    "Update the API Configuration with the new key to "
+                    "restore backend connectivity.",
+                    "warning",
+                )
+            else:
+                flash(
+                    f"API key rotated successfully. New key (copy now — shown once): "
+                    f"{new_key}",
+                    "success",
+                )
         else:
             flash(
                 f"Failed to rotate key (HTTP {resp.status_code}).",
@@ -703,6 +748,10 @@ def api_key_toggle(user_id: int) -> Response:
 def api_key_delete(user_id: int) -> Response:
     """Permanently delete an API user.
 
+    Prevents deletion of the API user whose credentials are currently
+    stored in the frontend's ``api_credentials`` table — deleting that
+    user would cause all backend requests to fail with 401 Unauthorized.
+
     Args:
         user_id: Primary key of the API user to delete.
 
@@ -710,6 +759,30 @@ def api_key_delete(user_id: int) -> Response:
         Redirect to the API keys list with a flash message.
     """
     from services.api_client import get_api_client
+
+    # ── Guard: don't allow deleting the user the frontend is actively using ──
+    try:
+        client = get_api_client()
+        current_username: str | None = client._api_username
+
+        if current_username:
+            list_resp = client.list_api_users()
+            if list_resp.status_code == 200:
+                users_list: list[dict[str, Any]] = list_resp.json()
+                target_user = next(
+                    (u for u in users_list if u.get("id") == user_id), None
+                )
+                if target_user and target_user.get("username") == current_username:
+                    flash(
+                        f"Cannot delete the API user '{current_username}' — it is "
+                        "currently used by this frontend for backend authentication. "
+                        "Create a replacement user, update the API Configuration "
+                        "with the new credentials, then delete this account.",
+                        "danger",
+                    )
+                    return redirect(url_for("admin.api_keys"))
+    except Exception:
+        logger.exception("Failed to check active API user before deletion")
 
     client = get_api_client()
     try:

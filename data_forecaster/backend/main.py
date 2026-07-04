@@ -5,13 +5,11 @@ Route handlers are kept thin — business logic lives in the
 orchestration, chat, and RAG).
 """
 
-from __future__ import annotations
-
 import asyncio
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Annotated
 
-from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
+from fastapi import Body, Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 import core.config as settings
@@ -35,6 +33,7 @@ from schemas import (
     APIUserCreatedResponse,
     APIUserResponse,
     APIUserToggleRequest,
+    AnalyzeRequest,
     AuthStatusResponse,
     BootstrapRequest,
     BootstrapResponse,
@@ -46,7 +45,7 @@ from schemas import (
     UploadResponse,
 )
 from services.chat_service import chat_general, chat_with_data
-from services.file_service import get_file, store_file
+from services.file_service import get_file, init_storage, store_file
 from services.job_service import (
     create_job,
     get_job,
@@ -71,9 +70,31 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """
     logger.info("Initializing API key database…")
     init_api_key_db()
+    init_storage()
     if has_any_users():
         set_api_key_enabled(True)
         logger.info("API users found — auth enabled.")
+    elif settings.FRONTEND_API_USERNAME and settings.FRONTEND_API_KEY:
+        # Auto-create the frontend service account from pre-shared env vars.
+        # This eliminates the need to scrape bootstrap keys from logs.
+        try:
+            create_first_user(
+                username=settings.FRONTEND_API_USERNAME,
+                api_key=settings.FRONTEND_API_KEY,
+            )
+            set_api_key_enabled(True)
+            logger.info(
+                "Frontend API user '%s' auto-created from env vars — auth enabled.",
+                settings.FRONTEND_API_USERNAME,
+            )
+            logger.warning(
+                "The initial API key was sourced from the FRONTEND_API_KEY env "
+                "var.  For production security, rotate this key via the admin "
+                "panel and update the stored frontend credentials."
+            )
+        except ValueError as exc:
+            logger.warning("Failed to auto-create frontend API user: %s", exc)
+            logger.info("No API users — auth disabled (open mode).")
     else:
         logger.info("No API users — auth disabled (open mode).")
     init_job_queue()
@@ -319,23 +340,23 @@ async def upload_file(
     },
 )
 async def preflight_check(
-    request: AnalyzeRequest,
+    body: Annotated[AnalyzeRequest, Body()],
     _user: Annotated[dict, Depends(require_api_key)],
 ) -> PreflightResponse:
     """Run data quality checks before starting the full analysis pipeline."""
-    stored = get_file(request.file_id)
+    stored = get_file(body.file_id)
     if not stored:
         raise HTTPException(
             status_code=404,
             detail="Session expired or data cleared from memory. Please re-upload your file.",
         )
 
-    date_col = request.date_col or stored["date_col"]
-    value_col = request.value_col or stored["value_col"]
+    date_col = body.date_col or stored["date_col"]
+    value_col = body.value_col or stored["value_col"]
 
     try:
         return run_preflight_checks(
-            stored["df"], date_col, value_col, request.forecast_horizon
+            stored["df"], date_col, value_col, body.forecast_horizon
         )
     except Exception as exc:
         logger.exception("Preflight failed")
@@ -351,36 +372,36 @@ async def preflight_check(
     },
 )
 def analyze(
-    request: AnalyzeRequest,
+    body: Annotated[AnalyzeRequest, Body()],
     _user: Annotated[dict, Depends(require_api_key)],
 ) -> JobSubmitResponse:
     """Enqueue a forecasting analysis job."""
     logger.info(
         "POST /analyze  file_id=%s horizon=%d",
-        request.file_id,
-        request.forecast_horizon,
+        body.file_id,
+        body.forecast_horizon,
     )
 
     if not is_queue_ready():
         raise HTTPException(status_code=503, detail="Service not ready.")
 
-    stored = get_file(request.file_id)
+    stored = get_file(body.file_id)
     if stored is None:
         raise HTTPException(
-            status_code=404, detail=f"File ID '{request.file_id}' not found."
+            status_code=404, detail=f"File ID '{body.file_id}' not found."
         )
 
-    date_col = request.date_col or stored["date_col"]
-    value_col = request.value_col or stored["value_col"]
+    date_col = body.date_col or stored["date_col"]
+    value_col = body.value_col or stored["value_col"]
 
     job_id = create_job(
-        file_id=request.file_id,
+        file_id=body.file_id,
         date_col=date_col,
         value_col=value_col,
-        forecast_horizon=request.forecast_horizon,
-        forced_model=request.forced_model,
-        user_prompt=request.user_prompt,
-        preflight_options=request.preflight_options,
+        forecast_horizon=body.forecast_horizon,
+        forced_model=body.forced_model,
+        user_prompt=body.user_prompt,
+        preflight_options=body.preflight_options,
     )
     return JobSubmitResponse(job_id=job_id, status="pending")
 
@@ -436,7 +457,7 @@ def get_job_status(
     },
 )
 async def chat_explorer(
-    request: ChatRequest,
+    request: Annotated[ChatRequest, Body()],
     _user: Annotated[dict, Depends(require_api_key)],
 ) -> ChatResponse:
     """Allow users to chat with the agent about the uploaded data and results."""

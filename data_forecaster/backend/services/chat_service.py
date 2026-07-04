@@ -21,6 +21,264 @@ from services.rag_service import get_rag_kb
 
 logger = get_logger(__name__)
 
+# ── Visualization config validation (SEC-007) ───────────────────────────────
+# Whitelists for LLM-generated visualization configs to prevent injection
+# via malicious or hallucinated Plotly configurations.
+
+# Allowed Plotly trace types in the ``data`` array of a figure.
+_ALLOWED_PLOTLY_TYPES: set[str] = {
+    "scatter",
+    "bar",
+    "line",
+    "pie",
+    "heatmap",
+    "histogram",
+    "box",
+    "violin",
+    "area",
+}
+
+# Allowed keys in each trace dict of a Plotly ``data`` array.
+_ALLOWED_TRACE_KEYS: set[str] = {
+    "type",
+    "mode",
+    "x",
+    "y",
+    "z",
+    "labels",
+    "values",
+    "name",
+    "marker",
+    "fill",
+    "text",
+}
+
+# Allowed keys in the ``marker`` sub-dict.
+_ALLOWED_MARKER_KEYS: set[str] = {"color", "size", "opacity", "symbol"}
+
+# Allowed keys in the ``layout`` dict of a Plotly figure.
+_ALLOWED_LAYOUT_KEYS: set[str] = {
+    "title",
+    "xaxis",
+    "yaxis",
+    "showlegend",
+    "legend",
+    "margin",
+    "height",
+    "width",
+    "barmode",
+    "template",
+}
+
+# Allowed dynamic config keys (for the ``renderDynamic`` frontend path).
+_ALLOWED_DYNAMIC_KEYS: set[str] = {
+    "chart_type",
+    "x_data",
+    "y_data",
+    "z_data",
+    "name",
+    "color",
+    "title",
+    "x_label",
+    "y_label",
+}
+
+# Allowed chart_type values for dynamic configs.
+_ALLOWED_DYNAMIC_CHART_TYPES: set[str] = {
+    "line",
+    "bar",
+    "scatter",
+    "histogram",
+    "box",
+    "violin",
+    "heatmap",
+    "area",
+}
+
+# Max number of data points allowed in any single array to prevent
+# memory exhaustion on the frontend.
+_MAX_DATA_POINTS: int = 10000
+
+
+def _is_safe_scalar(value: Any) -> bool:
+    """Check if a scalar value is safe for frontend rendering.
+
+    Rejects strings containing ``<script``, ``javascript:``, or ``data:`
+    patterns that could be used for XSS.
+
+    Args:
+        value: The value to check.
+
+    Returns:
+        ``True`` if the value is safe.
+    """
+    if isinstance(value, str):
+        lowered = value.lower()
+        if "<script" in lowered or "javascript:" in lowered or "data:" in lowered:
+            return False
+    return True
+
+
+def _sanitize_array(arr: Any) -> list[Any] | None:
+    """Validate and return a data array, or ``None`` if unsafe/oversized.
+
+    Args:
+        arr: The value to validate as a data array.
+
+    Returns:
+        A list of safe scalar values, or ``None`` if the input is not a
+        list, exceeds ``_MAX_DATA_POINTS``, or contains unsafe strings.
+    """
+    if not isinstance(arr, list):
+        return None
+    if len(arr) > _MAX_DATA_POINTS:
+        logger.warning("Visualization array exceeds max data points (%d)", len(arr))
+        return None
+    for item in arr:
+        if not _is_safe_scalar(item):
+            return None
+    return arr
+
+
+def _sanitize_marker(marker: Any) -> dict[str, Any] | None:
+    """Validate a Plotly ``marker`` sub-dict.
+
+    Args:
+        marker: The marker dict to validate.
+
+    Returns:
+        A sanitized marker dict, or ``None`` if invalid.
+    """
+    if not isinstance(marker, dict):
+        return None
+    safe: dict[str, Any] = {}
+    for key in _ALLOWED_MARKER_KEYS:
+        if key in marker and _is_safe_scalar(marker[key]):
+            safe[key] = marker[key]
+    return safe if safe else None
+
+
+def _validate_plotly_figure(config: dict[str, Any]) -> dict[str, Any] | None:
+    """Validate a Plotly figure config ``{data, layout}``.
+
+    Whitelists trace types, strips unknown keys, and sanitises string
+    values to prevent XSS.
+
+    Args:
+        config: The parsed JSON dict to validate.
+
+    Returns:
+        A sanitized figure dict, or ``None`` if validation fails.
+    """
+    safe_data: list[dict[str, Any]] = []
+    raw_data = config.get("data", [])
+    if not isinstance(raw_data, list):
+        return None
+
+    for trace in raw_data:
+        if not isinstance(trace, dict):
+            continue
+        trace_type = trace.get("type", "scatter")
+        if trace_type not in _ALLOWED_PLOTLY_TYPES:
+            logger.warning("Rejected Plotly trace type: %s", trace_type)
+            continue
+        safe_trace: dict[str, Any] = {"type": trace_type}
+        for key in _ALLOWED_TRACE_KEYS:
+            if key not in trace:
+                continue
+            val = trace[key]
+            if key in ("x", "y", "z", "labels", "values"):
+                sanitized = _sanitize_array(val)
+                if sanitized is not None:
+                    safe_trace[key] = sanitized
+            elif key == "marker":
+                sanitized = _sanitize_marker(val)
+                if sanitized is not None:
+                    safe_trace[key] = sanitized
+            elif _is_safe_scalar(val):
+                safe_trace[key] = val
+        safe_data.append(safe_trace)
+
+    if not safe_data:
+        return None
+
+    safe_layout: dict[str, Any] = {}
+    raw_layout = config.get("layout", {})
+    if isinstance(raw_layout, dict):
+        for key in _ALLOWED_LAYOUT_KEYS:
+            if key in raw_layout and _is_safe_scalar(raw_layout[key]):
+                safe_layout[key] = raw_layout[key]
+
+    return {"data": safe_data, "layout": safe_layout}
+
+
+def _validate_dynamic_config(config: dict[str, Any]) -> dict[str, Any] | None:
+    """Validate a dynamic chart config (``renderDynamic`` frontend path).
+
+    Whitelists chart types and config keys, sanitises data arrays.
+
+    Args:
+        config: The parsed JSON dict to validate.
+
+    Returns:
+        A sanitized config dict, or ``None`` if validation fails.
+    """
+    chart_type = str(config.get("chart_type", "bar")).lower()
+    if chart_type not in _ALLOWED_DYNAMIC_CHART_TYPES:
+        logger.warning("Rejected dynamic chart_type: %s", chart_type)
+        return None
+
+    safe: dict[str, Any] = {"chart_type": chart_type}
+    for key in _ALLOWED_DYNAMIC_KEYS:
+        if key not in config:
+            continue
+        val = config[key]
+        if key in ("x_data", "y_data", "z_data"):
+            sanitized = _sanitize_array(val)
+            if sanitized is not None:
+                safe[key] = sanitized
+        elif _is_safe_scalar(val):
+            safe[key] = val
+
+    # Must have at least one data field to be useful
+    if not any(k in safe for k in ("x_data", "y_data", "z_data")):
+        return None
+
+    return safe
+
+
+def _validate_viz_config(config: Any) -> dict[str, Any] | None:
+    """Validate an LLM-generated visualization config against a strict schema.
+
+    Detects whether the config is a Plotly figure (has ``data`` or
+    ``layout`` keys) or a dynamic config (has ``chart_type``) and routes
+    to the appropriate validator.  Returns ``None`` if the config is
+    invalid, not a dict, or fails validation — the caller should then
+    return the raw text answer without visualization data.
+
+    Args:
+        config: The parsed JSON object from the LLM response.
+
+    Returns:
+        A sanitized config dict safe for frontend rendering, or ``None``.
+    """
+    if not isinstance(config, dict):
+        return None
+
+    # Plotly figure: has "data" array or "layout" dict
+    if "data" in config or "layout" in config:
+        return _validate_plotly_figure(config)
+
+    # Dynamic config: has "chart_type"
+    if "chart_type" in config:
+        return _validate_dynamic_config(config)
+
+    # Also handle configs with just "type" (Plotly shorthand)
+    if "type" in config:
+        return _validate_plotly_figure({"data": [config]})
+
+    return None
+
 
 def chat_with_data(
     query: str, df: pd.DataFrame, file_id: str, chroma_persist_dir: str
@@ -109,7 +367,10 @@ def chat_with_data(
         if "visualization_type" in content:
             clean_content = re.sub(r"```json\s*|\s*```", "", content).strip()
             try:
-                return json.loads(clean_content)
+                parsed = json.loads(clean_content)
+                validated = _validate_viz_config(parsed)
+                if validated is not None:
+                    return validated
             except json.JSONDecodeError:
                 pass
 
@@ -124,11 +385,18 @@ def chat_with_data(
                     "data" in potential_config
                     or "type" in potential_config
                     or "layout" in potential_config
+                    or "chart_type" in potential_config
                 ):
+                    validated = _validate_viz_config(potential_config)
+                    if validated is None:
+                        logger.warning(
+                            "Rejected LLM visualization config: failed validation"
+                        )
+                        continue
                     clean_answer = content.replace(match, "").strip()
                     return {
                         "answer": clean_answer,
-                        "visualization_data": potential_config,
+                        "visualization_data": validated,
                         "visualization_type": "dynamic",
                     }
             except json.JSONDecodeError:
