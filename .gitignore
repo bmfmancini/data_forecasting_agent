@@ -219,3 +219,4 @@ __marimo__/
 graphify-out/
 *.db
 *.md
+api_keys.db
