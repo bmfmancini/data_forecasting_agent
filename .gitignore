@@ -220,3 +220,4 @@ graphify-out/
 *.db
 *.md
 api_keys.db
+.vscode/settings.json
