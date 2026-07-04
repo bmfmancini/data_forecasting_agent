@@ -1,13 +1,15 @@
-"""Main FastAPI application module for the Data Forecaster API."""
+"""Main FastAPI application module for the Data Forecaster API.
 
-from __future__ import annotations
+Route handlers are kept thin — business logic lives in the
+``backend/services/`` package (file storage, job queue, pipeline
+orchestration, chat, and RAG).
+"""
 
 import asyncio
-import uuid
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator, Dict, cast, Annotated
+from typing import Any, AsyncIterator, Annotated
 
-from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
+from fastapi import Body, Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 import core.config as settings
@@ -25,14 +27,12 @@ from auth.api_key_db import (
 from auth.dependency import require_api_key
 from core.config import set_api_key_enabled
 from core.logging_config import get_logger
-from orchestrator import chat_with_data, index_analysis_results, run_pipeline
 from schemas import (
     APIKeyRotatedResponse,
     APIUserCreateRequest,
     APIUserCreatedResponse,
     APIUserResponse,
     APIUserToggleRequest,
-    AnalysisResponse,
     AnalyzeRequest,
     AuthStatusResponse,
     BootstrapRequest,
@@ -44,111 +44,61 @@ from schemas import (
     PreflightResponse,
     UploadResponse,
 )
+from services.chat_service import chat_general, chat_with_data
+from services.file_service import get_file, init_storage, store_file
+from services.job_service import (
+    create_job,
+    get_job,
+    get_job_status_only,
+    init_job_queue,
+    is_queue_ready,
+    job_worker,
+)
 from utils.data_parser import parse_upload
 from utils.preflight import run_preflight_checks
 
 logger = get_logger(__name__)
 
-# ── In-memory stores ──────────────────────────────────────────────────────────
-# Bounds for in-memory storage to prevent OOM restarts
-MAX_FILES = 50
-MAX_JOBS = 100
-
-# { file_id: { df, date_col, value_col, freq, filename } }
-_file_store: Dict[str, Dict[str, Any]] = {}
-
-# { job_id: { status, progress, step, request, result, error } }
-_job_store: Dict[str, Dict[str, Any]] = {}
-
-# ── Job queue & worker ────────────────────────────────────────────────────────
-JOB_QUEUE: asyncio.Queue[str] = cast(asyncio.Queue, None)
-
-
-def _update_job_progress(job_id: str, pct: int, step: str) -> None:
-    """Called from the pipeline thread; CPython GIL makes dict updates thread-safe."""
-    job = _job_store.get(job_id)
-    if job:
-        job["progress"] = pct
-        job["step"] = step
-
-
-async def _job_worker() -> None:
-    """Processes one job at a time from the FIFO queue."""
-    while True:
-        job_id: str = await JOB_QUEUE.get()
-        job = _job_store.get(job_id)
-        if job is None:
-            JOB_QUEUE.task_done()
-            continue
-
-        job["status"] = "running"
-        req = job["request"]
-        stored = _file_store.get(req["file_id"])
-
-        if stored is None:
-            job["status"] = "error"
-            job["step"] = "Error: uploaded file not found."
-            job["error"] = f"File ID '{req['file_id']}' not found in store."
-            JOB_QUEUE.task_done()
-            continue
-
-        def _run_pipeline_sync(r=req, s=stored, j_id=job_id) -> AnalysisResponse:
-            return run_pipeline(
-                df=s["df"],
-                file_id=r["file_id"],
-                date_col=r["date_col"],
-                value_col=r["value_col"],
-                freq=s["freq"],
-                forecast_horizon=r["forecast_horizon"],
-                forced_model=r["forced_model"],
-                user_prompt=r.get("user_prompt"),
-                preflight_options=r.get("preflight_options"),
-                chroma_persist_dir=settings.CHROMA_PERSIST_DIR,
-                progress_callback=lambda pct, step: _update_job_progress(
-                    j_id, pct, step
-                ),
-            )
-
-        try:
-            result: AnalysisResponse = await asyncio.to_thread(_run_pipeline_sync)
-            job["status"] = "done"
-            job["progress"] = 100
-            job["step"] = "Analysis complete."
-            job["result"] = result.model_dump()
-
-            # Requirement: Store the output results in the agent's memory
-            await asyncio.to_thread(
-                index_analysis_results,
-                file_id=req["file_id"],
-                analysis_result=result,
-                chroma_persist_dir=settings.CHROMA_PERSIST_DIR,
-            )
-        except Exception as exc:  # pylint: disable=broad-exception-caught
-            logger.exception(
-                "Pipeline failed for job_id=%s file_id=%s", job_id, req["file_id"]
-            )
-            job["status"] = "error"
-            job["step"] = "Pipeline failed."
-            job["error"] = str(exc)
-        finally:
-            JOB_QUEUE.task_done()
-
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    """Manage the lifecycle of the job worker queue."""
-    global JOB_QUEUE  # pylint: disable=global-statement
+    """Manage the lifecycle of the job worker queue.
+
+    Initialises the API key database, re-enables auth if users from a
+    prior deployment exist, starts the job queue, and cancels the worker
+    on shutdown.
+    """
     logger.info("Initializing API key database…")
     init_api_key_db()
-    # If users exist from a prior deployment, re-enable auth automatically
-    # so restarts don't accidentally open the API.
+    init_storage()
     if has_any_users():
         set_api_key_enabled(True)
         logger.info("API users found — auth enabled.")
+    elif settings.FRONTEND_API_USERNAME and settings.FRONTEND_API_KEY:
+        # Auto-create the frontend service account from pre-shared env vars.
+        # This eliminates the need to scrape bootstrap keys from logs.
+        try:
+            create_first_user(
+                username=settings.FRONTEND_API_USERNAME,
+                api_key=settings.FRONTEND_API_KEY,
+            )
+            set_api_key_enabled(True)
+            logger.info(
+                "Frontend API user '%s' auto-created from env vars — auth enabled.",
+                settings.FRONTEND_API_USERNAME,
+            )
+            logger.warning(
+                "The initial API key was sourced from the FRONTEND_API_KEY env "
+                "var.  For production security, rotate this key via the admin "
+                "panel and update the stored frontend credentials."
+            )
+        except ValueError as exc:
+            logger.warning("Failed to auto-create frontend API user: %s", exc)
+            logger.info("No API users — auth disabled (open mode).")
     else:
         logger.info("No API users — auth disabled (open mode).")
-    JOB_QUEUE = asyncio.Queue()
-    worker_task = asyncio.create_task(_job_worker())
+    init_job_queue()
+    worker_task = asyncio.create_task(job_worker())
     yield
     worker_task.cancel()
     await worker_task
@@ -160,9 +110,47 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5000", "http://frontend:5000"],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=[
+        "X-API-Username",
+        "X-API-Key",
+        "Content-Type",
+        "X-Admin-Key",
+    ],
 )
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next: Any) -> Any:
+    """Add standard security headers to every response.
+
+    Sets ``X-Content-Type-Options``, ``X-Frame-Options``, and
+    ``Strict-Transport-Security`` to mitigate MIME sniffing, clickjacking,
+    and protocol downgrade attacks.
+    """
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Strict-Transport-Security"] = (
+        "max-age=31536000; includeSubDomains"
+    )
+    return response
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception) -> Response:
+    """Catch any uncaught exception and return a generic 500 response.
+
+    Logs the full exception server-side so details are available for
+    debugging without leaking them to the client.
+    """
+    logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+    return Response(
+        content='{"detail": "Internal server error."}',
+        media_type="application/json",
+        status_code=500,
+    )
+
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
@@ -212,7 +200,6 @@ def api_users_bootstrap(
         HTTPException: 403 when the admin key is missing or mismatched.
         HTTPException: 409 when users already exist (bootstrap expired).
     """
-    # Verify the deployment-time admin key
     if not settings.ADMIN_API_KEY:
         raise HTTPException(
             status_code=403,
@@ -226,7 +213,6 @@ def api_users_bootstrap(
             detail="Invalid or missing admin key.",
         )
 
-    # Bootstrap is one-time only
     if has_any_users():
         raise HTTPException(
             status_code=409,
@@ -241,7 +227,6 @@ def api_users_bootstrap(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    # Enable auth at runtime
     set_api_key_enabled(True)
     logger.info(
         "API auth enabled by bootstrap. User '%s' created.",
@@ -249,6 +234,9 @@ def api_users_bootstrap(
     )
 
     return {"user": user, "auth_enabled": True}
+
+
+# ── File Upload & Analysis ────────────────────────────────────────────────────
 
 
 @app.post(
@@ -268,9 +256,7 @@ async def upload_file(
     )
 
     # ── Validate content-type ─────────────────────────────────────────────────
-    if file.content_type not in settings.ALLOWED_MIME_TYPES + [
-        "application/octet-stream"
-    ]:
+    if file.content_type not in settings.ALLOWED_MIME_TYPES:
         raise HTTPException(
             status_code=400,
             detail=(
@@ -298,6 +284,26 @@ async def upload_file(
             ),
         )
 
+    # ── Validate file signature (magic bytes) ─────────────────────────────────
+    if not contents:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    if ext == "xlsx" and contents[:4] != b"PK\x03\x04":
+        raise HTTPException(
+            status_code=400,
+            detail="File content does not match XLSX format (expected ZIP signature).",
+        )
+    if ext == "csv":
+        try:
+            contents[:4096].decode("utf-8")
+        except UnicodeDecodeError:
+            try:
+                contents[:4096].decode("latin-1")
+            except UnicodeDecodeError:
+                raise HTTPException(
+                    status_code=400,
+                    detail="File content does not appear to be a valid text/CSV file.",
+                ) from None
+
     # ── Parse ─────────────────────────────────────────────────────────────────
     try:
         df, date_col, value_col, freq = parse_upload(
@@ -308,31 +314,12 @@ async def upload_file(
     except Exception as exc:
         logger.exception("Unexpected error during file parsing")
         raise HTTPException(
-            status_code=500, detail=f"Failed to parse file: {exc}"
+            status_code=500,
+            detail="An internal error occurred while parsing the file.",
         ) from exc
 
     # ── Store & return ────────────────────────────────────────────────────────
-    if len(_file_store) >= MAX_FILES:
-        # Evict oldest file to maintain memory stability and prevent OOM
-        oldest_file = next(iter(_file_store))
-        _file_store.pop(oldest_file)
-
-    file_id = str(uuid.uuid4())
-    _file_store[file_id] = {
-        "df": df,
-        "date_col": date_col,
-        "value_col": value_col,
-        "freq": freq,
-        "filename": file.filename,
-    }
-    logger.info(
-        "File stored: file_id=%s rows=%d date_col=%s value_col=%s freq=%s",
-        file_id,
-        len(df),
-        date_col,
-        value_col,
-        freq,
-    )
+    file_id = store_file(df, date_col, value_col, freq, file.filename)
 
     return UploadResponse(
         file_id=file_id,
@@ -353,23 +340,23 @@ async def upload_file(
     },
 )
 async def preflight_check(
-    request: AnalyzeRequest,
+    body: Annotated[AnalyzeRequest, Body()],
     _user: Annotated[dict, Depends(require_api_key)],
 ) -> PreflightResponse:
     """Run data quality checks before starting the full analysis pipeline."""
-    stored = _file_store.get(request.file_id)
+    stored = get_file(body.file_id)
     if not stored:
         raise HTTPException(
             status_code=404,
             detail="Session expired or data cleared from memory. Please re-upload your file.",
         )
 
-    date_col = request.date_col or stored["date_col"]
-    value_col = request.value_col or stored["value_col"]
+    date_col = body.date_col or stored["date_col"]
+    value_col = body.value_col or stored["value_col"]
 
     try:
         return run_preflight_checks(
-            stored["df"], date_col, value_col, request.forecast_horizon
+            stored["df"], date_col, value_col, body.forecast_horizon
         )
     except Exception as exc:
         logger.exception("Preflight failed")
@@ -385,53 +372,59 @@ async def preflight_check(
     },
 )
 def analyze(
-    request: AnalyzeRequest,
+    body: Annotated[AnalyzeRequest, Body()],
     _user: Annotated[dict, Depends(require_api_key)],
 ) -> JobSubmitResponse:
     """Enqueue a forecasting analysis job."""
     logger.info(
         "POST /analyze  file_id=%s horizon=%d",
-        request.file_id,
-        request.forecast_horizon,
+        body.file_id,
+        body.forecast_horizon,
     )
 
-    if JOB_QUEUE is None:
+    if not is_queue_ready():
         raise HTTPException(status_code=503, detail="Service not ready.")
 
-    stored = _file_store.get(request.file_id)
+    stored = get_file(body.file_id)
     if stored is None:
         raise HTTPException(
-            status_code=404, detail=f"File ID '{request.file_id}' not found."
+            status_code=404, detail=f"File ID '{body.file_id}' not found."
         )
 
-    date_col = request.date_col or stored["date_col"]
-    value_col = request.value_col or stored["value_col"]
+    date_col = body.date_col or stored["date_col"]
+    value_col = body.value_col or stored["value_col"]
 
-    if len(_job_store) >= MAX_JOBS:
-        # Simple eviction of oldest job
-        oldest_key = next(iter(_job_store))
-        _job_store.pop(oldest_key)
-
-    job_id = str(uuid.uuid4())
-    _job_store[job_id] = {
-        "status": "pending",
-        "progress": 0,
-        "step": "Queued — waiting for an available slot…",
-        "request": {
-            "file_id": request.file_id,
-            "date_col": date_col,
-            "value_col": value_col,
-            "forecast_horizon": request.forecast_horizon,
-            "forced_model": request.forced_model,
-            "user_prompt": request.user_prompt,
-            "preflight_options": request.preflight_options,
-        },
-        "result": None,
-        "error": None,
-    }
-    JOB_QUEUE.put_nowait(job_id)
-    logger.info("Job enqueued: job_id=%s file_id=%s", job_id, request.file_id)
+    job_id = create_job(
+        file_id=body.file_id,
+        date_col=date_col,
+        value_col=value_col,
+        forecast_horizon=body.forecast_horizon,
+        forced_model=body.forced_model,
+        user_prompt=body.user_prompt,
+        preflight_options=body.preflight_options,
+    )
     return JobSubmitResponse(job_id=job_id, status="pending")
+
+
+# ── Job Status & Results ──────────────────────────────────────────────────────
+
+
+@app.get("/jobs/{job_id}/status", responses={404: {"description": "Job ID not found"}})
+def get_job_status_lightweight(
+    job_id: str,
+    _user: Annotated[dict, Depends(require_api_key)],
+) -> dict[str, Any]:
+    """Return only status/progress/step for lightweight polling.
+
+    This endpoint excludes the full ``result`` payload (which can be
+    large with base64 charts) so polling is fast.  Use
+    ``GET /jobs/{job_id}`` to retrieve the complete results once the
+    job is done.
+    """
+    status = get_job_status_only(job_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
+    return {"job_id": job_id, **status}
 
 
 @app.get("/jobs/{job_id}", responses={404: {"description": "Job ID not found"}})
@@ -439,8 +432,8 @@ def get_job_status(
     job_id: str,
     _user: Annotated[dict, Depends(require_api_key)],
 ) -> JobStatusResponse:
-    """Retrieve the status and results of a specific background job."""
-    job = _job_store.get(job_id)
+    """Retrieve the full status and results of a specific background job."""
+    job = get_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
     return JobStatusResponse(
@@ -453,6 +446,9 @@ def get_job_status(
     )
 
 
+# ── Chat ──────────────────────────────────────────────────────────────────────
+
+
 @app.post(
     "/chat",
     responses={
@@ -461,24 +457,22 @@ def get_job_status(
     },
 )
 async def chat_explorer(
-    request: ChatRequest,
+    request: Annotated[ChatRequest, Body()],
     _user: Annotated[dict, Depends(require_api_key)],
 ) -> ChatResponse:
-    """Allows users to chat with the agent about the uploaded data and results."""
-    # If file_id is provided, use the specific file data
+    """Allow users to chat with the agent about the uploaded data and results."""
     if request.file_id:
-        stored = _file_store.get(request.file_id)
+        stored = get_file(request.file_id)
         if not stored:
             raise HTTPException(
                 status_code=404,
                 detail=(
-                    "Chat session lost: the associated data is no longer in the server memory. "
-                    "Please re-run the analysis."
+                    "Chat session lost: the associated data is no longer "
+                    "in the server memory. Please re-run the analysis."
                 ),
             )
 
         try:
-            # Delegate to orchestrator to query both the data and the indexed memory
             response = await asyncio.to_thread(
                 chat_with_data,
                 query=request.query,
@@ -489,24 +483,26 @@ async def chat_explorer(
             return ChatResponse(**response)
         except Exception as exc:
             logger.exception("Chat exploration failed")
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=500,
+                detail="An internal error occurred while processing the chat request.",
+            ) from exc
     else:
-        # General chat without specific file - use RAG knowledge base
         try:
-            from orchestrator import chat_general
-
-            # Delegate to orchestrator for general questions using RAG
             response = await asyncio.to_thread(
                 chat_general,
                 query=request.query,
                 chroma_persist_dir=settings.CHROMA_PERSIST_DIR,
             )
             return ChatResponse(**response)
-        except Exception as exc:
+        except Exception:
             logger.exception("General chat failed")
-            # Provide a basic response
-            answer = f"I can help with general time series forecasting questions. Technical details: {str(exc)}"
-            return ChatResponse(answer=answer)
+            return ChatResponse(
+                answer=(
+                    "I encountered an error while processing your request. "
+                    "Please try again later."
+                )
+            )
 
 
 # ── API User Management Endpoints (admin) ─────────────────────────────────────

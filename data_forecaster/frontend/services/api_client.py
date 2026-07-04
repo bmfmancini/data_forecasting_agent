@@ -5,8 +5,6 @@ Provides :class:`BackendAPIClient` which wraps every call to the FastAPI
 forecasting backend.  The factory function :func:`get_api_client` resolves
 the active backend URL and credentials from the database (with environment
 variable fallback) so all callers remain decoupled from configuration details.
-
-Timeout constants mirror those used by the original Streamlit frontend.
 """
 
 from __future__ import annotations
@@ -145,7 +143,49 @@ class BackendAPIClient:
         )
 
     def get_job_status(self, job_id: str) -> requests.Response:
-        """Poll the status of a previously submitted analysis job.
+        """Poll the full status and results of a previously submitted job.
+
+        Use :meth:`get_job_status_lightweight` for frequent polling and
+        this method only when the full result payload is needed.
+
+        Args:
+            job_id: Identifier returned by :meth:`submit_analysis`.
+
+        Returns:
+            The :class:`requests.Response` from ``GET /jobs/{job_id}``.
+        """
+        return requests.get(
+            f"{self._base_url}/jobs/{job_id}",
+            headers=self._headers(),
+            timeout=JOB_STATUS_TIMEOUT,
+        )
+
+    def get_job_status_lightweight(self, job_id: str) -> requests.Response:
+        """Poll only status/progress/step without the full result payload.
+
+        This is the preferred endpoint for frequent polling — it avoids
+        transferring base64 charts and forecast arrays on every poll.
+        Once the status is ``done``, call :meth:`get_job_status` (or
+        :meth:`get_job_results`) to retrieve the complete results.
+
+        Args:
+            job_id: Identifier returned by :meth:`submit_analysis`.
+
+        Returns:
+            The :class:`requests.Response` from
+            ``GET /jobs/{job_id}/status``.
+        """
+        return requests.get(
+            f"{self._base_url}/jobs/{job_id}/status",
+            headers=self._headers(),
+            timeout=JOB_STATUS_TIMEOUT,
+        )
+
+    def get_job_results(self, job_id: str) -> requests.Response:
+        """Retrieve the full results of a completed job.
+
+        Call this only after :meth:`get_job_status_lightweight` reports
+        ``status == "done"``.
 
         Args:
             job_id: Identifier returned by :meth:`submit_analysis`.

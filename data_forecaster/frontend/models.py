@@ -26,11 +26,13 @@ class User(UserMixin):  # type: ignore[misc]
         username: str,
         role_name: str,
         active: bool,
+        must_change_password: bool = False,
     ) -> None:
         self._id = user_id
         self.username = username
         self.role_name = role_name
         self._active = active
+        self.must_change_password = must_change_password
 
     @property
     def id(self) -> int:

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import re
 from functools import wraps
 from typing import Any, Callable, TypeVar
@@ -31,10 +32,13 @@ from flask import (
 from flask_login import current_user, login_required
 from werkzeug.wrappers import Response
 
+from blueprints.decorators import password_change_required
 from blueprints.main import main_bp
 from services.api_client import get_api_client
 
 _F = TypeVar("_F", bound=Callable[..., Any])
+
+logger = logging.getLogger(__name__)
 
 _VISUAL_TAG_RE: re.Pattern[str] = re.compile(r"\[VISUAL:([A-Z_]+)\]")
 
@@ -469,9 +473,10 @@ def load_demo() -> Response:
         else:
             detail = resp.json().get("detail", "Demo upload failed.")
             flash(detail, "danger")
-    except Exception as exc:
+    except Exception:
+        logger.exception("Backend connection error during demo data load")
         flash(
-            f"Backend connection error: {exc}. Verify BACKEND_URL and service availability.",
+            "Backend connection error. Verify BACKEND_URL and service availability.",
             "danger",
         )
 
@@ -512,8 +517,9 @@ def api_upload() -> Response:
             session["preview_data"] = _parse_preview(content, filename)
             return jsonify(upload_info)
         return jsonify({"error": resp.json().get("detail", "Upload failed.")}), resp.status_code
-    except Exception as exc:
-        return jsonify({"error": f"Backend connection error: {exc}"}), 503
+    except Exception:
+        logger.exception("Backend connection error during upload")
+        return jsonify({"error": "Backend connection error."}), 503
 
 
 @main_bp.route("/api/columns", methods=["POST"])
@@ -552,8 +558,9 @@ def api_columns() -> Response:
             session["preflight_options"] = _preflight_defaults(preflight)
             return jsonify({"preflight": preflight})
         return jsonify({"error": resp.json().get("detail", "Preflight failed.")}), resp.status_code
-    except Exception as exc:
-        return jsonify({"error": f"Backend connection error: {exc}"}), 503
+    except Exception:
+        logger.exception("Backend connection error during preflight")
+        return jsonify({"error": "Backend connection error."}), 503
 
 
 @main_bp.route("/api/preflight-choices", methods=["POST"])
@@ -631,8 +638,9 @@ def api_analyze() -> Response:
             jsonify({"error": resp.json().get("detail", "Failed to submit job.")}),
             resp.status_code,
         )
-    except Exception as exc:
-        return jsonify({"error": f"Backend connection error: {exc}"}), 503
+    except Exception:
+        logger.exception("Backend connection error during preflight")
+        return jsonify({"error": "Backend connection error."}), 503
 
 
 @main_bp.route("/api/jobs/status")
@@ -653,20 +661,25 @@ def api_job_status() -> Response:
 
     try:
         client = get_api_client()
-        resp = client.get_job_status(job_id)
-        if resp.status_code != 200:
+
+        # ── Lightweight poll (no result payload) ─────────────────────────────
+        status_resp = client.get_job_status_lightweight(job_id)
+        if status_resp.status_code != 200:
             return jsonify({"error": "Failed to poll job status."}), 502
 
-        job: dict[str, Any] = resp.json()
-        status: str = job.get("status", "")
-        progress: int = int(job.get("progress", 0))
-        step: str = str(job.get("step", ""))
+        status_data: dict[str, Any] = status_resp.json()
+        status: str = status_data.get("status", "")
+        progress: int = int(status_data.get("progress", 0))
+        step: str = str(status_data.get("step", ""))
 
         session["job_progress"] = progress
         session["job_step"] = step
 
         if status == "done":
-            session["analysis_result"] = job.get("result")
+            # Fetch full results only once the job is complete
+            results_resp = client.get_job_results(job_id)
+            if results_resp.status_code == 200:
+                session["analysis_result"] = results_resp.json().get("result")
             session["job_running"] = False
             session["job_id"] = None
             session["analysis_error"] = None
@@ -681,7 +694,13 @@ def api_job_status() -> Response:
             )
 
         if status == "error":
-            error_msg: str = str(job.get("error", "Analysis failed."))
+            # Fetch the error message from the full endpoint
+            results_resp = client.get_job_results(job_id)
+            error_msg: str = "Analysis failed."
+            if results_resp.status_code == 200:
+                error_msg = str(
+                    results_resp.json().get("error", "Analysis failed.")
+                )
             session["job_running"] = False
             session["job_id"] = None
             session["analysis_error"] = error_msg
@@ -704,8 +723,9 @@ def api_job_status() -> Response:
             }
         )
 
-    except Exception as exc:
-        return jsonify({"error": f"Status poll error: {exc}"}), 503
+    except Exception:
+        logger.exception("Status poll error")
+        return jsonify({"error": "Status poll error."}), 503
 
 
 @main_bp.route("/api/chat", methods=["POST"])
@@ -751,8 +771,9 @@ def api_chat() -> Response:
             jsonify({"error": resp.json().get("detail", "Chat request failed.")}),
             resp.status_code,
         )
-    except Exception as exc:
-        return jsonify({"error": f"Backend connection error: {exc}"}), 503
+    except Exception:
+        logger.exception("Backend connection error during chat")
+        return jsonify({"error": "Backend connection error."}), 503
 
 
 @main_bp.route("/api/clear", methods=["POST"])

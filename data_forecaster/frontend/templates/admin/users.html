@@ -9,7 +9,7 @@
 <div class="card">
     <div class="card-body">
         <table class="table table-dark table-hover align-middle mb-0">
-            <thead><tr><th>ID</th><th>Username</th><th>Role</th><th>Active</th><th>Created</th><th class="text-end">Actions</th></tr></thead>
+            <thead><tr><th>ID</th><th>Username</th><th>Role</th><th>Active</th><th>Password</th><th>Created</th><th class="text-end">Actions</th></tr></thead>
             <tbody>
                 {% for user in users %}
                 <tr>
@@ -17,8 +17,21 @@
                     <td class="fw-semibold">{{ user.username }}</td>
                     <td>{{ user.role }}</td>
                     <td>{% if user.active %}<span class="badge text-bg-success">Active</span>{% else %}<span class="badge text-bg-secondary">Inactive</span>{% endif %}</td>
+                    <td>
+                        {% if user.must_change_password %}
+                            <span class="badge text-bg-warning">Reset Required</span>
+                        {% else %}
+                            <span class="badge text-bg-success">OK</span>
+                        {% endif %}
+                    </td>
                     <td style="color:var(--text-muted-custom);">{{ user.created_at or '—' }}</td>
-                    <td class="text-end"><a href="{{ url_for('admin.user_edit', user_id=user.id) }}" class="btn btn-outline-secondary btn-sm">Edit</a></td>
+                    <td class="text-end">
+                        <a href="{{ url_for('admin.user_edit', user_id=user.id) }}" class="btn btn-outline-secondary btn-sm">Edit</a>
+                        <form action="{{ url_for('admin.user_force_reset', user_id=user.id) }}" method="post" class="d-inline">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-outline-warning btn-sm" {% if user.must_change_password %}disabled{% endif %}>Force Reset</button>
+                        </form>
+                    </td>
                 </tr>
                 {% endfor %}
             </tbody>

@@ -4,8 +4,10 @@
 {% block content %}
 {% if has_bootstrap %}
 <div class="alert alert-warning">
-    <strong>⚠ Bootstrap API account detected.</strong><br>
-    For security, create a replacement API user and rotate or remove this account.
+    <strong>⚠ Initial API key in use.</strong><br>
+    The frontend API key was auto-configured from the <code>FRONTEND_API_KEY</code> environment variable.
+    For production security, rotate this key (🔄 below), copy the new plaintext key, then update the
+    <a href="{{ url_for('admin.api_config') }}" class="alert-link">API Configuration</a> with the new credentials.
 </div>
 {% endif %}
 <div class="d-flex justify-content-between align-items-center mb-3">

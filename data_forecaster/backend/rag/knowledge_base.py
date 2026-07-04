@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import os
+import uuid
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import chromadb
 from chromadb.config import Settings
@@ -22,9 +23,9 @@ CHUNK_OVERLAP = 80  # characters overlapping between consecutive chunks
 class RAGKnowledgeBase:
     def __init__(self, persist_directory: str = "./chroma_db") -> None:
         self._persist_directory = persist_directory
-        self._client: Optional[chromadb.ClientAPI] = None
-        self._collection: Optional[chromadb.Collection] = None
-        self._embedder: Optional[SentenceTransformer] = None
+        self._client: chromadb.ClientAPI | None = None
+        self._collection: chromadb.Collection | None = None
+        self._embedder: SentenceTransformer | None = None
 
     def load_documents(self) -> None:
         """Initialise ChromaDB, load and upsert all .txt docs from docs/."""
@@ -95,8 +96,8 @@ class RAGKnowledgeBase:
     def add_texts(
         self,
         texts: list[str],
-        metadatas: Optional[list[dict[str, Any]]] = None,
-        ids: Optional[list[str]] = None,
+        metadatas: list[dict[str, Any]] | None = None,
+        ids: list[str] | None = None,
     ) -> list[str]:
         """Embed and upsert arbitrary text snippets (e.g. analysis results).
 
@@ -117,8 +118,6 @@ class RAGKnowledgeBase:
         if ids is None:
             # Use a hash of the text + a random suffix to avoid collisions
             # when the same content is ingested twice.
-            import uuid
-
             ids = [f"runtime__{uuid.uuid4().hex}" for _ in texts]
 
         # Chunk long snippets using the same splitter used at load time.

@@ -7,6 +7,7 @@ role.  The ``admin_required`` decorator enforces this.
 
 from __future__ import annotations
 
+import logging
 from functools import wraps
 from typing import Any, Callable, TypeVar
 
@@ -33,6 +34,8 @@ from blueprints.admin.forms import (
 from db.db import execute_db, query_db
 
 _F = TypeVar("_F", bound=Callable[..., Any])
+
+logger = logging.getLogger(__name__)
 
 
 def admin_required(f: _F) -> _F:
@@ -87,7 +90,7 @@ def dashboard() -> str:
             api_key_count = len(api_users_list)
             has_bootstrap = any(u.get("bootstrap") for u in api_users_list)
     except Exception:
-        pass
+        logger.exception("Failed to fetch API users for admin dashboard")
 
     return render_template(
         "admin/dashboard.html",
@@ -108,7 +111,8 @@ def users() -> str:
     """
     rows = query_db(
         """
-        SELECT u.id, u.username, r.name AS role, u.active, u.created_at
+        SELECT u.id, u.username, r.name AS role, u.active, u.created_at,
+               u.must_change_password
         FROM users u
         JOIN roles r ON r.id = u.role_id
         ORDER BY u.id
@@ -116,6 +120,42 @@ def users() -> str:
     )
     user_list: list[dict[str, Any]] = rows if isinstance(rows, list) else []
     return render_template("admin/users.html", users=user_list)
+
+
+@admin_bp.route("/users/<int:user_id>/force-reset", methods=["POST"])
+@admin_required
+def user_force_reset(user_id: int) -> Response:
+    """Force a user to change their password on next login.
+
+    Sets the ``must_change_password`` flag for *user_id* and redirects back
+    to the user list.
+
+    Args:
+        user_id: Primary key of the user to flag.
+
+    Returns:
+        A redirect response to the user management page.
+    """
+    row = query_db(
+        "SELECT id, username FROM users WHERE id = ?", (user_id,), one=True
+    )
+    if not row or not isinstance(row, dict):
+        flash("User not found.", "danger")
+        return redirect(url_for("admin.users"))
+
+    if int(row["id"]) == current_user.id:  # type: ignore[union-attr]
+        flash("You cannot force a password reset on yourself.", "warning")
+        return redirect(url_for("admin.users"))
+
+    execute_db(
+        "UPDATE users SET must_change_password = 1 WHERE id = ?",
+        (user_id,),
+    )
+    flash(
+        f"'{row['username']}' will be required to change their password on next login.",
+        "success",
+    )
+    return redirect(url_for("admin.users"))
 
 
 @admin_bp.route("/users/new", methods=["GET", "POST"])
@@ -175,7 +215,8 @@ def user_edit(user_id: int) -> str | Response:
     """
     row = query_db(
         """
-        SELECT u.id, u.username, r.name AS role_name, u.active
+        SELECT u.id, u.username, r.name AS role_name, u.active,
+               u.must_change_password
         FROM users u
         JOIN roles r ON r.id = u.role_id
         WHERE u.id = ?
@@ -191,12 +232,14 @@ def user_edit(user_id: int) -> str | Response:
     if request.method == "GET":
         form.role.data = str(row["role_name"])
         form.active.data = bool(row["active"])
+        form.force_password_reset.data = bool(row.get("must_change_password", 0))
 
     if form.validate_on_submit():
         new_password: str = str(form.password.data or "").strip()
         confirm_password: str = str(form.confirm_password.data or "").strip()
         new_role: str = str(form.role.data or "user")
         new_active: bool = bool(form.active.data)
+        force_reset: bool = bool(form.force_password_reset.data)
 
         if new_password and new_password != confirm_password:
             flash("Passwords do not match.", "danger")
@@ -212,13 +255,13 @@ def user_edit(user_id: int) -> str | Response:
         if new_password:
             pw_hash = generate_password_hash(new_password)
             execute_db(
-                "UPDATE users SET password_hash = ?, role_id = ?, active = ? WHERE id = ?",
-                (pw_hash, int(role_row["id"]), int(new_active), user_id),
+                "UPDATE users SET password_hash = ?, role_id = ?, active = ?, must_change_password = ? WHERE id = ?",
+                (pw_hash, int(role_row["id"]), int(new_active), int(force_reset or 1), user_id),
             )
         else:
             execute_db(
-                "UPDATE users SET role_id = ?, active = ? WHERE id = ?",
-                (int(role_row["id"]), int(new_active), user_id),
+                "UPDATE users SET role_id = ?, active = ?, must_change_password = ? WHERE id = ?",
+                (int(role_row["id"]), int(new_active), int(force_reset), user_id),
             )
 
         flash("User updated successfully.", "success")
@@ -311,6 +354,9 @@ def api_config() -> str | Response:
         api_password: str = str(form.api_password.data or "").strip()
         timeout: int = int(form.timeout.data or 30)
 
+        # Only update credentials when the admin provides new values.
+        # PasswordField doesn't pre-populate from stored data, so leaving
+        # it blank means "keep existing credentials" — not "delete them".
         enc_user: str | None = None
         enc_pass: str | None = None
         if api_username and api_password:
@@ -325,19 +371,35 @@ def api_config() -> str | Response:
                     "admin/api_config.html", form=form, auth_status=auth_status
                 )
 
-        execute_db(
-            """
-            INSERT INTO api_credentials
-                (label, base_url, encrypted_username, encrypted_password, timeout)
-            VALUES ('default', ?, ?, ?, ?)
-            ON CONFLICT(label) DO UPDATE SET
-                base_url           = excluded.base_url,
-                encrypted_username = excluded.encrypted_username,
-                encrypted_password = excluded.encrypted_password,
-                timeout            = excluded.timeout
-            """,
-            (base_url, enc_user, enc_pass, timeout),
-        )
+        if enc_user and enc_pass:
+            # Both username and key provided — update everything
+            execute_db(
+                """
+                INSERT INTO api_credentials
+                    (label, base_url, encrypted_username, encrypted_password, timeout)
+                VALUES ('default', ?, ?, ?, ?)
+                ON CONFLICT(label) DO UPDATE SET
+                    base_url           = excluded.base_url,
+                    encrypted_username = excluded.encrypted_username,
+                    encrypted_password = excluded.encrypted_password,
+                    timeout            = excluded.timeout
+                """,
+                (base_url, enc_user, enc_pass, timeout),
+            )
+        else:
+            # No new credentials provided — update URL and timeout only,
+            # preserving the existing encrypted credentials.
+            execute_db(
+                """
+                INSERT INTO api_credentials
+                    (label, base_url, encrypted_username, encrypted_password, timeout)
+                VALUES ('default', ?, NULL, NULL, ?)
+                ON CONFLICT(label) DO UPDATE SET
+                    base_url = excluded.base_url,
+                    timeout  = excluded.timeout
+                """,
+                (base_url, timeout),
+            )
         current_app.config["BACKEND_URL"] = base_url
         flash("API configuration saved.", "success")
         return redirect(url_for("admin.api_config"))
@@ -429,7 +491,7 @@ def api_config_enable_auth() -> Response:
         try:
             detail = resp.json().get("detail", detail)
         except Exception:
-            pass
+            logger.exception("Failed to parse bootstrap error response")
         flash(f"Bootstrap failed (HTTP {resp.status_code}): {detail}", "danger")
         return redirect(url_for("admin.api_config"))
 
@@ -598,15 +660,41 @@ def api_key_rotate(user_id: int) -> Response:
 
     client = get_api_client()
     try:
+        # Check if this is the active user — warn if so
+        active_username: str | None = client._api_username
+        is_active_user: bool = False
+        if active_username:
+            list_resp = client.list_api_users()
+            if list_resp.status_code == 200:
+                target = next(
+                    (u for u in list_resp.json() if u.get("id") == user_id), None
+                )
+                is_active_user = bool(
+                    target and target.get("username") == active_username
+                )
+
         resp = client.rotate_api_key(user_id)
         if resp.status_code == 200:
             data: dict[str, Any] = resp.json()
             new_key: str = data.get("api_key", "")
-            flash(
-                f"API key rotated successfully. New key (copy now — shown once): "
-                f"{new_key}",
-                "success",
-            )
+            if is_active_user:
+                flash(
+                    f"API key rotated successfully. New key (copy now — shown once): "
+                    f"{new_key}",
+                    "success",
+                )
+                flash(
+                    "⚠ This user is currently used by the frontend. "
+                    "Update the API Configuration with the new key to "
+                    "restore backend connectivity.",
+                    "warning",
+                )
+            else:
+                flash(
+                    f"API key rotated successfully. New key (copy now — shown once): "
+                    f"{new_key}",
+                    "success",
+                )
         else:
             flash(
                 f"Failed to rotate key (HTTP {resp.status_code}).",
@@ -660,6 +748,10 @@ def api_key_toggle(user_id: int) -> Response:
 def api_key_delete(user_id: int) -> Response:
     """Permanently delete an API user.
 
+    Prevents deletion of the API user whose credentials are currently
+    stored in the frontend's ``api_credentials`` table — deleting that
+    user would cause all backend requests to fail with 401 Unauthorized.
+
     Args:
         user_id: Primary key of the API user to delete.
 
@@ -667,6 +759,30 @@ def api_key_delete(user_id: int) -> Response:
         Redirect to the API keys list with a flash message.
     """
     from services.api_client import get_api_client
+
+    # ── Guard: don't allow deleting the user the frontend is actively using ──
+    try:
+        client = get_api_client()
+        current_username: str | None = client._api_username
+
+        if current_username:
+            list_resp = client.list_api_users()
+            if list_resp.status_code == 200:
+                users_list: list[dict[str, Any]] = list_resp.json()
+                target_user = next(
+                    (u for u in users_list if u.get("id") == user_id), None
+                )
+                if target_user and target_user.get("username") == current_username:
+                    flash(
+                        f"Cannot delete the API user '{current_username}' — it is "
+                        "currently used by this frontend for backend authentication. "
+                        "Create a replacement user, update the API Configuration "
+                        "with the new credentials, then delete this account.",
+                        "danger",
+                    )
+                    return redirect(url_for("admin.api_keys"))
+    except Exception:
+        logger.exception("Failed to check active API user before deletion")
 
     client = get_api_client()
     try:

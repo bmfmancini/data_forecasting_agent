@@ -1,22 +1,24 @@
 from __future__ import annotations
 
 import io
-from typing import Optional
 
 import pandas as pd
 
+import core.config as settings
 from core.logging_config import get_logger
 
 logger = get_logger(__name__)
 
-ALLOWED_EXTENSIONS = {"csv", "xlsx"}
+# Re-export the canonical list from core.config so callers can import
+# from either location without duplication.
+ALLOWED_EXTENSIONS = set(settings.ALLOWED_EXTENSIONS)
 
 
 def parse_upload(
     content: bytes,
     filename: str,
-    date_col: Optional[str] = None,
-    value_col: Optional[str] = None,
+    date_col: str | None = None,
+    value_col: str | None = None,
 ) -> tuple[pd.DataFrame, str, str, str]:
     """Parse uploaded CSV or XLSX bytes into a cleaned DataFrame.
 
@@ -72,7 +74,7 @@ def parse_upload(
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
-def _detect_date_column(df: pd.DataFrame) -> Optional[str]:
+def _detect_date_column(df: pd.DataFrame) -> str | None:
     """Return first column that can be parsed as dates."""
     date_keywords = {
         "date",
@@ -104,7 +106,7 @@ def _detect_date_column(df: pd.DataFrame) -> Optional[str]:
     return None
 
 
-def _detect_value_column(df: pd.DataFrame, exclude: Optional[str]) -> Optional[str]:
+def _detect_value_column(df: pd.DataFrame, exclude: str | None) -> str | None:
     """Return the first numeric column that is not the date column.
 
     This is intentionally simple — the frontend exposes all columns so the

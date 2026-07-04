@@ -95,6 +95,14 @@ def init_db() -> None:
     with open(schema_path, encoding="utf-8") as f:
         db.executescript(f.read())
 
+    # ── Lightweight migration: add must_change_password to pre-existing DBs ──
+    cols = db.execute("PRAGMA table_info(users)").fetchall()
+    col_names = {c[1] for c in cols} if cols else set()
+    if "must_change_password" not in col_names:
+        db.execute(
+            "ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0"
+        )
+
     db.execute(
         "INSERT OR IGNORE INTO roles (id, name) VALUES (1, 'admin')"
     )
@@ -106,11 +114,31 @@ def init_db() -> None:
     db.execute(
         """
         INSERT OR IGNORE INTO users
-            (username, password_hash, role_id, active)
-        VALUES (?, ?, 1, 1)
+            (username, password_hash, role_id, active, must_change_password)
+        VALUES (?, ?, 1, 1, 1)
         """,
         ("admin", admin_hash),
     )
+    # Ensure the flag is set on pre-existing admin rows whose password is
+    # still the default.  INSERT OR IGNORE above does not update existing
+    # rows, so a database created before this feature was added would keep
+    # must_change_password = 0.  We cannot compare password_hash directly
+    # because generate_password_hash uses a random salt, so we verify the
+    # plaintext password with check_password_hash instead.
+    from werkzeug.security import check_password_hash
+
+    existing = db.execute(
+        "SELECT password_hash FROM users WHERE username = 'admin'"
+    ).fetchone()
+    if existing and check_password_hash(existing[0], "admin"):
+        db.execute(
+            """
+            UPDATE users
+            SET must_change_password = 1
+            WHERE username = 'admin'
+              AND must_change_password = 0
+            """
+        )
 
     backend_url = current_app.config.get("BACKEND_URL", "http://localhost:8000")
     db.execute(

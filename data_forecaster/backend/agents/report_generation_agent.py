@@ -5,6 +5,7 @@ from typing import Any
 from core.config import GEMINI_TEMPERATURE
 from core.llm_factory import get_llm
 from core.logging_config import get_logger
+from prompts.report_generation_prompt import REPORT_GENERATION_PROMPT
 from rag.knowledge_base import RAGKnowledgeBase
 from schemas import (
     ForecastResult,
@@ -12,7 +13,6 @@ from schemas import (
     StatisticalResult,
     ValidationResult,
 )
-from prompts.report_generation_prompt import REPORT_GENERATION_PROMPT
 
 logger = get_logger(__name__)
 

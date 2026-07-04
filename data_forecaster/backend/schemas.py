@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 from pydantic import BaseModel, Field
 
 
@@ -9,9 +9,9 @@ class UploadResponse(BaseModel):
     filename: str
     rows: int
     columns: list[str]
-    detected_date_col: Optional[str] = None
-    detected_value_col: Optional[str] = None
-    detected_frequency: Optional[str] = None
+    detected_date_col: str | None = None
+    detected_value_col: str | None = None
+    detected_frequency: str | None = None
 
 
 class PreflightDecision(BaseModel):
@@ -26,7 +26,7 @@ class PreflightDecision(BaseModel):
 
 class PreflightResponse(BaseModel):
     status: str  # "ready" | "warning" | "needs_input"
-    detected_frequency: Optional[str] = None
+    detected_frequency: str | None = None
     row_count: int
     usable_observations: int
     duplicate_timestamps: int
@@ -42,30 +42,30 @@ class PreflightResponse(BaseModel):
 class AnalyzeRequest(BaseModel):
     file_id: str
     forecast_horizon: int
-    date_col: Optional[str] = None
-    value_col: Optional[str] = None
-    forced_model: Optional[str] = (
+    date_col: str | None = None
+    value_col: str | None = None
+    forced_model: str | None = (
         None  # "Holt-Winters" | "ARIMA" | "SARIMA" | None (auto)
     )
-    user_prompt: Optional[str] = (
+    user_prompt: str | None = (
         None  # Extra instructions appended to the report prompt
     )
-    preflight_options: Optional[dict[str, Any]] = Field(default_factory=dict)
+    preflight_options: dict[str, Any] | None = Field(default_factory=dict)
 
 
 class ChatRequest(BaseModel):
     """Request schema for the data explorer chat."""
 
-    file_id: Optional[str] = None
-    query: str
+    file_id: str | None = None
+    query: str = Field(..., max_length=2000)
 
 
 class ChatResponse(BaseModel):
     """Response schema for the data explorer chat."""
 
     answer: str
-    visualization_data: Optional[dict[str, Any]] = None
-    visualization_type: Optional[str] = None
+    visualization_data: dict[str, Any] | None = None
+    visualization_type: str | None = None
 
 
 class ValidationResult(BaseModel):
@@ -75,8 +75,8 @@ class ValidationResult(BaseModel):
     duplicate_timestamps: int
     missing_values: int
     is_regular: bool
-    frequency: Optional[str] = None
-    frequency_alias: Optional[str] = None
+    frequency: str | None = None
+    frequency_alias: str | None = None
     issues: list[str]
     summary: str
     reasoning_steps: list[dict[str, Any]] = Field(default_factory=list)
@@ -98,9 +98,9 @@ class StatisticalResult(BaseModel):
     recommended_remediation: list[str] = Field(
         default_factory=list
     )  # e.g. ["iqr_clip", "box_cox"]
-    domain: Optional[str] = None
-    seasonal_period: Optional[int] = None
-    dominant_period: Optional[float] = None
+    domain: str | None = None
+    seasonal_period: int | None = None
+    dominant_period: float | None = None
     summary: str
     reasoning_steps: list[dict[str, Any]] = Field(default_factory=list)
 
@@ -108,10 +108,10 @@ class StatisticalResult(BaseModel):
 class ModelSelectionResult(BaseModel):
     selected_model: str
     explanation: str
-    holt_winters_rejected_reason: Optional[str] = None
-    arima_rejected_reason: Optional[str] = None
-    sarima_rejected_reason: Optional[str] = None
-    ewma_rejected_reason: Optional[str] = None
+    holt_winters_rejected_reason: str | None = None
+    arima_rejected_reason: str | None = None
+    sarima_rejected_reason: str | None = None
+    ewma_rejected_reason: str | None = None
     reasoning_steps: list[dict[str, Any]] = Field(default_factory=list)
 
 
@@ -153,8 +153,8 @@ class JobStatusResponse(BaseModel):
     status: str  # "pending" | "running" | "done" | "error"
     progress: int  # 0–100
     step: str
-    result: Optional[dict] = None
-    error: Optional[str] = None
+    result: dict | None = None
+    error: str | None = None
 
 
 # ── API Key Management Schemas ────────────────────────────────────────────────
@@ -176,8 +176,8 @@ class APIUserResponse(BaseModel):
     enabled: bool
     bootstrap: bool
     created_at: str
-    last_used: Optional[str] = None
-    last_used_ip: Optional[str] = None
+    last_used: str | None = None
+    last_used_ip: str | None = None
 
 
 class APIUserCreatedResponse(BaseModel):

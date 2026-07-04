@@ -73,6 +73,7 @@ class UserEditForm(FlaskForm):  # type: ignore[misc]
         choices=[("user", "User"), ("admin", "Administrator")],
     )
     active = BooleanField("Account active")
+    force_password_reset = BooleanField("Force password change on next login")
     submit = SubmitField("Save Changes")
 
 
@@ -89,14 +90,14 @@ class APIConfigForm(FlaskForm):  # type: ignore[misc]
 
     base_url = StringField(
         "Backend API Base URL",
-        validators=[DataRequired(), URL()],
+        validators=[DataRequired(), URL(require_tld=False)],
     )
     api_username = StringField(
-        "API Username (optional)",
+        "API Username",
         validators=[Optional(), Length(max=128)],
     )
     api_password = PasswordField(
-        "API Key (optional)",
+        "API Key",
         validators=[Optional()],
     )
     timeout = IntegerField(

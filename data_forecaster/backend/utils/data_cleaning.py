@@ -11,13 +11,12 @@ schema validation.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, Literal
 
 import numpy as np
 import pandas as pd
 from pandas.tseries.frequencies import to_offset
 from scipy.signal import savgol_filter
-from sklearn.ensemble import IsolationForest
 from statsmodels.tsa.seasonal import seasonal_decompose
 
 from core.logging_config import get_logger
@@ -32,7 +31,6 @@ __all__ = [
     "detect_outliers_zscore",
     "apply_iqr_clipping",
     "apply_zscore_clipping",
-    "detect_outliers_isolation_forest",
     "treat_outliers",
     "resolve_duplicates",
     "smooth_series",
@@ -114,7 +112,7 @@ def reindex_series(series: pd.Series, freq: str) -> pd.Series:
 def impute_missing(
     series: pd.Series,
     method: Literal["forward-fill", "interpolate", "seasonal-decompose"],
-    limit: Optional[int] = None,
+    limit: int | None = None,
 ) -> pd.Series:
     """Impute missing values using the specified strategy.
 
@@ -291,36 +289,6 @@ def apply_zscore_clipping(series: pd.Series, threshold: float = 3.0) -> pd.Serie
         "Z-score clipping applied: %.2f%% of values clipped", clipped_percentage
     )
     return clipped_series
-
-
-def detect_outliers_isolation_forest(
-    series: pd.Series, contamination: float = 0.02
-) -> Dict[str, Any]:
-    """Detect multivariate outliers using Isolation Forest.
-
-    This function treats the series as a single‑feature array.
-
-    Args:
-        series: Input series.
-        contamination: Expected proportion of outliers in the data set.
-
-    Returns:
-        Dictionary with keys: ``lower_bound``, ``upper_bound`` and ``count``.
-    """
-    if series.isna().any():
-        series = series.dropna()
-    model = IsolationForest(contamination=contamination, random_state=42)
-    reshaped = series.values.reshape(-1, 1)
-    preds = model.fit_predict(reshaped)
-    outlier_mask = preds == -1
-    inlier_vals = series[~outlier_mask]
-    lower = inlier_vals.min()
-    upper = inlier_vals.max()
-    return {
-        "lower_bound": lower,
-        "upper_bound": upper,
-        "count": int(outlier_mask.sum()),
-    }
 
 
 def treat_outliers(

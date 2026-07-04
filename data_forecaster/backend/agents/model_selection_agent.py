@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-from typing import Any
-from langchain_core.prompts import ChatPromptTemplate
-
 from core.llm_factory import get_llm
 from core.logging_config import get_logger
-from schemas import ModelSelectionResult, StatisticalResult
 from prompts.model_selection_prompt import MODEL_SELECTION_PROMPT
+from schemas import ModelSelectionResult, StatisticalResult
 
 logger = get_logger(__name__)
 
@@ -198,14 +195,6 @@ def run_model_selection_agent(stat_result: StatisticalResult) -> ModelSelectionR
             None
             if selected_model == "ARIMA"
             else "Not selected based on LLM reasoning."
-        )
-        sarima_rej = (
-            None
-            if selected_model == "SARIMA"
-            else "Not selected based on LLM reasoning."
-        )
-        ewma_rej = (
-            None if selected_model == "EWMA" else "Not selected based on LLM reasoning."
         )
         sarima_rej = (
             None

@@ -1,18 +1,17 @@
 from __future__ import annotations
 
 from typing import Any
-from concurrent.futures import ThreadPoolExecutor, as_completed
+
 import pandas as pd
-from langchain_core.prompts import ChatPromptTemplate
 
 from core.llm_factory import get_llm
 from core.logging_config import get_logger
 from forecasting.arima_model import fit_arima
+from forecasting.ewma_model import fit_ewma
 from forecasting.holt_winters import fit_holt_winters
 from forecasting.sarima_model import fit_sarima
-from forecasting.ewma_model import fit_ewma
-from schemas import ForecastResult, ModelSelectionResult, StatisticalResult
 from prompts.forecasting_prompt import FORECASTING_PROMPT
+from schemas import ForecastResult, ModelSelectionResult, StatisticalResult
 
 logger = get_logger(__name__)
 

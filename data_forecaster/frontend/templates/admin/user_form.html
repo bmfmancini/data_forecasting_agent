@@ -19,6 +19,7 @@
                     <div class="mb-3">{{ form.role.label(class="form-label") }}{{ form.role(class="form-select") }}</div>
                     {% if edit %}
                     <div class="mb-3"><div class="form-check">{{ form.active(class="form-check-input") }}{{ form.active.label(class="form-check-label") }}</div></div>
+                    <div class="mb-3"><div class="form-check">{{ form.force_password_reset(class="form-check-input") }}{{ form.force_password_reset.label(class="form-check-label") }}</div></div>
                     {% endif %}
                     <div class="d-flex justify-content-between">
                         <a href="{{ url_for('admin.users') }}" class="btn btn-outline-secondary btn-sm">Cancel</a>

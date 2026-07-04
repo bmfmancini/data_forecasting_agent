@@ -41,7 +41,9 @@
                     {{ form.hidden_tag() }}
                     <div class="mb-3">{{ form.base_url.label(class="form-label") }}{{ form.base_url(class="form-control", placeholder="http://backend:8000") }}</div>
                     <div class="mb-3">{{ form.api_username.label(class="form-label") }}{{ form.api_username(class="form-control", placeholder="X-API-Username") }}</div>
-                    <div class="mb-3">{{ form.api_password.label(class="form-label") }}{{ form.api_password(class="form-control", placeholder="X-API-Key") }}</div>
+                    <div class="mb-3">{{ form.api_password.label(class="form-label") }}{{ form.api_password(class="form-control", placeholder="X-API-Key") }}
+                        <small class="text-muted">Leave blank to keep existing credentials. Enter both username and key to update.</small>
+                    </div>
                     <div class="mb-3">{{ form.timeout.label(class="form-label") }}{{ form.timeout(class="form-control") }}</div>
                     <div class="d-flex justify-content-between">
                         <button type="button" id="btn-test-conn" class="btn btn-outline-info btn-sm">Test Connection</button>

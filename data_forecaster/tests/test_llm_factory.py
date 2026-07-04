@@ -5,15 +5,9 @@ network calls are made. They verify that the correct provider, base URL,
 and authentication headers are selected based on the configuration.
 """
 
-import sys
-import os
 from unittest.mock import patch, MagicMock
 
 import pytest
-
-# Add the backend directory to the path
-backend_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "backend")
-sys.path.insert(0, backend_dir)
 
 import core.config as config
 from core.llm_factory import get_llm

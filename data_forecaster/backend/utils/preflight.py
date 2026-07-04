@@ -8,11 +8,11 @@ from schemas import PreflightDecision, PreflightResponse
 from utils.data_cleaning import (
     audit_series,
     detect_outliers_iqr,
-    reindex_series,
     impute_missing,
-    treat_outliers,
+    reindex_series,
     resolve_duplicates,
     smooth_series,
+    treat_outliers,
     validate_schema,
 )
 
@@ -293,22 +293,6 @@ def _selected_frame(df: pd.DataFrame, date_col: str, value_col: str) -> pd.DataF
             "No usable timestamps were found for the selected date column."
         )
     return selected
-
-
-def _aggregate_duplicates(series: pd.Series, strategy: str) -> pd.Series:
-    if strategy == "sum":
-        return series.groupby(level=0).sum(min_count=1)
-    if strategy == "latest":
-        return series.groupby(level=0).last()
-    return series.groupby(level=0).mean()
-
-
-def _handle_missing(series: pd.Series, strategy: str) -> pd.Series:
-    if strategy == "drop":
-        return series.dropna()
-    if strategy == "forward-fill":
-        return series.ffill().bfill()
-    return series.interpolate(method="time").ffill().bfill()
 
 
 def _infer_frequency(df: pd.DataFrame) -> str:
