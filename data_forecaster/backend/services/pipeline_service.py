@@ -17,12 +17,11 @@ from agents.model_selection_agent import run_model_selection_agent
 from agents.report_generation_agent import run_report_agent
 from agents.statistical_analysis_agent import run_statistical_agent
 from core.logging_config import get_logger
-from rag.knowledge_base import RAGKnowledgeBase
 from schemas import AnalysisResponse, ModelSelectionResult
 from services.rag_service import get_rag_kb
-from utils.ingestion_manager import load_file_to_dataframe
+from utils.data_cleaning import apply_iqr_clipping, apply_zscore_clipping
 from utils.preflight import prepare_series_frame
-from utils.statistical import compute_acf_pacf, run_stl_decomposition, apply_boxcox
+from utils.statistical import apply_boxcox, compute_acf_pacf, run_stl_decomposition
 from utils.visualization import (
     plot_acf_pacf,
     plot_forecast,
@@ -32,35 +31,6 @@ from utils.visualization import (
 )
 
 logger = get_logger(__name__)
-
-
-def run_pipeline_from_file(
-    file_path: str,
-    date_col: str,
-    value_col: str,
-    freq: str,
-    forecast_horizon: int,
-    **kwargs: Any,
-) -> AnalysisResponse:
-    """Ingest a file directly into the forecasting pipeline.
-
-    Args:
-        file_path:        Path to the CSV or Excel file.
-        date_col:         Name of the date column.
-        value_col:        Name of the value column.
-        freq:             Frequency string.
-        forecast_horizon: Number of periods to forecast.
-        **kwargs:         Additional arguments forwarded to :func:`run_pipeline`.
-
-    Returns:
-        The complete :class:`AnalysisResponse`.
-    """
-    logger.info("Ingesting file for pipeline: %s", file_path)
-    df = load_file_to_dataframe(file_path)
-    file_id = file_path.split("/")[-1]
-    return run_pipeline(
-        df, file_id, date_col, value_col, freq, forecast_horizon, **kwargs
-    )
 
 
 def run_pipeline(
@@ -138,14 +108,10 @@ def run_pipeline(
     if (preflight_options or {}).get("outlier_strategy") == "Let AI Decide":
         if "iqr_clip" in stat_result.recommended_remediation:
             logger.info("Agent decided to APPLY IQR clipping.")
-            from utils.data_cleaning import apply_iqr_clipping
-
             series = apply_iqr_clipping(series)
             logger.info("IQR clipping applied successfully.")
         elif "zscore_clip" in stat_result.recommended_remediation:
             logger.info("Agent decided to APPLY Z-score clipping.")
-            from utils.data_cleaning import apply_zscore_clipping
-
             series = apply_zscore_clipping(series)
             logger.info("Z-score clipping applied successfully.")
         else:

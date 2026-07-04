@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -117,8 +118,6 @@ class RAGKnowledgeBase:
         if ids is None:
             # Use a hash of the text + a random suffix to avoid collisions
             # when the same content is ingested twice.
-            import uuid
-
             ids = [f"runtime__{uuid.uuid4().hex}" for _ in texts]
 
         # Chunk long snippets using the same splitter used at load time.

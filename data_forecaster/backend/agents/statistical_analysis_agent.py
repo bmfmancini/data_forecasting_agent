@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-from typing import Any
 import re
+from typing import Any
 
 import numpy as np
 import pandas as pd
-from langchain_core.prompts import ChatPromptTemplate
 
 from core.llm_factory import get_llm
 from core.logging_config import get_logger
+from prompts.statistical_analysis_prompt import STATISTICAL_ANALYSIS_PROMPT
 from schemas import StatisticalResult
+from utils.data_cleaning import detect_outliers_iqr, detect_outliers_zscore
 from utils.statistical import (
     compute_acf_pacf,
     detect_trend,
@@ -21,8 +22,6 @@ from utils.statistical import (
     check_variance_stability,
     detect_change_points,
 )
-from utils.data_cleaning import detect_outliers_iqr, detect_outliers_zscore
-from prompts.statistical_analysis_prompt import STATISTICAL_ANALYSIS_PROMPT
 
 logger = get_logger(__name__)
 

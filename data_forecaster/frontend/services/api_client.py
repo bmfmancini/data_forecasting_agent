@@ -5,8 +5,6 @@ Provides :class:`BackendAPIClient` which wraps every call to the FastAPI
 forecasting backend.  The factory function :func:`get_api_client` resolves
 the active backend URL and credentials from the database (with environment
 variable fallback) so all callers remain decoupled from configuration details.
-
-Timeout constants mirror those used by the original Streamlit frontend.
 """
 
 from __future__ import annotations

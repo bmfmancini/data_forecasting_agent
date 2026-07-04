@@ -7,8 +7,8 @@ role.  The ``admin_required`` decorator enforces this.
 
 from __future__ import annotations
 
-from functools import wraps
 import logging
+from functools import wraps
 from typing import Any, Callable, TypeVar
 
 from flask import (

@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import uuid
-from typing import Any, AsyncIterator, Callable, Dict, cast
+from typing import Any, Callable, Dict, cast
 
 import core.config as settings
 from core.logging_config import get_logger

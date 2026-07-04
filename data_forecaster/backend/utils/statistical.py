@@ -6,10 +6,10 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from scipy.signal import periodogram as scipy_periodogram
-from scipy.stats import linregress, boxcox
+from scipy.stats import boxcox, linregress
+from statsmodels.stats.diagnostic import acorr_ljungbox
 from statsmodels.tsa.seasonal import STL
 from statsmodels.tsa.stattools import acf, adfuller, kpss, pacf
-from statsmodels.stats.diagnostic import acorr_ljungbox
 
 from core.logging_config import get_logger
 

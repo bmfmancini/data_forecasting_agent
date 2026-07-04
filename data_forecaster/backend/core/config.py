@@ -6,7 +6,6 @@ load_dotenv()
 GOOGLE_API_KEY: str | None = os.getenv("GOOGLE_API_KEY")
 GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
 GEMINI_TEMPERATURE: float = float(os.getenv("GEMINI_TEMPERATURE", "0.1"))
-GEMINI_MAX_TOKENS: int = int(os.getenv("GEMINI_MAX_TOKENS", "8192"))
 
 USE_OLLAMA: bool = os.getenv("USE_OLLAMA", "False").lower() == "true"
 USE_OLLAMA_CLOUD: bool = os.getenv("USE_OLLAMA_CLOUD", "False").lower() == "true"

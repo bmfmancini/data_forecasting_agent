@@ -37,7 +37,7 @@ services:
     environment:
       - FLASK_ENV=production
       - BACKEND_URL=http://backend:8000
-      - SECRET_KEY=${FLASK_SECRET_KEY:-change-me-in-production}
+      - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
     volumes:
       - flask_instance:/app/instance
     depends_on:

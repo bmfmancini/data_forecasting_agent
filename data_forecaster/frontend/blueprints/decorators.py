@@ -1,9 +1,29 @@
+"""Decorators for Flask blueprint route protection.
+
+Provides :func:`password_change_required` which redirects users to the
+password-change page when their ``must_change_password`` flag is set.
+"""
+
+from __future__ import annotations
 
 from functools import wraps
-from flask import current_app, flash, redirect, request, url_for
+from typing import Callable, TypeVar
+
+from flask import flash, redirect, request, url_for
 from flask_login import current_user
 
-def password_change_required(f):
+_F = TypeVar("_F", bound=Callable[..., ...])
+
+
+def password_change_required(f: _F) -> _F:
+    """Redirect to the password-change page if the user must change their password.
+
+    Args:
+        f: The route function to wrap.
+
+    Returns:
+        The wrapped function that enforces the password-change precondition.
+    """
     @wraps(f)
     def decorated_function(*args, **kwargs):
         if not current_user.is_authenticated:

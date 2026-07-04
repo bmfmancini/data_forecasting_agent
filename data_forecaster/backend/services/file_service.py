@@ -146,24 +146,6 @@ def get_file(file_id: str) -> dict[str, Any] | None:
     }
 
 
-def get_file_metadata(file_id: str) -> dict[str, Any] | None:
-    """Retrieve only the metadata for a file without loading the DataFrame.
-
-    Useful for preflight checks that only need column names and frequency.
-
-    Args:
-        file_id: The UUID returned by :func:`store_file`.
-
-    Returns:
-        A dict with ``date_col``, ``value_col``, ``freq``, and
-        ``filename`` keys, or ``None`` if not found.
-    """
-    meta = _file_index.get(file_id)
-    if meta is None:
-        return None
-    return dict(meta)
-
-
 def _remove_disk_file(file_id: str) -> None:
     """Delete the parquet file for a given ``file_id`` from disk.
 
