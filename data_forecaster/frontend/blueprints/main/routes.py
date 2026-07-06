@@ -705,7 +705,11 @@ def api_job_status() -> Response:
             # Fetch full results only once the job is complete
             results_resp = client.get_job_results(job_id)
             if results_resp.status_code == 200:
-                session["analysis_result"] = results_resp.json().get("result")
+                result_data = results_resp.json().get("result", {})
+                # Ensure llm_fallback is stored in the session
+                session["analysis_result"] = result_data
+                # Explicitly store llm_fallback in the session for easy access
+                session["llm_fallback"] = result_data.get("llm_fallback", False)
             session["job_running"] = False
             session["job_id"] = None
             session["analysis_error"] = None
@@ -750,6 +754,22 @@ def api_job_status() -> Response:
     except Exception:
         logger.exception("Status poll error")
         return jsonify({"error": "Status poll error."}), 503
+
+
+@main_bp.route("/api/llm-health")
+def api_llm_health() -> Response:
+    """Proxy the LLM health check request to the backend.
+
+    Returns:
+        JSON response from the backend's `/llm-health` endpoint.
+    """
+    try:
+        client = get_api_client()
+        resp = client.get_llm_health()
+        return jsonify(resp.json()), resp.status_code
+    except Exception:
+        logger.exception("Failed to proxy LLM health check")
+        return jsonify({"error": "Failed to check LLM health."}), 503
 
 
 @main_bp.route("/api/chat", methods=["POST"])

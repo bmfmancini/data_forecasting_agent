@@ -232,6 +232,11 @@ def run_pipeline(
     logger.info("Pipeline complete: file_id=%s", file_id)
     _progress(100, "Analysis complete")
 
+    # Check if LLM fallback occurred during report generation
+    llm_fallback = any(
+        step.get("llm_fallback", False) for step in report_reasoning
+    )
+
     return AnalysisResponse(
         file_id=file_id,
         validation=validation_result,
@@ -241,6 +246,7 @@ def run_pipeline(
         report=report,
         report_reasoning=report_reasoning,
         strategic_visual_recommendations=visual_strategy,
+        llm_fallback=llm_fallback,
         chart_historical=chart_historical,
         chart_stl=chart_stl,
         chart_acf_pacf=chart_acf_pacf,

@@ -249,6 +249,19 @@ class BackendAPIClient:
             verify=self._verify,
         )
 
+    def get_llm_health(self) -> requests.Response:
+        """Check LLM connectivity and configuration.
+
+        Returns:
+            The :class:`requests.Response` from ``GET /llm-health``.
+        """
+        return requests.get(
+            f"{self._base_url}/llm-health",
+            headers=self._headers(),
+            timeout=JOB_STATUS_TIMEOUT,
+            verify=self._verify,
+        )
+
     # ── API User Management ───────────────────────────────────────────────
 
     def list_api_users(self) -> requests.Response:

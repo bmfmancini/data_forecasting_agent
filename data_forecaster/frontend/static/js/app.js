@@ -7,7 +7,60 @@
  */
 
 (function () {
+  /**
+   * Check LLM health and display a warning if the LLM is unreachable or not configured.
+   */
+  function checkLLMHealth() {
+    fetch("/api/llm-health")
+      .then(function (r) {
+        if (!r.ok) {
+          throw new Error("Network response was not ok");
+        }
+        return r.text();  // Read as text first to debug
+      })
+      .then(function (text) {
+        console.log("LLM Health Response:", text);  // Debug the raw response
+        try {
+          const data = JSON.parse(text);
+          if (!data.llm_configured || !data.llm_reachable) {
+            showLLMWarning(data.error || "LLM is not configured or unreachable.");
+          }
+        } catch (err) {
+          console.error("Failed to parse LLM health response:", err);
+          showLLMWarning("Failed to parse LLM health response: " + err);
+        }
+      })
+      .catch(function (err) {
+        console.error("Failed to check LLM connectivity:", err);
+        showLLMWarning("Failed to check LLM connectivity: " + err);
+      });
+  }
+
+  /**
+   * Display a warning message about LLM connectivity.
+   * @param {string} message - The warning message to display.
+   */
+  function showLLMWarning(message) {
+    var warningEl = document.querySelector(".llm-warning-msg");
+    if (!warningEl) {
+      warningEl = document.createElement("div");
+      warningEl.className = "alert alert-warning mt-2 py-1 px-2 small llm-warning-msg";
+      var sidebar = document.querySelector(".sidebar-inner");
+      if (sidebar) {
+        var hr = sidebar.querySelector(".sidebar-hr");
+        if (hr) {
+          sidebar.insertBefore(warningEl, hr.nextSibling);
+        } else {
+          sidebar.appendChild(warningEl);
+        }
+      }
+    }
+    warningEl.textContent = "⚠️ LLM: " + message;
+  }
   "use strict";
+
+  // Check LLM health on page load
+  checkLLMHealth();
 
   /** Read the CSRF token from the page meta tag. */
   function getCsrfToken() {

@@ -182,6 +182,87 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/llm-health")
+def llm_health() -> dict[str, Any]:
+    """Check LLM connectivity and configuration.
+
+    Returns:
+        dict: A dictionary with keys:
+            - "llm_configured": bool indicating if an LLM provider is configured.
+            - "llm_reachable": bool indicating if the LLM is reachable.
+            - "llm_provider": str indicating the configured LLM provider ("gemini" or "ollama").
+            - "error": str containing error message if any, otherwise None.
+    """
+    from core.config import USE_OLLAMA, GOOGLE_API_KEY, OLLAMA_API_KEY, USE_OLLAMA_CLOUD, OLLAMA_MODEL
+    import httpx
+    import asyncio
+
+    result = {
+        "llm_configured": False,
+        "llm_reachable": False,
+        "llm_provider": None,
+        "error": None,
+    }
+
+    async def check_ollama():
+        try:
+            if USE_OLLAMA_CLOUD:
+                # For Ollama Cloud, assume the LLM is reachable if the base URL is accessible
+                ollama_url = f"{settings.OLLAMA_BASE_URL}/api/version"
+                headers = {"Content-Type": "application/json"}
+                if OLLAMA_API_KEY:
+                    headers["Authorization"] = f"Bearer {OLLAMA_API_KEY}"
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(ollama_url, headers=headers)
+                    return response.status_code == 200
+            else:
+                # Test local Ollama with /api/tags
+                ollama_url = f"{settings.OLLAMA_BASE_URL}/api/tags"
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(ollama_url)
+                    return response.status_code == 200
+        except Exception:
+            return False
+
+    async def check_gemini():
+        try:
+            gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/{settings.GEMINI_MODEL}:countTokens"
+            headers = {"Content-Type": "application/json"}
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    gemini_url,
+                    json={"contents": [{"parts": [{"text": "ping"}]}]},
+                    headers=headers,
+                    params={"key": GOOGLE_API_KEY},
+                )
+                return response.status_code == 200
+        except Exception:
+            return False
+
+    try:
+        if USE_OLLAMA:
+            result["llm_provider"] = "ollama"
+            result["llm_configured"] = True
+            if not OLLAMA_MODEL:
+                result["error"] = "OLLAMA_MODEL is not set."
+                return result
+            result["llm_reachable"] = asyncio.run(check_ollama())
+            if not result["llm_reachable"]:
+                result["error"] = "Ollama server is not reachable."
+        elif GOOGLE_API_KEY:
+            result["llm_provider"] = "gemini"
+            result["llm_configured"] = True
+            result["llm_reachable"] = asyncio.run(check_gemini())
+            if not result["llm_reachable"]:
+                result["error"] = "Gemini API is not reachable."
+        else:
+            result["error"] = "No LLM provider configured. Either set USE_OLLAMA=true with a running Ollama instance, or set GOOGLE_API_KEY for Gemini."
+    except Exception as e:
+        result["error"] = f"Failed to check LLM connectivity: {str(e)}"
+
+    return result
+
+
 # ── Auth Status & Bootstrap (unauthenticated, guarded) ────────────────────────
 
 
