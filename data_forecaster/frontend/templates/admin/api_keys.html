@@ -24,6 +24,7 @@
                     <th>Username</th>
                     <th>Description</th>
                     <th>Enabled</th>
+                    <th>Admin</th>
                     <th>Bootstrap</th>
                     <th>Created</th>
                     <th>Last Used</th>
@@ -42,6 +43,13 @@
                         <span class="badge bg-success">Enabled</span>
                         {% else %}
                         <span class="badge bg-secondary">Disabled</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if u.is_admin %}
+                        <span class="badge bg-primary">Admin</span>
+                        {% else %}
+                        <span style="color:var(--text-muted-custom);">—</span>
                         {% endif %}
                     </td>
                     <td>
@@ -64,6 +72,13 @@
                             <input type="hidden" name="enabled" value="{{ 'false' if u.enabled else 'true' }}">
                             <button type="submit" class="btn btn-outline-info btn-sm" title="{{ 'Disable' if u.enabled else 'Enable' }}">
                                 {{ '⏸' if u.enabled else '▶' }}
+                            </button>
+                        </form>
+                        <form method="post" action="{{ url_for('admin.api_key_set_admin', user_id=u.id) }}" style="display:inline;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="is_admin" value="{{ 'false' if u.is_admin else 'true' }}">
+                            <button type="submit" class="btn btn-outline-{{ 'secondary' if u.is_admin else 'primary' }} btn-sm" title="{{ 'Demote to regular user' if u.is_admin else 'Promote to admin' }}">
+                                {{ '⬇' if u.is_admin else '⬆' }}
                             </button>
                         </form>
                         <form method="post" action="{{ url_for('admin.api_key_delete', user_id=u.id) }}" style="display:inline;"

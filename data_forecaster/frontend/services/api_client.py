@@ -277,19 +277,29 @@ class BackendAPIClient:
             verify=self._verify,
         )
 
-    def create_api_user(self, username: str, description: str) -> requests.Response:
+    def create_api_user(
+        self,
+        username: str,
+        description: str,
+        is_admin: bool = False,
+    ) -> requests.Response:
         """Create a new API user on the backend.
 
         Args:
             username:    Unique username for the new API user.
             description: Human-readable description.
+            is_admin:    Whether the new user is an administrator.
 
         Returns:
             The :class:`requests.Response` from ``POST /api-users``.
         """
         return requests.post(
             f"{self._base_url}/api-users",
-            json={"username": username, "description": description},
+            json={
+                "username": username,
+                "description": description,
+                "is_admin": is_admin,
+            },
             headers=self._headers(),
             timeout=ANALYSIS_TIMEOUT,
             verify=self._verify,
@@ -340,6 +350,24 @@ class BackendAPIClient:
         """
         return requests.delete(
             f"{self._base_url}/api-users/{user_id}",
+            headers=self._headers(),
+            timeout=ANALYSIS_TIMEOUT,
+            verify=self._verify,
+        )
+
+    def set_api_user_admin(self, user_id: int, is_admin: bool) -> requests.Response:
+        """Promote or demote an API user on the backend.
+
+        Args:
+            user_id:  Primary key of the API user.
+            is_admin: ``True`` to grant admin privileges, ``False`` to revoke.
+
+        Returns:
+            The :class:`requests.Response` from ``POST /api-users/{id}/admin``.
+        """
+        return requests.post(
+            f"{self._base_url}/api-users/{user_id}/admin",
+            json={"is_admin": is_admin},
             headers=self._headers(),
             timeout=ANALYSIS_TIMEOUT,
             verify=self._verify,

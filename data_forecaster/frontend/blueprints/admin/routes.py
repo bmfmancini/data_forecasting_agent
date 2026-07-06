@@ -37,6 +37,11 @@ _F = TypeVar("_F", bound=Callable[..., Any])
 
 logger = logging.getLogger(__name__)
 
+_ADMIN_USERS_ENDPOINT: str = "admin.users"
+_ADMIN_USER_FORM_TEMPLATE: str = "admin/user_form.html"
+_ADMIN_API_CONFIG_ENDPOINT: str = "admin.api_config"
+_ADMIN_API_KEYS_ENDPOINT: str = "admin.api_keys"
+
 
 def admin_required(f: _F) -> _F:
     """Decorator that restricts access to users with the admin role.
@@ -137,11 +142,11 @@ def user_force_reset(user_id: int) -> Response:
     row = query_db("SELECT id, username FROM users WHERE id = ?", (user_id,), one=True)
     if not row or not isinstance(row, dict):
         flash("User not found.", "danger")
-        return redirect(url_for("admin.users"))
+        return redirect(url_for(_ADMIN_USERS_ENDPOINT))
 
     if int(row["id"]) == current_user.id:  # type: ignore[union-attr]
         flash("You cannot force a password reset on yourself.", "warning")
-        return redirect(url_for("admin.users"))
+        return redirect(url_for(_ADMIN_USERS_ENDPOINT))
 
     execute_db(
         "UPDATE users SET must_change_password = 1 WHERE id = ?",
@@ -151,7 +156,7 @@ def user_force_reset(user_id: int) -> Response:
         f"'{row['username']}' will be required to change their password on next login.",
         "success",
     )
-    return redirect(url_for("admin.users"))
+    return redirect(url_for(_ADMIN_USERS_ENDPOINT))
 
 
 @admin_bp.route("/users/new", methods=["GET", "POST"])
@@ -171,21 +176,21 @@ def user_new() -> str | Response:
 
         if password != confirm:
             flash("Passwords do not match.", "danger")
-            return render_template("admin/user_form.html", form=form, edit=False)
+            return render_template(_ADMIN_USER_FORM_TEMPLATE, form=form, edit=False)
 
         role_row = query_db(
             "SELECT id FROM roles WHERE name = ?", (role_name,), one=True
         )
         if not role_row or not isinstance(role_row, dict):
             flash("Invalid role.", "danger")
-            return render_template("admin/user_form.html", form=form, edit=False)
+            return render_template(_ADMIN_USER_FORM_TEMPLATE, form=form, edit=False)
 
         existing = query_db(
             "SELECT id FROM users WHERE username = ?", (username,), one=True
         )
         if existing:
             flash("Username already exists.", "danger")
-            return render_template("admin/user_form.html", form=form, edit=False)
+            return render_template(_ADMIN_USER_FORM_TEMPLATE, form=form, edit=False)
 
         pw_hash = generate_password_hash(password)
         execute_db(
@@ -193,9 +198,60 @@ def user_new() -> str | Response:
             (username, pw_hash, int(role_row["id"])),
         )
         flash(f"User '{username}' created successfully.", "success")
-        return redirect(url_for("admin.users"))
+        return redirect(url_for(_ADMIN_USERS_ENDPOINT))
 
-    return render_template("admin/user_form.html", form=form, edit=False)
+    return render_template(_ADMIN_USER_FORM_TEMPLATE, form=form, edit=False)
+
+
+def _update_user(
+    user_id: int,
+    new_password: str,
+    new_role: str,
+    new_active: bool,
+    force_reset: bool,
+) -> None:
+    """Persist an edited user record.
+
+    Args:
+        user_id:      Primary key of the user to update.
+        new_password: New plaintext password, or empty string to keep the
+            existing password.
+        new_role:     Role name to assign.
+        new_active:   Whether the account should be active.
+        force_reset:  Whether the user must change their password on next
+            login.
+    """
+    role_row = query_db(
+        "SELECT id FROM roles WHERE name = ?", (new_role,), one=True
+    )
+    if not role_row or not isinstance(role_row, dict):
+        raise ValueError("Invalid role.")
+
+    if new_password:
+        pw_hash = generate_password_hash(new_password)
+        execute_db(
+            """
+            UPDATE users
+            SET password_hash = ?, role_id = ?, active = ?, must_change_password = ?
+            WHERE id = ?
+            """,
+            (
+                pw_hash,
+                int(role_row["id"]),
+                int(new_active),
+                int(force_reset or 1),
+                user_id,
+            ),
+        )
+    else:
+        execute_db(
+            """
+            UPDATE users
+            SET role_id = ?, active = ?, must_change_password = ?
+            WHERE id = ?
+            """,
+            (int(role_row["id"]), int(new_active), int(force_reset), user_id),
+        )
 
 
 @admin_bp.route("/users/<int:user_id>/edit", methods=["GET", "POST"])
@@ -222,7 +278,7 @@ def user_edit(user_id: int) -> str | Response:
     )
     if not row or not isinstance(row, dict):
         flash("User not found.", "danger")
-        return redirect(url_for("admin.users"))
+        return redirect(url_for(_ADMIN_USERS_ENDPOINT))
 
     form = UserEditForm()
     if request.method == "GET":
@@ -233,48 +289,32 @@ def user_edit(user_id: int) -> str | Response:
     if form.validate_on_submit():
         new_password: str = str(form.password.data or "").strip()
         confirm_password: str = str(form.confirm_password.data or "").strip()
-        new_role: str = str(form.role.data or "user")
-        new_active: bool = bool(form.active.data)
-        force_reset: bool = bool(form.force_password_reset.data)
 
         if new_password and new_password != confirm_password:
             flash("Passwords do not match.", "danger")
             return render_template(
-                "admin/user_form.html", form=form, edit=True, target_user=row
+                _ADMIN_USER_FORM_TEMPLATE, form=form, edit=True, target_user=row
             )
 
-        role_row = query_db(
-            "SELECT id FROM roles WHERE name = ?", (new_role,), one=True
-        )
-        if not role_row or not isinstance(role_row, dict):
-            flash("Invalid role.", "danger")
+        try:
+            _update_user(
+                user_id=user_id,
+                new_password=new_password,
+                new_role=str(form.role.data or "user"),
+                new_active=bool(form.active.data),
+                force_reset=bool(form.force_password_reset.data),
+            )
+        except ValueError as exc:
+            flash(str(exc), "danger")
             return render_template(
-                "admin/user_form.html", form=form, edit=True, target_user=row
-            )
-
-        if new_password:
-            pw_hash = generate_password_hash(new_password)
-            execute_db(
-                "UPDATE users SET password_hash = ?, role_id = ?, active = ?, must_change_password = ? WHERE id = ?",
-                (
-                    pw_hash,
-                    int(role_row["id"]),
-                    int(new_active),
-                    int(force_reset or 1),
-                    user_id,
-                ),
-            )
-        else:
-            execute_db(
-                "UPDATE users SET role_id = ?, active = ?, must_change_password = ? WHERE id = ?",
-                (int(role_row["id"]), int(new_active), int(force_reset), user_id),
+                _ADMIN_USER_FORM_TEMPLATE, form=form, edit=True, target_user=row
             )
 
         flash("User updated successfully.", "success")
-        return redirect(url_for("admin.users"))
+        return redirect(url_for(_ADMIN_USERS_ENDPOINT))
 
     return render_template(
-        "admin/user_form.html", form=form, edit=True, target_user=row
+        _ADMIN_USER_FORM_TEMPLATE, form=form, edit=True, target_user=row
     )
 
 
@@ -318,6 +358,89 @@ def settings() -> str | Response:
     return render_template("admin/settings.html", config=config_map)
 
 
+def _load_api_config_form(form: APIConfigForm) -> None:
+    """Populate the API config form from the stored default row."""
+    current_row = query_db(
+        "SELECT base_url, timeout, verify_ssl FROM api_credentials WHERE label = 'default' LIMIT 1",
+        one=True,
+    )
+    if current_row and isinstance(current_row, dict):
+        form.base_url.data = str(current_row.get("base_url", ""))
+        form.timeout.data = int(current_row.get("timeout", 30))
+        form.verify_ssl.data = bool(current_row.get("verify_ssl", 0))
+
+
+def _fetch_backend_auth_status() -> dict[str, Any]:
+    """Return the backend's auth status, or defaults if unreachable."""
+    auth_status: dict[str, Any] = {"auth_enabled": False, "has_users": False}
+    try:
+        from services.api_client import get_api_client
+
+        client = get_api_client()
+        resp = client.get_auth_status()
+        if resp.status_code == 200:
+            auth_status = resp.json()
+    except Exception:
+        pass  # Backend unreachable — show defaults
+    return auth_status
+
+
+def _encrypt_credentials(username: str, password: str) -> tuple[str, str] | tuple[None, None]:
+    """Encrypt API credentials, flashing and returning None on failure."""
+    try:
+        from db.crypto import encrypt
+
+        return encrypt(username), encrypt(password)
+    except RuntimeError as exc:
+        flash(str(exc), "danger")
+        return None, None
+
+
+def _save_api_credentials(
+    base_url: str,
+    timeout: int,
+    verify_ssl: int,
+    enc_user: str | None,
+    enc_pass: str | None,
+) -> None:
+    """Upsert the default API credential row.
+
+    When both encrypted values are supplied the row is fully updated;
+    otherwise only ``base_url``, ``timeout``, and ``verify_ssl`` are
+    touched, preserving any existing encrypted credentials.
+    """
+    if enc_user and enc_pass:
+        execute_db(
+            """
+            INSERT INTO api_credentials
+                (label, base_url, encrypted_username, encrypted_password,
+                 timeout, verify_ssl)
+            VALUES ('default', ?, ?, ?, ?, ?)
+            ON CONFLICT(label) DO UPDATE SET
+                base_url           = excluded.base_url,
+                encrypted_username = excluded.encrypted_username,
+                encrypted_password = excluded.encrypted_password,
+                timeout            = excluded.timeout,
+                verify_ssl         = excluded.verify_ssl
+            """,
+            (base_url, enc_user, enc_pass, timeout, verify_ssl),
+        )
+    else:
+        execute_db(
+            """
+            INSERT INTO api_credentials
+                (label, base_url, encrypted_username, encrypted_password,
+                 timeout, verify_ssl)
+            VALUES ('default', ?, NULL, NULL, ?, ?)
+            ON CONFLICT(label) DO UPDATE SET
+                base_url   = excluded.base_url,
+                timeout    = excluded.timeout,
+                verify_ssl = excluded.verify_ssl
+            """,
+            (base_url, timeout, verify_ssl),
+        )
+
+
 @admin_bp.route("/api-config", methods=["GET", "POST"])
 @admin_required
 def api_config() -> str | Response:
@@ -334,92 +457,32 @@ def api_config() -> str | Response:
         Rendered config template on GET or validation error; redirect on success.
     """
     form = APIConfigForm()
+    _load_api_config_form(form)
+    auth_status = _fetch_backend_auth_status()
 
-    current_row = query_db(
-        "SELECT base_url, timeout, verify_ssl FROM api_credentials WHERE label = 'default' LIMIT 1",
-        one=True,
-    )
+    if not form.validate_on_submit():
+        return render_template("admin/api_config.html", form=form, auth_status=auth_status)
 
-    if request.method == "GET" and current_row and isinstance(current_row, dict):
-        form.base_url.data = str(current_row.get("base_url", ""))
-        form.timeout.data = int(current_row.get("timeout", 30))
-        form.verify_ssl.data = bool(current_row.get("verify_ssl", 0))
+    base_url: str = str(form.base_url.data or "").rstrip("/")
+    api_username: str = str(form.api_username.data or "").strip()
+    api_password: str = str(form.api_password.data or "").strip()
+    timeout: int = int(form.timeout.data or 30)
+    verify_ssl: int = 1 if form.verify_ssl.data else 0
 
-    # Query backend auth status for the template
-    auth_status: dict[str, Any] = {"auth_enabled": False, "has_users": False}
-    try:
-        from services.api_client import get_api_client
-
-        client = get_api_client()
-        resp = client.get_auth_status()
-        if resp.status_code == 200:
-            auth_status = resp.json()
-    except Exception:
-        pass  # Backend unreachable — show defaults
-
-    if form.validate_on_submit():
-        base_url: str = str(form.base_url.data or "").rstrip("/")
-        api_username: str = str(form.api_username.data or "").strip()
-        api_password: str = str(form.api_password.data or "").strip()
-        timeout: int = int(form.timeout.data or 30)
-        verify_ssl: int = 1 if form.verify_ssl.data else 0
-
-        # Only update credentials when the admin provides new values.
-        # PasswordField doesn't pre-populate from stored data, so leaving
-        # it blank means "keep existing credentials" — not "delete them".
-        enc_user: str | None = None
-        enc_pass: str | None = None
-        if api_username and api_password:
-            try:
-                from db.crypto import encrypt
-
-                enc_user = encrypt(api_username)
-                enc_pass = encrypt(api_password)
-            except RuntimeError as exc:
-                flash(str(exc), "danger")
-                return render_template(
-                    "admin/api_config.html", form=form, auth_status=auth_status
-                )
-
-        if enc_user and enc_pass:
-            # Both username and key provided — update everything
-            execute_db(
-                """
-                INSERT INTO api_credentials
-                    (label, base_url, encrypted_username, encrypted_password,
-                     timeout, verify_ssl)
-                VALUES ('default', ?, ?, ?, ?, ?)
-                ON CONFLICT(label) DO UPDATE SET
-                    base_url           = excluded.base_url,
-                    encrypted_username = excluded.encrypted_username,
-                    encrypted_password = excluded.encrypted_password,
-                    timeout            = excluded.timeout,
-                    verify_ssl         = excluded.verify_ssl
-                """,
-                (base_url, enc_user, enc_pass, timeout, verify_ssl),
+    enc_user: str | None = None
+    enc_pass: str | None = None
+    if api_username and api_password:
+        enc_user, enc_pass = _encrypt_credentials(api_username, api_password)
+        if enc_user is None or enc_pass is None:
+            return render_template(
+                "admin/api_config.html", form=form, auth_status=auth_status
             )
-        else:
-            # No new credentials provided — update URL, timeout, and
-            # verify_ssl only, preserving the existing encrypted credentials.
-            execute_db(
-                """
-                INSERT INTO api_credentials
-                    (label, base_url, encrypted_username, encrypted_password,
-                     timeout, verify_ssl)
-                VALUES ('default', ?, NULL, NULL, ?, ?)
-                ON CONFLICT(label) DO UPDATE SET
-                    base_url   = excluded.base_url,
-                    timeout    = excluded.timeout,
-                    verify_ssl = excluded.verify_ssl
-                """,
-                (base_url, timeout, verify_ssl),
-            )
-        current_app.config["BACKEND_URL"] = base_url
-        current_app.config["API_VERIFY_SSL"] = bool(verify_ssl)
-        flash("API configuration saved.", "success")
-        return redirect(url_for("admin.api_config"))
 
-    return render_template("admin/api_config.html", form=form, auth_status=auth_status)
+    _save_api_credentials(base_url, timeout, verify_ssl, enc_user, enc_pass)
+    current_app.config["BACKEND_URL"] = base_url
+    current_app.config["API_VERIFY_SSL"] = bool(verify_ssl)
+    flash("API configuration saved.", "success")
+    return redirect(url_for(_ADMIN_API_CONFIG_ENDPOINT))
 
 
 @admin_bp.route("/api-config/test", methods=["POST"])
@@ -470,10 +533,10 @@ def api_config_enable_auth() -> Response:
 
     if not admin_key:
         flash("Admin key is required.", "danger")
-        return redirect(url_for("admin.api_config"))
+        return redirect(url_for(_ADMIN_API_CONFIG_ENDPOINT))
     if not api_username or not api_key:
         flash("Username and API key are required.", "danger")
-        return redirect(url_for("admin.api_config"))
+        return redirect(url_for(_ADMIN_API_CONFIG_ENDPOINT))
 
     from services.api_client import get_api_client
 
@@ -485,20 +548,20 @@ def api_config_enable_auth() -> Response:
             f"Could not connect to backend: {_sanitise_connection_error(str(exc))}",
             "danger",
         )
-        return redirect(url_for("admin.api_config"))
+        return redirect(url_for(_ADMIN_API_CONFIG_ENDPOINT))
 
     if resp.status_code == 403:
         flash(
             "Invalid admin key. Verify the ADMIN_API_KEY in the backend .env.",
             "danger",
         )
-        return redirect(url_for("admin.api_config"))
+        return redirect(url_for(_ADMIN_API_CONFIG_ENDPOINT))
     if resp.status_code == 409:
         flash(
             "API users already exist on the backend. Bootstrap is no longer available.",
             "warning",
         )
-        return redirect(url_for("admin.api_config"))
+        return redirect(url_for(_ADMIN_API_CONFIG_ENDPOINT))
     if resp.status_code != 200:
         detail: str = "Unknown error."
         try:
@@ -506,7 +569,7 @@ def api_config_enable_auth() -> Response:
         except Exception:
             logger.exception("Failed to parse bootstrap error response")
         flash(f"Bootstrap failed (HTTP {resp.status_code}): {detail}", "danger")
-        return redirect(url_for("admin.api_config"))
+        return redirect(url_for(_ADMIN_API_CONFIG_ENDPOINT))
 
     # Success — store the credentials encrypted in the frontend DB
     try:
@@ -525,14 +588,14 @@ def api_config_enable_auth() -> Response:
         )
     except RuntimeError as exc:
         flash(str(exc), "danger")
-        return redirect(url_for("admin.api_config"))
+        return redirect(url_for(_ADMIN_API_CONFIG_ENDPOINT))
 
     flash(
         "API authentication enabled successfully. "
         "Credentials stored — the frontend can now authenticate with the backend.",
         "success",
     )
-    return redirect(url_for("admin.api_config"))
+    return redirect(url_for(_ADMIN_API_CONFIG_ENDPOINT))
 
 
 def _check_backend_health() -> bool:
@@ -628,12 +691,13 @@ def api_key_new() -> str | Response:
     if form.validate_on_submit():
         username: str = str(form.username.data or "").strip()
         description: str = str(form.description.data or "").strip()
+        is_admin: bool = bool(form.is_admin.data)
 
         from services.api_client import get_api_client
 
         client = get_api_client()
         try:
-            resp = client.create_api_user(username, description)
+            resp = client.create_api_user(username, description, is_admin)
             if resp.status_code == 201:
                 data: dict[str, Any] = resp.json()
                 return render_template(
@@ -727,7 +791,7 @@ def api_key_rotate(user_id: int) -> Response:
             "danger",
         )
 
-    return redirect(url_for("admin.api_keys"))
+    return redirect(url_for(_ADMIN_API_KEYS_ENDPOINT))
 
 
 @admin_bp.route("/api-keys/<int:user_id>/toggle", methods=["POST"])
@@ -761,7 +825,41 @@ def api_key_toggle(user_id: int) -> Response:
             "danger",
         )
 
-    return redirect(url_for("admin.api_keys"))
+    return redirect(url_for(_ADMIN_API_KEYS_ENDPOINT))
+
+
+@admin_bp.route("/api-keys/<int:user_id>/admin", methods=["POST"])
+@admin_required
+def api_key_set_admin(user_id: int) -> Response:
+    """Promote or demote an API user.
+
+    Args:
+        user_id: Primary key of the API user.
+
+    Returns:
+        Redirect to the API keys list with a flash message.
+    """
+    from services.api_client import get_api_client
+
+    is_admin: bool = request.form.get("is_admin", "").lower() in ("true", "1", "on")
+    client = get_api_client()
+    try:
+        resp = client.set_api_user_admin(user_id, is_admin)
+        if resp.status_code == 200:
+            action: str = "promoted to admin" if is_admin else "demoted to regular user"
+            flash(f"API user {action} successfully.", "success")
+        else:
+            flash(
+                f"Failed to update admin status (HTTP {resp.status_code}).",
+                "danger",
+            )
+    except Exception as exc:
+        flash(
+            f"Could not connect to backend: {_sanitise_connection_error(str(exc))}",
+            "danger",
+        )
+
+    return redirect(url_for(_ADMIN_API_KEYS_ENDPOINT))
 
 
 @admin_bp.route("/api-keys/<int:user_id>/delete", methods=["POST"])
@@ -801,7 +899,7 @@ def api_key_delete(user_id: int) -> Response:
                         "with the new credentials, then delete this account.",
                         "danger",
                     )
-                    return redirect(url_for("admin.api_keys"))
+                    return redirect(url_for(_ADMIN_API_KEYS_ENDPOINT))
     except Exception:
         logger.exception("Failed to check active API user before deletion")
 
@@ -821,4 +919,4 @@ def api_key_delete(user_id: int) -> Response:
             "danger",
         )
 
-    return redirect(url_for("admin.api_keys"))
+    return redirect(url_for(_ADMIN_API_KEYS_ENDPOINT))

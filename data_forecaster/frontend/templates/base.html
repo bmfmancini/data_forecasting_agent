@@ -38,7 +38,9 @@
             <hr class="sidebar-hr">
             <ul class="nav flex-column">
                 {% if current_user.is_authenticated %}
+                {% if current_user.is_admin %}
                 <li class="nav-item"><a class="nav-link" href="{{ url_for('admin.dashboard') }}">Admin Panel</a></li>
+                {% endif %}
                 <li class="nav-item"><a class="nav-link" href="{{ url_for('auth.logout') }}">Logout ({{ current_user.username }})</a></li>
                 {% endif %}
             </ul>

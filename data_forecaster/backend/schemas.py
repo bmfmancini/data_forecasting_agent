@@ -162,6 +162,7 @@ class APIUserCreateRequest(BaseModel):
 
     username: str
     description: str = ""
+    is_admin: bool = False
 
 
 class APIUserResponse(BaseModel):
@@ -172,6 +173,7 @@ class APIUserResponse(BaseModel):
     description: str
     enabled: bool
     bootstrap: bool
+    is_admin: bool
     created_at: str
     last_used: str | None = None
     last_used_ip: str | None = None
@@ -195,6 +197,12 @@ class APIUserToggleRequest(BaseModel):
     """Request schema for enabling/disabling an API user."""
 
     enabled: bool
+
+
+class APIUserSetAdminRequest(BaseModel):
+    """Request schema for promoting or demoting an API user."""
+
+    is_admin: bool
 
 
 # ── Bootstrap / Auth Status Schemas ──────────────────────────────────────────
