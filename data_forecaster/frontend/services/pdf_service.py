@@ -13,9 +13,7 @@ import re
 
 from fpdf import FPDF
 
-_VISUAL_TAG_LINE_RE: re.Pattern[str] = re.compile(
-    r"^\s*\[VISUAL:[A-Z_]+\]\s*$"
-)
+_VISUAL_TAG_LINE_RE: re.Pattern[str] = re.compile(r"^\s*\[VISUAL:[A-Z_]+\]\s*$")
 
 
 def _strip_visual_tags(report_md: str) -> str:

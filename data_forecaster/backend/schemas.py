@@ -44,12 +44,8 @@ class AnalyzeRequest(BaseModel):
     forecast_horizon: int
     date_col: str | None = None
     value_col: str | None = None
-    forced_model: str | None = (
-        None  # "Holt-Winters" | "ARIMA" | "SARIMA" | None (auto)
-    )
-    user_prompt: str | None = (
-        None  # Extra instructions appended to the report prompt
-    )
+    forced_model: str | None = None  # "Holt-Winters" | "ARIMA" | "SARIMA" | None (auto)
+    user_prompt: str | None = None  # Extra instructions appended to the report prompt
     preflight_options: dict[str, Any] | None = Field(default_factory=dict)
 
 
@@ -136,6 +132,9 @@ class AnalysisResponse(BaseModel):
     report: str
     report_reasoning: list[dict[str, Any]] = Field(default_factory=list)
     strategic_visual_recommendations: list[dict[str, str]] = Field(default_factory=list)
+    llm_fallback: bool = (
+        False  # Indicates if the LLM was not used for report generation
+    )
     chart_historical: dict
     chart_stl: dict
     chart_acf_pacf: str  # base64 PNG
@@ -165,6 +164,7 @@ class APIUserCreateRequest(BaseModel):
 
     username: str
     description: str = ""
+    is_admin: bool = False
 
 
 class APIUserResponse(BaseModel):
@@ -175,6 +175,7 @@ class APIUserResponse(BaseModel):
     description: str
     enabled: bool
     bootstrap: bool
+    is_admin: bool
     created_at: str
     last_used: str | None = None
     last_used_ip: str | None = None
@@ -198,6 +199,12 @@ class APIUserToggleRequest(BaseModel):
     """Request schema for enabling/disabling an API user."""
 
     enabled: bool
+
+
+class APIUserSetAdminRequest(BaseModel):
+    """Request schema for promoting or demoting an API user."""
+
+    is_admin: bool
 
 
 # ── Bootstrap / Auth Status Schemas ──────────────────────────────────────────

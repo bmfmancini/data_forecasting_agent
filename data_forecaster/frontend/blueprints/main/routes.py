@@ -22,6 +22,7 @@ from flask import (
     current_app,
     flash,
     jsonify,
+    make_response,
     redirect,
     render_template,
     request,
@@ -44,6 +45,30 @@ _VISUAL_TAG_RE: re.Pattern[str] = re.compile(r"\[VISUAL:([A-Z_]+)\]")
 
 _login_required: Callable[[_F], _F] = login_required  # type: ignore[assignment]
 
+_FORECAST_SETUP_ENDPOINT: str = "main.forecast_setup"
+_BACKEND_CONN_ERROR: str = "Backend connection error."
+
+
+def _safe_error_detail(resp: Any, fallback: str = "Request failed.") -> str:
+    """Safely extract an error detail from a backend response.
+
+    Args:
+        resp: The backend response object.
+        fallback: Message to use when the body is not JSON or has no
+            ``detail`` key.
+
+    Returns:
+        The error detail string, or ``fallback`` if it cannot be parsed.
+    """
+    try:
+        body = resp.json()
+        if isinstance(body, dict):
+            return str(body.get("detail", fallback))
+        return fallback
+    except Exception:
+        return fallback
+
+
 _CHART_FIELD_BY_TAG: dict[str, str] = {
     "HISTORICAL": "chart_historical",
     "STL": "chart_stl",
@@ -53,12 +78,30 @@ _CHART_FIELD_BY_TAG: dict[str, str] = {
 }
 
 _BLEACH_ALLOWED_TAGS: list[str] = [
-    "p", "h1", "h2", "h3", "h4", "h5", "h6",
-    "ul", "ol", "li",
-    "strong", "em", "code", "pre",
-    "blockquote", "hr",
-    "a", "br",
-    "table", "thead", "tbody", "tr", "th", "td",
+    "p",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "ul",
+    "ol",
+    "li",
+    "strong",
+    "em",
+    "code",
+    "pre",
+    "blockquote",
+    "hr",
+    "a",
+    "br",
+    "table",
+    "thead",
+    "tbody",
+    "tr",
+    "th",
+    "td",
 ]
 
 _BLEACH_ALLOWED_ATTRS: dict[str, list[str]] = {
@@ -85,7 +128,7 @@ def analysis_required(f: _F) -> _F:
     def wrapper(*args: Any, **kwargs: Any) -> Any:
         if not session.get("analysis_result"):
             flash("Please run an analysis first.", "warning")
-            return redirect(url_for("main.forecast_setup"))
+            return redirect(url_for(_FORECAST_SETUP_ENDPOINT))
         return f(*args, **kwargs)
 
     return wrapper  # type: ignore[return-value]
@@ -116,6 +159,19 @@ def _markdown_to_html(text: str) -> str:
     )
 
 
+def _build_chart_segment(tag: str, result: dict[str, Any]) -> dict[str, Any]:
+    """Return a chart segment descriptor for the given visual tag."""
+    field = _CHART_FIELD_BY_TAG.get(tag)
+    chart_data = result.get(field) if field else None
+    if tag == "ACF_PACF":
+        return {"type": "chart", "tag": tag, "acf_b64": chart_data}
+    return {
+        "type": "chart",
+        "tag": tag,
+        "chart_json": chart_data if chart_data else None,
+    }
+
+
 def _parse_report_segments(
     report_text: str,
     result: dict[str, Any],
@@ -141,22 +197,9 @@ def _parse_report_segments(
     for idx, segment in enumerate(parts):
         if idx % 2 == 0:
             if segment.strip():
-                segments.append(
-                    {"type": "text", "html": _markdown_to_html(segment)}
-                )
+                segments.append({"type": "text", "html": _markdown_to_html(segment)})
         else:
-            tag = segment
-            field = _CHART_FIELD_BY_TAG.get(tag)
-            chart_data = result.get(field) if field else None
-            if tag == "ACF_PACF":
-                segments.append(
-                    {"type": "chart", "tag": tag, "acf_b64": chart_data}
-                )
-            else:
-                chart_json = json.dumps(chart_data) if chart_data else None
-                segments.append(
-                    {"type": "chart", "tag": tag, "chart_json": chart_json}
-                )
+            segments.append(_build_chart_segment(segment, result))
 
     return segments
 
@@ -319,9 +362,7 @@ def forecast() -> str:
     result: dict[str, Any] = session.get("analysis_result") or {}
     fc: dict[str, Any] = result.get("forecast") or {}
     forecast_json: str | None = (
-        json.dumps(result["chart_forecast"])
-        if result.get("chart_forecast")
-        else None
+        json.dumps(result["chart_forecast"]) if result.get("chart_forecast") else None
     )
     forecast_rows: list[dict[str, Any]] = []
     dates = fc.get("forecast_dates", [])
@@ -425,7 +466,9 @@ def report_export() -> Response:
     base_name = filename.rsplit(".", 1)[0] if "." in filename else filename
     pdf_filename = f"forecast_report_{base_name}.pdf"
 
-    pdf_bytes = report_to_pdf(report_text, title=pdf_filename.replace("_", " ").replace(".pdf", ""))
+    pdf_bytes = report_to_pdf(
+        report_text, title=pdf_filename.replace("_", " ").replace(".pdf", "")
+    )
     return send_file(
         io.BytesIO(pdf_bytes),
         mimetype="application/pdf",
@@ -452,19 +495,23 @@ def load_demo() -> Response:
             demo_bytes = fh.read()
     except FileNotFoundError:
         flash("Demo data file not found. Check DEMO_DATA_PATH configuration.", "danger")
-        return redirect(url_for("main.forecast_setup"))
+        return redirect(url_for(_FORECAST_SETUP_ENDPOINT))
 
     _clear_analysis_state()
 
     try:
         client = get_api_client()
-        resp = client.upload_file("sample_airline_passengers.csv", demo_bytes, "text/csv")
+        resp = client.upload_file(
+            "sample_airline_passengers.csv", demo_bytes, "text/csv"
+        )
         if resp.status_code == 200:
             upload_info = resp.json()
             session["upload_info"] = upload_info
             session["date_col"] = upload_info.get("detected_date_col")
             session["value_col"] = upload_info.get("detected_value_col")
-            session["preview_data"] = _parse_preview(demo_bytes, "sample_airline_passengers.csv")
+            session["preview_data"] = _parse_preview(
+                demo_bytes, "sample_airline_passengers.csv"
+            )
             flash(
                 f"Demo data loaded — {upload_info.get('rows', 0)} rows "
                 "(airline passengers 1949-1960).",
@@ -480,26 +527,11 @@ def load_demo() -> Response:
             "danger",
         )
 
-    return redirect(url_for("main.forecast_setup"))
+    return redirect(url_for(_FORECAST_SETUP_ENDPOINT))
 
 
-@main_bp.route("/api/upload", methods=["POST"])
-@_login_required
-def api_upload() -> Response:
-    """Accept a file upload from the browser and forward it to the backend.
-
-    Expects a multipart form field named ``file``.
-
-    Returns:
-        JSON with upload info on success, or an error object on failure.
-    """
-    if "file" not in request.files:
-        return jsonify({"error": "No file provided"}), 400
-
-    file = request.files["file"]
-    if not file.filename:
-        return jsonify({"error": "Empty filename"}), 400
-
+def _forward_upload(file: Any) -> Response:
+    """Forward a validated upload to the backend and store session state."""
     filename: str = file.filename
     content: bytes = file.read()
     content_type: str = file.content_type or "application/octet-stream"
@@ -515,11 +547,34 @@ def api_upload() -> Response:
             session["date_col"] = upload_info.get("detected_date_col")
             session["value_col"] = upload_info.get("detected_value_col")
             session["preview_data"] = _parse_preview(content, filename)
-            return jsonify(upload_info)
-        return jsonify({"error": resp.json().get("detail", "Upload failed.")}), resp.status_code
+            return make_response(jsonify(upload_info), 200)
+        return make_response(
+            jsonify({"error": _safe_error_detail(resp, "Upload failed.")}),
+            resp.status_code,
+        )
     except Exception:
         logger.exception("Backend connection error during upload")
-        return jsonify({"error": "Backend connection error."}), 503
+        return make_response(jsonify({"error": _BACKEND_CONN_ERROR}), 503)
+
+
+@main_bp.route("/api/upload", methods=["POST"])
+@_login_required
+def api_upload() -> Response:
+    """Accept a file upload from the browser and forward it to the backend.
+
+    Expects a multipart form field named ``file``.
+
+    Returns:
+        JSON with upload info on success, or an error object on failure.
+    """
+    if "file" not in request.files:
+        return make_response(jsonify({"error": "No file provided"}), 400)
+
+    file = request.files["file"]
+    if not file.filename:
+        return make_response(jsonify({"error": "Empty filename"}), 400)
+
+    return _forward_upload(file)
 
 
 @main_bp.route("/api/columns", methods=["POST"])
@@ -537,7 +592,9 @@ def api_columns() -> Response:
     value_col: str = str(data.get("value_col", ""))
 
     if not date_col or not value_col:
-        return jsonify({"error": "date_col and value_col are required"}), 400
+        return make_response(
+            jsonify({"error": "date_col and value_col are required"}), 400
+        )
 
     session["date_col"] = date_col
     session["value_col"] = value_col
@@ -557,10 +614,13 @@ def api_columns() -> Response:
             session["preflight_result"] = preflight
             session["preflight_options"] = _preflight_defaults(preflight)
             return jsonify({"preflight": preflight})
-        return jsonify({"error": resp.json().get("detail", "Preflight failed.")}), resp.status_code
+        return make_response(
+            jsonify({"error": _safe_error_detail(resp, "Preflight failed.")}),
+            resp.status_code,
+        )
     except Exception:
         logger.exception("Backend connection error during preflight")
-        return jsonify({"error": "Backend connection error."}), 503
+        return make_response(jsonify({"error": _BACKEND_CONN_ERROR}), 503)
 
 
 @main_bp.route("/api/preflight-choices", methods=["POST"])
@@ -580,6 +640,41 @@ def api_preflight_choices() -> Response:
     return jsonify({"ok": True})
 
 
+def _build_analyze_payload(data: dict[str, Any]) -> dict[str, Any]:
+    """Build the backend analysis payload from request/session state."""
+    upload_info: dict[str, Any] = session.get("upload_info") or {}
+    file_id: str = upload_info.get("file_id", "")
+
+    date_col: str = str(data.get("date_col") or session.get("date_col") or "")
+    value_col: str = str(data.get("value_col") or session.get("value_col") or "")
+    horizon: int = int(
+        data.get("forecast_horizon") or session.get("forecast_horizon") or 12
+    )
+    model_choice: str = str(data.get("model_choice") or "Auto (AI selects)")
+    user_prompt: str = str(data.get("user_prompt") or "").strip()
+    preflight_options: dict[str, Any] = (
+        data.get("preflight_options") or session.get("preflight_options") or {}
+    )
+
+    session["forecast_horizon"] = horizon
+    session["model_choice"] = model_choice
+    session["user_prompt"] = user_prompt
+
+    forced_model: str | None = (
+        None if model_choice == "Auto (AI selects)" else model_choice
+    )
+
+    return {
+        "file_id": file_id,
+        "forecast_horizon": horizon,
+        "date_col": date_col,
+        "value_col": value_col,
+        "forced_model": forced_model,
+        "user_prompt": user_prompt or None,
+        "preflight_options": preflight_options,
+    }
+
+
 @main_bp.route("/api/analyze", methods=["POST"])
 @_login_required
 def api_analyze() -> Response:
@@ -592,36 +687,10 @@ def api_analyze() -> Response:
         JSON with ``job_id`` on success (HTTP 202) or an error object.
     """
     data: dict[str, Any] = request.get_json(silent=True) or {}
-    upload_info: dict[str, Any] = session.get("upload_info") or {}
-    file_id: str = upload_info.get("file_id", "")
+    payload = _build_analyze_payload(data)
 
-    if not file_id:
-        return jsonify({"error": "No file uploaded"}), 400
-
-    date_col: str = str(data.get("date_col") or session.get("date_col") or "")
-    value_col: str = str(data.get("value_col") or session.get("value_col") or "")
-    horizon: int = int(data.get("forecast_horizon") or session.get("forecast_horizon") or 12)
-    model_choice: str = str(data.get("model_choice") or "Auto (AI selects)")
-    user_prompt: str = str(data.get("user_prompt") or "").strip()
-    preflight_options: dict[str, Any] = data.get(
-        "preflight_options"
-    ) or session.get("preflight_options") or {}
-
-    session["forecast_horizon"] = horizon
-    session["model_choice"] = model_choice
-    session["user_prompt"] = user_prompt
-
-    forced_model: str | None = None if model_choice == "Auto (AI selects)" else model_choice
-
-    payload: dict[str, Any] = {
-        "file_id": file_id,
-        "forecast_horizon": horizon,
-        "date_col": date_col,
-        "value_col": value_col,
-        "forced_model": forced_model,
-        "user_prompt": user_prompt or None,
-        "preflight_options": preflight_options,
-    }
+    if not payload["file_id"]:
+        return make_response(jsonify({"error": "No file uploaded"}), 400)
 
     try:
         client = get_api_client()
@@ -633,14 +702,60 @@ def api_analyze() -> Response:
             session["job_progress"] = 0
             session["job_step"] = "Queued - waiting for an available slot..."
             session["analysis_error"] = None
-            return jsonify({"job_id": job_id}), 202
-        return (
-            jsonify({"error": resp.json().get("detail", "Failed to submit job.")}),
+            return make_response(jsonify({"job_id": job_id}), 202)
+        return make_response(
+            jsonify({"error": _safe_error_detail(resp, "Failed to submit job.")}),
             resp.status_code,
         )
     except Exception:
         logger.exception("Backend connection error during preflight")
-        return jsonify({"error": "Backend connection error."}), 503
+        return make_response(jsonify({"error": _BACKEND_CONN_ERROR}), 503)
+
+
+def _handle_done_job(
+    client: BackendAPIClient, job_id: str, status_data: dict[str, Any]
+) -> Response:
+    """Fetch full results for a completed job and update session state."""
+    results_resp = client.get_job_results(job_id)
+    if results_resp.status_code != 200:
+        return _handle_error_job(client, job_id, status_data)
+    result_data = results_resp.json().get("result", {})
+    session["analysis_result"] = result_data
+    session["llm_fallback"] = result_data.get("llm_fallback", False)
+    session["job_running"] = False
+    session["job_id"] = None
+    session["analysis_error"] = None
+    return jsonify(
+        {
+            "status": status_data.get("status", ""),
+            "progress": int(status_data.get("progress", 0)),
+            "step": str(status_data.get("step", "")),
+            "done": True,
+            "redirect": url_for("main.report"),
+        }
+    )
+
+
+def _handle_error_job(
+    client: BackendAPIClient, job_id: str, status_data: dict[str, Any]
+) -> Response:
+    """Fetch the error message for a failed job and update session state."""
+    results_resp = client.get_job_results(job_id)
+    error_msg: str = "Analysis failed."
+    if results_resp.status_code == 200:
+        error_msg = str(results_resp.json().get("error", "Analysis failed."))
+    session["job_running"] = False
+    session["job_id"] = None
+    session["analysis_error"] = error_msg
+    return jsonify(
+        {
+            "status": status_data.get("status", ""),
+            "progress": int(status_data.get("progress", 0)),
+            "step": str(status_data.get("step", "")),
+            "done": False,
+            "error": error_msg,
+        }
+    )
 
 
 @main_bp.route("/api/jobs/status")
@@ -657,15 +772,14 @@ def api_job_status() -> Response:
     """
     job_id: str = session.get("job_id") or ""
     if not job_id:
-        return jsonify({"error": "No active job"}), 400
+        return make_response(jsonify({"error": "No active job"}), 400)
 
     try:
         client = get_api_client()
 
-        # ── Lightweight poll (no result payload) ─────────────────────────────
         status_resp = client.get_job_status_lightweight(job_id)
         if status_resp.status_code != 200:
-            return jsonify({"error": "Failed to poll job status."}), 502
+            return make_response(jsonify({"error": "Failed to poll job status."}), 502)
 
         status_data: dict[str, Any] = status_resp.json()
         status: str = status_data.get("status", "")
@@ -676,43 +790,9 @@ def api_job_status() -> Response:
         session["job_step"] = step
 
         if status == "done":
-            # Fetch full results only once the job is complete
-            results_resp = client.get_job_results(job_id)
-            if results_resp.status_code == 200:
-                session["analysis_result"] = results_resp.json().get("result")
-            session["job_running"] = False
-            session["job_id"] = None
-            session["analysis_error"] = None
-            return jsonify(
-                {
-                    "status": status,
-                    "progress": progress,
-                    "step": step,
-                    "done": True,
-                    "redirect": url_for("main.report"),
-                }
-            )
-
+            return _handle_done_job(client, job_id, status_data)
         if status == "error":
-            # Fetch the error message from the full endpoint
-            results_resp = client.get_job_results(job_id)
-            error_msg: str = "Analysis failed."
-            if results_resp.status_code == 200:
-                error_msg = str(
-                    results_resp.json().get("error", "Analysis failed.")
-                )
-            session["job_running"] = False
-            session["job_id"] = None
-            session["analysis_error"] = error_msg
-            return jsonify(
-                {
-                    "status": status,
-                    "progress": progress,
-                    "step": step,
-                    "done": False,
-                    "error": error_msg,
-                }
-            )
+            return _handle_error_job(client, job_id, status_data)
 
         return jsonify(
             {
@@ -725,7 +805,27 @@ def api_job_status() -> Response:
 
     except Exception:
         logger.exception("Status poll error")
-        return jsonify({"error": "Status poll error."}), 503
+        return make_response(jsonify({"error": "Status poll error."}), 503)
+
+
+@main_bp.route("/api/llm-health")
+@_login_required
+def api_llm_health() -> Response:
+    """Proxy the LLM health check request to the backend.
+
+    Requires authentication to avoid exposing backend LLM state to
+    public callers.
+
+    Returns:
+        JSON response from the backend's `/llm-health` endpoint.
+    """
+    try:
+        client = get_api_client()
+        resp = client.get_llm_health()
+        return make_response(jsonify(resp.json()), resp.status_code)
+    except Exception:
+        logger.exception("Failed to proxy LLM health check")
+        return make_response(jsonify({"error": "Failed to check LLM health."}), 503)
 
 
 @main_bp.route("/api/chat", methods=["POST"])
@@ -743,7 +843,7 @@ def api_chat() -> Response:
     query: str = str(data.get("query", "")).strip()
 
     if not query:
-        return jsonify({"error": "Query is required"}), 400
+        return make_response(jsonify({"error": "Query is required"}), 400)
 
     upload_info: dict[str, Any] = session.get("upload_info") or {}
     file_id: str | None = upload_info.get("file_id") or None
@@ -767,13 +867,13 @@ def api_chat() -> Response:
                 chat_history = chat_history[-100:]
             session["chat_history"] = chat_history
             return jsonify(result)
-        return (
-            jsonify({"error": resp.json().get("detail", "Chat request failed.")}),
+        return make_response(
+            jsonify({"error": _safe_error_detail(resp, "Chat request failed.")}),
             resp.status_code,
         )
     except Exception:
         logger.exception("Backend connection error during chat")
-        return jsonify({"error": "Backend connection error."}), 503
+        return make_response(jsonify({"error": _BACKEND_CONN_ERROR}), 503)
 
 
 @main_bp.route("/api/clear", methods=["POST"])

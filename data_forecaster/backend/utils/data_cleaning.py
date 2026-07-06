@@ -397,10 +397,10 @@ def validate_schema(
     """
     report: Dict[str, Any] = {}
     inferred = pd.infer_freq(series.index)
-    report["freq_regular"] = inferred == config.get("expected_freq")
+    report["freq_regular"] = bool(inferred == config.get("expected_freq"))
     missing_rate = series.isna().mean()
-    report["missing_below_threshold"] = missing_rate <= config.get(
-        "max_missing_rate", 0.05
+    report["missing_below_threshold"] = bool(
+        missing_rate <= config.get("max_missing_rate", 0.05)
     )
     report["missing_rate"] = round(missing_rate, 4)
     if series.dropna().empty:
@@ -411,10 +411,10 @@ def validate_schema(
             config.get("min_value", -np.inf),
             config.get("max_value", np.inf),
         )
-        report["values_in_range"] = in_range.all()
+        report["values_in_range"] = bool(in_range.all())
         report["out_of_range_count"] = int((~in_range).sum())
-    report["no_duplicates"] = not series.index.duplicated().any()
-    report["index_monotonic"] = series.index.is_monotonic_increasing
+    report["no_duplicates"] = bool(not series.index.duplicated().any())
+    report["index_monotonic"] = bool(series.index.is_monotonic_increasing)
     return report
 
 
@@ -431,17 +431,22 @@ def _infer_seasonal_period(series: pd.Series) -> int:
         return 12
     mapping = {
         "M": 12,
+        "ME": 12,
         "MS": 12,
         "Q": 4,
+        "QE": 4,
         "QS": 4,
         "W": 52,
         "D": 7,
         "B": 5,
         "H": 24,
+        "h": 24,
     }
     try:
         offset = to_offset(freq)
         base = offset.name
-    except Exception:
-        base = freq
+    except (ValueError, TypeError):
+        base = str(freq)
+    # Strip anchored-suffix (e.g. "W-SUN" -> "W", "QS-JAN" -> "QS").
+    base = base.split("-")[0]
     return mapping.get(base, 12)

@@ -89,18 +89,12 @@ def init_db() -> None:
     """
     db = get_db()
 
-    schema_path = os.path.join(
-        os.path.dirname(__file__), "schema.sql"
-    )
+    schema_path = os.path.join(os.path.dirname(__file__), "schema.sql")
     with open(schema_path, encoding="utf-8") as f:
         db.executescript(f.read())
 
-    db.execute(
-        "INSERT OR IGNORE INTO roles (id, name) VALUES (1, 'admin')"
-    )
-    db.execute(
-        "INSERT OR IGNORE INTO roles (id, name) VALUES (2, 'user')"
-    )
+    db.execute("INSERT OR IGNORE INTO roles (id, name) VALUES (1, 'admin')")
+    db.execute("INSERT OR IGNORE INTO roles (id, name) VALUES (2, 'user')")
 
     admin_hash = generate_password_hash("admin")
     db.execute(
@@ -158,12 +152,10 @@ def init_db() -> None:
             (backend_url, verify_ssl),
         )
 
-    db.execute(
-        """
+    db.execute("""
         INSERT OR IGNORE INTO app_config (key, value)
         VALUES ('app_name', 'Time Series Data Forecaster Agent')
-        """
-    )
+        """)
 
     db.commit()
 

@@ -1,9 +1,13 @@
-"""FastAPI dependency for API key authentication.
+"""FastAPI dependencies for API key authentication and authorization.
 
 Provides :func:`require_api_key` — a reusable dependency that extracts
 ``X-API-Username`` and ``X-API-Key`` headers from the request, validates
 them against the SQLite database, and raises a generic 401 on any
 failure.
+
+Also provides :func:`require_admin_api_key`, which performs the same
+authentication step and then requires the authenticated user to have
+``is_admin == True``.
 """
 
 from __future__ import annotations
@@ -56,9 +60,7 @@ def require_api_key(request: Request) -> dict[str, Any]:
     if request.client:
         client_ip = request.client.host
 
-    user: dict[str, Any] | None = verify_api_key(
-        username, api_key, client_ip=client_ip
-    )
+    user: dict[str, Any] | None = verify_api_key(username, api_key, client_ip=client_ip)
 
     if user is None:
         raise HTTPException(
@@ -66,4 +68,34 @@ def require_api_key(request: Request) -> dict[str, Any]:
             detail="Unauthorized",
         )
 
+    return user
+
+
+def require_admin_api_key(request: Request) -> dict[str, Any]:
+    """Validate API key credentials and require an administrator role.
+
+    Reuses :func:`require_api_key` for authentication, then checks the
+    ``is_admin`` flag on the returned user dict.  Regular API users
+    receive a generic 403 Forbidden.
+
+    Args:
+        request: The incoming :class:`fastapi.Request`.
+
+    Returns:
+        A dict with the authenticated admin user's fields, or an empty
+        dict when auth is disabled.
+
+    Raises:
+        HTTPException: 401 Unauthorized when credentials are missing or
+            invalid, or 403 Forbidden when the user is not an admin.
+    """
+    if not settings.API_KEY_ENABLED:
+        return {}
+
+    user: dict[str, Any] = require_api_key(request)
+    if not user.get("is_admin"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden",
+        )
     return user

@@ -1,6 +1,7 @@
 """Prompt for the model selection agent."""
 
 from langchain_core.prompts import ChatPromptTemplate
+from .prompt_utils import apply_token_budget, TOKEN_BUDGETS
 
 MODEL_SELECTION_PROMPT = ChatPromptTemplate.from_messages(
     [
@@ -44,3 +45,6 @@ MODEL_SELECTION_PROMPT = ChatPromptTemplate.from_messages(
         ),
     ]
 )
+
+# Apply token budget (example budget: 300 tokens)
+MODEL_SELECTION_PROMPT = apply_token_budget(MODEL_SELECTION_PROMPT, "model_selection")

@@ -37,9 +37,7 @@ def get_rag_kb(persist_directory: str = "./chroma_db") -> RAGKnowledgeBase:
         with _rag_lock:
             # Double-check inside the lock to avoid duplicate init
             if _rag_kb is None:
-                logger.info(
-                    "Initialising RAG knowledge base at %s", persist_directory
-                )
+                logger.info("Initialising RAG knowledge base at %s", persist_directory)
                 _rag_kb = RAGKnowledgeBase(persist_directory=persist_directory)
                 _rag_kb.load_documents()
     return _rag_kb

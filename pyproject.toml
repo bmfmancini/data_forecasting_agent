@@ -14,3 +14,8 @@ requires-python = ">=3.11"
 # requirements.txt / uv.txt.  This pyproject.toml exists primarily to
 # provide a project root for editable installs and tool configuration.
 packages = []
+
+[tool.mypy]
+python_version = "3.11"
+mypy_path = "data_forecaster/backend"
+ignore_missing_imports = true

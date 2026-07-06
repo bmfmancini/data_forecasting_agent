@@ -9,7 +9,16 @@ import asyncio
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Annotated
 
-from fastapi import Body, Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
+from fastapi import (
+    Body,
+    Depends,
+    FastAPI,
+    File,
+    HTTPException,
+    Request,
+    Response,
+    UploadFile,
+)
 from fastapi.middleware.cors import CORSMiddleware
 
 import core.config as settings
@@ -22,9 +31,10 @@ from auth.api_key_db import (
     init_db as init_api_key_db,
     list_api_users,
     rotate_api_key,
+    set_user_admin,
     set_user_enabled,
 )
-from auth.dependency import require_api_key
+from auth.dependency import require_admin_api_key, require_api_key
 from core.config import set_api_key_enabled
 from core.logging_config import get_logger
 from schemas import (
@@ -32,6 +42,7 @@ from schemas import (
     APIUserCreateRequest,
     APIUserCreatedResponse,
     APIUserResponse,
+    APIUserSetAdminRequest,
     APIUserToggleRequest,
     AnalyzeRequest,
     AuthStatusResponse,
@@ -58,6 +69,8 @@ from utils.data_parser import parse_upload
 from utils.preflight import run_preflight_checks
 
 logger = get_logger(__name__)
+
+_JSON_MEDIA_TYPE: str = "application/json"
 
 
 @asynccontextmanager
@@ -111,8 +124,6 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     try:
         await worker_task
     except asyncio.CancelledError:
-        # Expected during shutdown — the worker blocks on JOB_QUEUE.get()
-        # and is cancelled when the app is stopping.
         pass
 
 
@@ -159,7 +170,7 @@ async def global_exception_handler(request: Request, exc: Exception) -> Response
     logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
     return Response(
         content='{"detail": "Internal server error."}',
-        media_type="application/json",
+        media_type=_JSON_MEDIA_TYPE,
         status_code=500,
     )
 
@@ -171,6 +182,118 @@ async def global_exception_handler(request: Request, exc: Exception) -> Response
 def health() -> dict[str, str]:
     """Health check endpoint."""
     return {"status": "ok"}
+
+
+@app.get("/llm-health")
+def llm_health_endpoint() -> dict[str, Any]:
+    """Return a minimal LLM liveness status.
+
+    The public response is intentionally limited to ``llm_configured``
+    and ``llm_reachable`` booleans so that provider names, configuration
+    details, and error messages are not exposed to unauthenticated
+    callers.  The full :func:`llm_health` result is available for
+    internal/server-side use only.
+
+    Returns:
+        A JSON dict with keys ``llm_configured`` and ``llm_reachable``.
+    """
+    full = llm_health()
+    return {
+        "llm_configured": full.get("llm_configured", False),
+        "llm_reachable": full.get("llm_reachable", False),
+    }
+
+
+async def _check_ollama_reachable() -> bool:
+    """Return whether the configured Ollama endpoint responds.
+
+    Handles both Ollama Cloud (with optional API key) and local Ollama.
+    """
+    from core.config import OLLAMA_API_KEY, USE_OLLAMA_CLOUD
+    import httpx
+
+    try:
+        if USE_OLLAMA_CLOUD:
+            ollama_url = f"{settings.OLLAMA_BASE_URL}/api/version"
+            headers = {"Content-Type": _JSON_MEDIA_TYPE}
+            if OLLAMA_API_KEY:
+                headers["Authorization"] = f"Bearer {OLLAMA_API_KEY}"
+            async with httpx.AsyncClient() as client:
+                response = await client.get(ollama_url, headers=headers)
+                return response.status_code == 200
+        ollama_url = f"{settings.OLLAMA_BASE_URL}/api/tags"
+        async with httpx.AsyncClient() as client:
+            response = await client.get(ollama_url)
+            return response.status_code == 200
+    except Exception:
+        return False
+
+
+async def _check_gemini_reachable() -> bool:
+    """Return whether the Gemini API responds to a lightweight probe."""
+    from core.config import GOOGLE_API_KEY
+    import httpx
+
+    try:
+        gemini_url = (
+            "https://generativelanguage.googleapis.com/v1beta/models/"
+            f"{settings.GEMINI_MODEL}:countTokens"
+        )
+        headers = {"Content-Type": _JSON_MEDIA_TYPE}
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                gemini_url,
+                json={"contents": [{"parts": [{"text": "ping"}]}]},
+                headers=headers,
+                params={"key": GOOGLE_API_KEY},
+            )
+            return response.status_code == 200
+    except Exception:
+        return False
+
+
+def llm_health() -> dict[str, Any]:
+    """Check LLM connectivity and configuration.
+
+    Returns:
+        dict: A dictionary with keys:
+            - "llm_configured": bool indicating if an LLM provider is configured.
+            - "llm_reachable": bool indicating if the LLM is reachable.
+            - "llm_provider": str indicating the configured LLM provider ("gemini" or "ollama").
+            - "error": str containing error message if any, otherwise None.
+    """
+    from core.config import USE_OLLAMA, GOOGLE_API_KEY, OLLAMA_MODEL
+    import asyncio
+
+    result: dict[str, Any] = {
+        "llm_configured": False,
+        "llm_reachable": False,
+        "llm_provider": None,
+        "error": None,
+    }
+
+    if USE_OLLAMA:
+        result["llm_provider"] = "ollama"
+        if not OLLAMA_MODEL:
+            result["error"] = "OLLAMA_MODEL is not set."
+            return result
+        result["llm_configured"] = True
+        result["llm_reachable"] = asyncio.run(_check_ollama_reachable())
+        if not result["llm_reachable"]:
+            result["error"] = "Ollama server is not reachable."
+    elif GOOGLE_API_KEY:
+        result["llm_provider"] = "gemini"
+        result["llm_configured"] = True
+        result["llm_reachable"] = asyncio.run(_check_gemini_reachable())
+        if not result["llm_reachable"]:
+            result["error"] = "Gemini API is not reachable."
+    else:
+        result["error"] = (
+            "No LLM provider configured. Either set USE_OLLAMA=true with a "
+            "running Ollama instance, or set GOOGLE_API_KEY for Gemini."
+        )
+
+    return result
 
 
 # ── Auth Status & Bootstrap (unauthenticated, guarded) ────────────────────────
@@ -190,7 +313,15 @@ def auth_status() -> dict[str, Any]:
     }
 
 
-@app.post("/api-users/bootstrap", response_model=BootstrapResponse)
+@app.post(
+    "/api-users/bootstrap",
+    response_model=BootstrapResponse,
+    responses={
+        400: {"description": "Invalid username or API key"},
+        403: {"description": "ADMIN_API_KEY missing or invalid"},
+        409: {"description": "API users already exist"},
+    },
+)
 def api_users_bootstrap(
     request: BootstrapRequest,
     http_request: Request,
@@ -251,23 +382,24 @@ def api_users_bootstrap(
 # ── File Upload & Analysis ────────────────────────────────────────────────────
 
 
-@app.post(
-    "/upload",
-    responses={
-        400: {"description": "Invalid file content, size, or format"},
-        500: {"description": "File parsing failed"},
-    },
-)
-async def upload_file(
-    file: Annotated[UploadFile, File(...)],
-    _user: Annotated[dict, Depends(require_api_key)],
-) -> UploadResponse:
-    """Handle file uploads, validate types, and store in memory."""
+def _validate_upload_file(file: UploadFile, contents: bytes) -> str:
+    """Validate upload metadata and magic bytes.
+
+    Args:
+        file: The uploaded file object.
+        contents: Raw file bytes already read from *file*.
+
+    Returns:
+        The lower-cased file extension.
+
+    Raises:
+        HTTPException: 400 when content type, extension, size, or magic
+            bytes are invalid.
+    """
     logger.info(
         "POST /upload  filename=%s  content_type=%s", file.filename, file.content_type
     )
 
-    # ── Validate content-type ─────────────────────────────────────────────────
     if file.content_type not in settings.ALLOWED_MIME_TYPES:
         raise HTTPException(
             status_code=400,
@@ -277,16 +409,16 @@ async def upload_file(
             ),
         )
 
-    # ── Validate extension ────────────────────────────────────────────────────
     ext = (file.filename or "").rsplit(".", 1)[-1].lower()
     if ext not in settings.ALLOWED_EXTENSIONS:
         raise HTTPException(
             status_code=400,
-            detail=f"File extension '.{ext}' not allowed. Allowed: {settings.ALLOWED_EXTENSIONS}",
+            detail=(
+                f"File extension '.{ext}' not allowed. "
+                f"Allowed: {settings.ALLOWED_EXTENSIONS}"
+            ),
         )
 
-    # ── Read & validate size ──────────────────────────────────────────────────
-    contents = await file.read()
     if len(contents) > settings.MAX_UPLOAD_BYTES:
         raise HTTPException(
             status_code=400,
@@ -296,14 +428,15 @@ async def upload_file(
             ),
         )
 
-    # ── Validate file signature (magic bytes) ─────────────────────────────────
     if not contents:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
     if ext == "xlsx" and contents[:4] != b"PK\x03\x04":
         raise HTTPException(
             status_code=400,
             detail="File content does not match XLSX format (expected ZIP signature).",
         )
+
     if ext == "csv":
         try:
             contents[:4096].decode("utf-8")
@@ -316,7 +449,24 @@ async def upload_file(
                     detail="File content does not appear to be a valid text/CSV file.",
                 ) from None
 
-    # ── Parse ─────────────────────────────────────────────────────────────────
+    return ext
+
+
+@app.post(
+    "/upload",
+    responses={
+        400: {"description": "Invalid file content, size, or format"},
+        500: {"description": "File parsing failed"},
+    },
+)
+async def upload_file(
+    file: Annotated[UploadFile, File(...)],
+    _user: Annotated[dict, Depends(require_api_key)],
+) -> UploadResponse:
+    """Handle file uploads, validate types, and store in memory."""
+    contents = await file.read()
+    _validate_upload_file(file, contents)
+
     try:
         df, date_col, value_col, freq = parse_upload(
             contents, file.filename or "upload.csv"
@@ -330,7 +480,6 @@ async def upload_file(
             detail="An internal error occurred while parsing the file.",
         ) from exc
 
-    # ── Store & return ────────────────────────────────────────────────────────
     file_id = store_file(df, date_col, value_col, freq, file.filename)
 
     return UploadResponse(
@@ -520,24 +669,37 @@ async def chat_explorer(
 # ── API User Management Endpoints (admin) ─────────────────────────────────────
 
 
-@app.get("/api-users", response_model=list[APIUserResponse])
+@app.get(
+    "/api-users",
+    response_model=list[APIUserResponse],
+    responses={403: {"description": "Authenticated user is not an admin"}},
+)
 def api_users_list(
-    _user: Annotated[dict, Depends(require_api_key)],
+    _user: Annotated[dict, Depends(require_admin_api_key)],
 ) -> list[dict[str, Any]]:
     """List all API key users (never includes key hashes)."""
     return list_api_users()
 
 
-@app.post("/api-users", response_model=APIUserCreatedResponse, status_code=201)
+@app.post(
+    "/api-users",
+    response_model=APIUserCreatedResponse,
+    status_code=201,
+    responses={
+        409: {"description": "Username already exists"},
+        500: {"description": "User created but not found"},
+    },
+)
 def api_users_create(
     request: APIUserCreateRequest,
-    _user: Annotated[dict, Depends(require_api_key)],
+    _user: Annotated[dict, Depends(require_admin_api_key)],
 ) -> dict[str, Any]:
     """Create a new API user and return the plaintext key once."""
     try:
         plaintext_key: str = create_api_user(
             username=request.username,
             description=request.description,
+            is_admin=request.is_admin,
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -555,10 +717,11 @@ def api_users_create(
 @app.post(
     "/api-users/{user_id}/rotate",
     response_model=APIKeyRotatedResponse,
+    responses={404: {"description": "API user not found"}},
 )
 def api_users_rotate(
     user_id: int,
-    _user: Annotated[dict, Depends(require_api_key)],
+    _user: Annotated[dict, Depends(require_admin_api_key)],
 ) -> dict[str, Any]:
     """Rotate an API user's key and return the new plaintext key once."""
     try:
@@ -569,11 +732,15 @@ def api_users_rotate(
     return {"user_id": user_id, "api_key": plaintext_key}
 
 
-@app.post("/api-users/{user_id}/toggle", response_model=APIUserResponse)
+@app.post(
+    "/api-users/{user_id}/toggle",
+    response_model=APIUserResponse,
+    responses={404: {"description": "API user not found"}},
+)
 def api_users_toggle(
     user_id: int,
     request: APIUserToggleRequest,
-    _user: Annotated[dict, Depends(require_api_key)],
+    _user: Annotated[dict, Depends(require_admin_api_key)],
 ) -> dict[str, Any]:
     """Enable or disable an API user."""
     try:
@@ -589,10 +756,39 @@ def api_users_toggle(
     return user
 
 
-@app.delete("/api-users/{user_id}", status_code=204, response_class=Response)
+@app.post(
+    "/api-users/{user_id}/admin",
+    response_model=APIUserResponse,
+    responses={404: {"description": "API user not found"}},
+)
+def api_users_set_admin(
+    user_id: int,
+    request: APIUserSetAdminRequest,
+    _user: Annotated[dict, Depends(require_admin_api_key)],
+) -> dict[str, Any]:
+    """Promote or demote an API user."""
+    try:
+        set_user_admin(user_id, request.is_admin)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    user: dict[str, Any] | None = next(
+        (u for u in list_api_users() if u["id"] == user_id), None
+    )
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found after update.")
+    return user
+
+
+@app.delete(
+    "/api-users/{user_id}",
+    status_code=204,
+    response_class=Response,
+    responses={404: {"description": "API user not found"}},
+)
 def api_users_delete(
     user_id: int,
-    _user: Annotated[dict, Depends(require_api_key)],
+    _user: Annotated[dict, Depends(require_admin_api_key)],
 ) -> Response:
     """Permanently delete an API user."""
     try:
@@ -602,9 +798,12 @@ def api_users_delete(
     return Response(status_code=204)
 
 
-@app.get("/api-users/bootstrap-status")
+@app.get(
+    "/api-users/bootstrap-status",
+    responses={403: {"description": "Authenticated user is not an admin"}},
+)
 def api_users_bootstrap_status(
-    _user: Annotated[dict, Depends(require_api_key)],
+    _user: Annotated[dict, Depends(require_admin_api_key)],
 ) -> dict[str, bool]:
     """Check whether a bootstrap API user still exists."""
     return {"has_bootstrap": has_bootstrap_user()}

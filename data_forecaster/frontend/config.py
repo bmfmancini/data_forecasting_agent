@@ -25,9 +25,7 @@ class BaseConfig:
         os.path.dirname(os.path.abspath(__file__)), "instance", "forecaster.db"
     )
     BACKEND_URL: str = os.environ.get("BACKEND_URL", "http://localhost:8000")
-    API_VERIFY_SSL: bool = os.environ.get(
-        "API_VERIFY_SSL", "false"
-    ).lower() == "true"
+    API_VERIFY_SSL: bool = os.environ.get("API_VERIFY_SSL", "false").lower() == "true"
     # Pre-shared service-account credentials for the FastAPI backend.
     # Defaults to ``frontend``/``frontend`` so the stack works out-of-the-box.
     # The admin MUST rotate the key for production via the admin panel.
@@ -79,6 +77,7 @@ class ProductionConfig(BaseConfig):
                 "Default FRONTEND_API_USERNAME and FRONTEND_API_KEY values are not allowed in production. "
                 "Please set these values in the environment."
             )
+
     SESSION_COOKIE_SECURE: bool = True
     SESSION_COOKIE_HTTPONLY: bool = True
     SESSION_COOKIE_SAMESITE: str = "Lax"

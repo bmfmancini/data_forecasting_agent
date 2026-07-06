@@ -21,6 +21,8 @@ logger = get_logger(__name__)
 
 _BOOTSTRAP_DESCRIPTION: str = "Bootstrap API user (created via admin bootstrap)"
 
+_SELECT_USER_BY_ID: str = "SELECT id FROM api_users WHERE id = ?"
+
 _SCHEMA: str = """
 CREATE TABLE IF NOT EXISTS api_users (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -29,6 +31,7 @@ CREATE TABLE IF NOT EXISTS api_users (
     description   TEXT    NOT NULL DEFAULT '',
     enabled       INTEGER NOT NULL DEFAULT 1,
     bootstrap     INTEGER NOT NULL DEFAULT 0,
+    is_admin      INTEGER NOT NULL DEFAULT 0,
     created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
     last_used     TEXT,
     last_used_ip  TEXT
@@ -57,6 +60,32 @@ def _get_connection() -> sqlite3.Connection:
     """
     conn: sqlite3.Connection = sqlite3.connect(
         _get_db_path(),
+        detect_types=sqlite3.PARSE_DECLTYPES,
+    )
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+
+def get_connection(db_path: str | None = None) -> sqlite3.Connection:
+    """Open a new SQLite connection with ``Row`` row factory.
+
+    Args:
+        db_path: Optional directory containing ``api_keys.db``.  When
+            ``None``, the configured default path is used.
+
+    Returns:
+        A :class:`sqlite3.Connection` configured for dict-style row
+        access.
+    """
+    if db_path is not None:
+        os.makedirs(db_path, exist_ok=True)
+        db_file: str = os.path.join(db_path, "api_keys.db")
+    else:
+        db_file = _get_db_path()
+    conn: sqlite3.Connection = sqlite3.connect(
+        db_file,
         detect_types=sqlite3.PARSE_DECLTYPES,
     )
     conn.row_factory = sqlite3.Row
@@ -100,9 +129,8 @@ def has_any_users() -> bool:
 def create_first_user(username: str, api_key: str) -> dict[str, Any]:
     """Create the first API user and return a user dict (no key hash).
 
-    This is called by the bootstrap endpoint when an admin enables API
-    authentication for the first time.  The caller chooses the username
-    and plaintext key.
+    The bootstrap user is always created as an administrator so that the
+    first API credential can manage subsequent API users.
 
     Args:
         username:    Username for the first API user.
@@ -135,8 +163,8 @@ def create_first_user(username: str, api_key: str) -> dict[str, Any]:
         conn.execute(
             """
             INSERT INTO api_users
-                (username, api_key_hash, description, enabled, bootstrap)
-            VALUES (?, ?, ?, 1, 1)
+                (username, api_key_hash, description, enabled, bootstrap, is_admin)
+            VALUES (?, ?, ?, 1, 1, 1)
             """,
             (username.strip(), key_hash, _BOOTSTRAP_DESCRIPTION),
         )
@@ -145,7 +173,7 @@ def create_first_user(username: str, api_key: str) -> dict[str, Any]:
 
         row: sqlite3.Row | None = conn.execute(
             """
-            SELECT id, username, description, enabled, bootstrap,
+            SELECT id, username, description, enabled, bootstrap, is_admin,
                    created_at, last_used, last_used_ip
             FROM api_users WHERE username = ?
             """,
@@ -182,7 +210,12 @@ def verify_api_key(
     conn: sqlite3.Connection = _get_connection()
     try:
         row: sqlite3.Row | None = conn.execute(
-            "SELECT * FROM api_users WHERE username = ?",
+            """
+            SELECT id, username, api_key_hash, description, enabled, bootstrap,
+                   is_admin, created_at, last_used, last_used_ip
+            FROM api_users
+            WHERE username = ?
+            """,
             (username,),
         ).fetchone()
 
@@ -212,11 +245,10 @@ def verify_api_key(
             "description": str(row["description"]),
             "enabled": bool(row["enabled"]),
             "bootstrap": bool(row["bootstrap"]),
+            "is_admin": bool(row["is_admin"]),
             "created_at": str(row["created_at"]),
             "last_used": str(row["last_used"]) if row["last_used"] else None,
-            "last_used_ip": (
-                str(row["last_used_ip"]) if row["last_used_ip"] else None
-            ),
+            "last_used_ip": (str(row["last_used_ip"]) if row["last_used_ip"] else None),
         }
     finally:
         conn.close()
@@ -230,15 +262,26 @@ def list_api_users() -> list[dict[str, Any]]:
     """
     conn: sqlite3.Connection = _get_connection()
     try:
-        rows: list[sqlite3.Row] = conn.execute(
-            """
-            SELECT id, username, description, enabled, bootstrap,
+        rows: list[sqlite3.Row] = conn.execute("""
+            SELECT id, username, description, enabled, bootstrap, is_admin,
                    created_at, last_used, last_used_ip
             FROM api_users
             ORDER BY id
-            """
-        ).fetchall()
-        return [dict(r) for r in rows]
+            """).fetchall()
+        return [
+            {
+                "id": int(r["id"]),
+                "username": str(r["username"]),
+                "description": str(r["description"]),
+                "enabled": bool(r["enabled"]),
+                "bootstrap": bool(r["bootstrap"]),
+                "is_admin": bool(r["is_admin"]),
+                "created_at": str(r["created_at"]),
+                "last_used": str(r["last_used"]) if r["last_used"] else None,
+                "last_used_ip": (str(r["last_used_ip"]) if r["last_used_ip"] else None),
+            }
+            for r in rows
+        ]
     finally:
         conn.close()
 
@@ -256,24 +299,38 @@ def get_api_user(user_id: int) -> dict[str, Any] | None:
     try:
         row: sqlite3.Row | None = conn.execute(
             """
-            SELECT id, username, description, enabled, bootstrap,
+            SELECT id, username, description, enabled, bootstrap, is_admin,
                    created_at, last_used, last_used_ip
             FROM api_users
             WHERE id = ?
             """,
             (user_id,),
         ).fetchone()
-        return dict(row) if row else None
+        if row is None:
+            return None
+        return {
+            "id": int(row["id"]),
+            "username": str(row["username"]),
+            "description": str(row["description"]),
+            "enabled": bool(row["enabled"]),
+            "bootstrap": bool(row["bootstrap"]),
+            "is_admin": bool(row["is_admin"]),
+            "created_at": str(row["created_at"]),
+            "last_used": str(row["last_used"]) if row["last_used"] else None,
+            "last_used_ip": (str(row["last_used_ip"]) if row["last_used_ip"] else None),
+        }
     finally:
         conn.close()
 
 
-def create_api_user(username: str, description: str) -> str:
+def create_api_user(username: str, description: str, is_admin: bool = False) -> str:
     """Create a new API user and return the plaintext key (once).
 
     Args:
         username:    Unique username for the new API user.
         description: Human-readable description / purpose.
+        is_admin:    Whether the new user is an administrator. Defaults to
+            ``False`` (regular user).
 
     Returns:
         The plaintext API key — displayed once to the caller.
@@ -296,13 +353,13 @@ def create_api_user(username: str, description: str) -> str:
         conn.execute(
             """
             INSERT INTO api_users
-                (username, api_key_hash, description, enabled, bootstrap)
-            VALUES (?, ?, ?, 1, 0)
+                (username, api_key_hash, description, enabled, bootstrap, is_admin)
+            VALUES (?, ?, ?, 1, 0, ?)
             """,
-            (username, key_hash, description),
+            (username, key_hash, description, int(is_admin)),
         )
         conn.commit()
-        logger.info("API user '%s' created.", username)
+        logger.info("API user '%s' created (admin=%s).", username, is_admin)
         return plaintext_key
     finally:
         conn.close()
@@ -328,7 +385,7 @@ def rotate_api_key(user_id: int) -> str:
     conn: sqlite3.Connection = _get_connection()
     try:
         row: sqlite3.Row | None = conn.execute(
-            "SELECT id FROM api_users WHERE id = ?",
+            _SELECT_USER_BY_ID,
             (user_id,),
         ).fetchone()
         if row is None:
@@ -360,7 +417,7 @@ def set_user_enabled(user_id: int, enabled: bool) -> None:
     conn: sqlite3.Connection = _get_connection()
     try:
         row: sqlite3.Row | None = conn.execute(
-            "SELECT id FROM api_users WHERE id = ?",
+            _SELECT_USER_BY_ID,
             (user_id,),
         ).fetchone()
         if row is None:
@@ -371,9 +428,37 @@ def set_user_enabled(user_id: int, enabled: bool) -> None:
             (int(enabled), user_id),
         )
         conn.commit()
-        logger.info(
-            "API user id=%d %s.", user_id, "enabled" if enabled else "disabled"
+        logger.info("API user id=%d %s.", user_id, "enabled" if enabled else "disabled")
+    finally:
+        conn.close()
+
+
+def set_user_admin(user_id: int, is_admin: bool) -> None:
+    """Promote or demote an API user.
+
+    Args:
+        user_id:   Primary key of the API user.
+        is_admin:  ``True`` to grant administrator privileges,
+            ``False`` to revoke them.
+
+    Raises:
+        ValueError: When the user ID does not exist.
+    """
+    conn: sqlite3.Connection = _get_connection()
+    try:
+        row: sqlite3.Row | None = conn.execute(
+            _SELECT_USER_BY_ID,
+            (user_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"API user with id {user_id} not found.")
+
+        conn.execute(
+            "UPDATE api_users SET is_admin = ? WHERE id = ?",
+            (int(is_admin), user_id),
         )
+        conn.commit()
+        logger.info("API user id=%d admin status set to %s.", user_id, is_admin)
     finally:
         conn.close()
 
@@ -390,7 +475,7 @@ def delete_api_user(user_id: int) -> None:
     conn: sqlite3.Connection = _get_connection()
     try:
         row: sqlite3.Row | None = conn.execute(
-            "SELECT id FROM api_users WHERE id = ?",
+            _SELECT_USER_BY_ID,
             (user_id,),
         ).fetchone()
         if row is None:

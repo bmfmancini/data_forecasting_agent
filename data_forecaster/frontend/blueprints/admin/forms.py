@@ -119,6 +119,7 @@ class APIKeyCreateForm(FlaskForm):  # type: ignore[misc]
     Fields:
         username:    Login name for the new API user.
         description: Human-readable description / purpose.
+        is_admin:    Whether the new user is an administrator.
         submit:      Submission button.
     """
 
@@ -130,4 +131,5 @@ class APIKeyCreateForm(FlaskForm):  # type: ignore[misc]
         "Description (optional)",
         validators=[Optional(), Length(max=256)],
     )
+    is_admin = BooleanField("Administrator")
     submit = SubmitField("Create API User")

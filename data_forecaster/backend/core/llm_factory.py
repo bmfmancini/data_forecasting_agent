@@ -84,9 +84,7 @@ def get_llm(temperature: float = 0.0) -> BaseChatModel:
             ),
         )
 
-    logger.info(
-        "Using Google Gemini (model=%s)", config.GEMINI_MODEL
-    )
+    logger.info("Using Google Gemini (model=%s)", config.GEMINI_MODEL)
     return ChatGoogleGenerativeAI(
         model=config.GEMINI_MODEL,
         google_api_key=config.GOOGLE_API_KEY,

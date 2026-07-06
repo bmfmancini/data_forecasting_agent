@@ -12,10 +12,9 @@ import re
 from typing import Any
 
 import pandas as pd
-from langchain_core.prompts import ChatPromptTemplate
-
 from core.llm_factory import get_llm
 from core.logging_config import get_logger
+from prompts.general_chat_prompt import GENERAL_CHAT_PROMPT
 from prompts.orchestrator_prompt import ORCHESTRATOR_CHAT_PROMPT
 from services.rag_service import get_rag_kb
 
@@ -323,19 +322,13 @@ def chat_with_data(
             main_date = date_cols[0]
             val_col = num_cols[0]
 
-            top_5 = df.nlargest(5, val_col)[[main_date, val_col]].to_string(
-                index=False
-            )
+            top_5 = df.nlargest(5, val_col)[[main_date, val_col]].to_string(index=False)
             bottom_5 = df.nsmallest(5, val_col)[[main_date, val_col]].to_string(
                 index=False
             )
 
-            data_snapshots = (
-                f"\nHIGHEST 5 RECORDS (Sorted by {val_col}):\n{top_5}\n"
-            )
-            data_snapshots += (
-                f"\nLOWEST 5 RECORDS (Sorted by {val_col}):\n{bottom_5}\n"
-            )
+            data_snapshots = f"\nHIGHEST 5 RECORDS (Sorted by {val_col}):\n{top_5}\n"
+            data_snapshots += f"\nLOWEST 5 RECORDS (Sorted by {val_col}):\n{bottom_5}\n"
     except Exception as exc:
         logger.warning("Failed to generate data highlights for chat: %s", exc)
 
@@ -441,25 +434,8 @@ def chat_general(query: str, chroma_persist_dir: str) -> dict[str, Any]:
     # 2. Setup LLM based on configuration
     llm = get_llm(temperature=0)
 
-    general_prompt = ChatPromptTemplate.from_messages(
-        [
-            (
-                "system",
-                """You are an expert in time series forecasting and data analysis.
-         Use the provided context to answer questions about time series forecasting concepts, methodologies, and best practices.
-         If the context doesn't contain enough information to fully answer the question, provide the best answer you can based on your general knowledge.
-
-         Context from documentation:
-         {context}
-
-         Answer the question in a clear, concise, and helpful manner.""",
-            ),
-            ("human", "{query}"),
-        ]
-    )
-
     try:
-        chain = general_prompt | llm
+        chain = GENERAL_CHAT_PROMPT | llm
         response = chain.invoke({"context": memory_context, "query": query})
 
         content = response.content
