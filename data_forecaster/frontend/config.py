@@ -68,6 +68,17 @@ class ProductionConfig(BaseConfig):
 
     DEBUG: bool = False
     TESTING: bool = False
+
+    def __init__(self) -> None:
+        super().__init__()
+        if (
+            self.FRONTEND_API_USERNAME == "frontend"
+            and self.FRONTEND_API_KEY == "frontend"
+        ):
+            raise ValueError(
+                "Default FRONTEND_API_USERNAME and FRONTEND_API_KEY values are not allowed in production. "
+                "Please set these values in the environment."
+            )
     SESSION_COOKIE_SECURE: bool = True
     SESSION_COOKIE_HTTPONLY: bool = True
     SESSION_COOKIE_SAMESITE: str = "Lax"

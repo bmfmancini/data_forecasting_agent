@@ -115,6 +115,10 @@ while [ $# -gt 0 ]; do
         --single)        MODE="single"; shift ;;
         --distributed)   MODE="distributed"; shift ;;
         --role)
+            if [ $# -lt 2 ]; then
+                err "Missing argument for --role. Use 'frontend' or 'backend'."
+                exit 1
+            fi
             ROLE="$2"; shift 2
             if [ "${ROLE}" != "frontend" ] && [ "${ROLE}" != "backend" ]; then
                 err "Invalid --role '${ROLE}'. Use 'frontend' or 'backend'."
@@ -212,8 +216,9 @@ case "${MODE}" in
                     fi
                 fi
                 if [ -z "${REMOTE_BACKEND_URL:-}" ]; then
-                    warn "REMOTE_BACKEND_URL is not set. The frontend will not be able to reach the backend."
-                    warn "Set it in ${ENV_FILE} or export it before running this script."
+                    err "REMOTE_BACKEND_URL is not set. The frontend will not be able to reach the backend."
+                    err "Set it in ${ENV_FILE} or export it before running this script."
+                    exit 1
                 else
                     log "Remote backend URL: ${REMOTE_BACKEND_URL}"
                 fi

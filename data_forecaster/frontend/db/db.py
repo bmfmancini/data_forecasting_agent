@@ -141,19 +141,19 @@ def init_db() -> None:
                  timeout, verify_ssl)
             VALUES ('default', ?, ?, ?, 30, ?)
             ON CONFLICT(label) DO UPDATE SET
-                base_url   = excluded.base_url,
-                verify_ssl = excluded.verify_ssl
+                encrypted_username = excluded.encrypted_username,
+                encrypted_password = excluded.encrypted_password
+            WHERE excluded.encrypted_username IS NOT NULL
             """,
             (backend_url, enc_user, enc_pass, verify_ssl),
         )
     else:
+        # Only update base_url and verify_ssl if they are not already set
         db.execute(
             """
             INSERT INTO api_credentials (label, base_url, timeout, verify_ssl)
             VALUES ('default', ?, 30, ?)
-            ON CONFLICT(label) DO UPDATE SET
-                base_url   = excluded.base_url,
-                verify_ssl = excluded.verify_ssl
+            ON CONFLICT(label) DO NOTHING
             """,
             (backend_url, verify_ssl),
         )
