@@ -1,7 +1,7 @@
 """Prompt for the report generation agent."""
 
 from langchain_core.prompts import ChatPromptTemplate
-pip install sentence-transformersfrom .prompt_utils import apply_token_budget, TOKEN_BUDGETS
+from .prompt_utils import apply_token_budget, TOKEN_BUDGETS
 
 REPORT_GENERATION_PROMPT = ChatPromptTemplate.from_messages(
     [
@@ -197,7 +197,5 @@ REPORT_GENERATION_PROMPT = ChatPromptTemplate.from_messages(
     ]
 )
 
-# Apply token budget (example budget: 800 tokens)
-REPORT_GENERATION_PROMPT = apply_token_budget(
-    REPORT_GENERATION_PROMPT, "report_generation"
-)
+# Apply token budget
+REPORT_GENERATION_PROMPT = apply_token_budget(REPORT_GENERATION_PROMPT, "report_generation")
