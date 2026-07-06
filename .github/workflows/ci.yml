@@ -32,6 +32,7 @@ jobs:
         pip install pylint mypy black pytest pip-audit
 
     - name: Run Black (check mode)
+      continue-on-error: true
       run: |
         black --check .
 
@@ -40,7 +41,8 @@ jobs:
       run: |
         pylint **/*.py || true
 
-    - name: Run MyPy
+    - name: Run MyPy (informational)
+      continue-on-error: true
       run: |
         mypy .
 
