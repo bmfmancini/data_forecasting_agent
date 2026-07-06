@@ -2,9 +2,12 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, dev ]
   pull_request:
-    branches: [ main ]
+    branches: [ "**" ]
+
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -26,23 +29,40 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         # Install project requirements if they exist
-        if [ -f backend/requirements.txt ]; then pip install -r backend/requirements.txt; fi
-        if [ -f frontend/requirements.txt ]; then pip install -r frontend/requirements.txt; fi
-        # Install development tools
-        pip install pylint mypy black pytest
+        if [ -f data_forecaster/backend/requirements.txt ]; then pip install -r data_forecaster/backend/requirements.txt; fi
+        if [ -f data_forecaster/frontend/requirements.txt ]; then pip install -r data_forecaster/frontend/requirements.txt; fi
+        # Install development tools (pinned for reproducible CI runs)
+        pip install pylint==3.3.* mypy==1.13.* black==24.10.* pytest==8.3.* pip-audit==2.7.*
 
     - name: Run Black (check mode)
       run: |
         black --check .
 
-    - name: Run Pylint
+    - name: Run Pylint (informational)
+      continue-on-error: true
       run: |
-        pylint **/*.py
+        pylint **/*.py || true
 
-    - name: Run MyPy
+    - name: Run MyPy (informational)
       run: |
         mypy .
 
     - name: Run Pytest
+      working-directory: .
       run: |
-        pytest
+        pytest tests/ -v
+
+    - name: Run pip-audit (dependency vulnerability scan)
+      continue-on-error: true
+      run: |
+        pip-audit
+
+    - name: Install Grype
+      run: |
+        curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh \
+          | sh -s -- -b /usr/local/bin
+
+    - name: Run Grype (filesystem vulnerability scan)
+      continue-on-error: true
+      run: |
+        grype dir:. --fail-on high

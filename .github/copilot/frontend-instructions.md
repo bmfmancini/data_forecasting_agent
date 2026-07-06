@@ -22,7 +22,7 @@ Before generating code, scan the codebase to identify:
 2. **Framework Versions**: Identify the exact versions of all frameworks
    - Check `requirements.txt`, Dockerfiles, and any `pyproject.toml`‑like files
    - Respect version constraints when generating code
-   - Never suggest features not available in the detected framework versions (e.g., Streamlit version)
+   - Never suggest features not available in the detected framework versions (e.g., Flask version)
 
 3. **Library Versions**: Note the exact versions of key libraries and dependencies
    - Generate code compatible with these specific versions
@@ -67,7 +67,7 @@ When context files don't provide specific guidance:
 - Follow existing patterns for memory and resource management
 - Match existing patterns for handling computationally expensive operations
 - Follow established patterns for asynchronous operations where appropriate (but prefer synchronous UI code)
-- Apply caching consistently with existing patterns (`st.cache_data` for data loading)
+   - Apply caching consistently with existing patterns where appropriate
 - Optimize according to patterns evident in the codebase
 
 ### Security
@@ -95,7 +95,7 @@ When context files don't provide specific guidance:
 
 **Standard**
 - Follow the exact documentation format found in the codebase
-- Match the docstring style (Google style) used throughout the Python modules, including Streamlit scripts
+- Match the docstring style (Google style) used throughout the Python modules, including Flask blueprints and services
 - Document parameters, returns, and exceptions in the same style
 - Follow existing patterns for usage examples where present
 - Match class‑level documentation style and content
@@ -111,17 +111,22 @@ When context files don't provide specific guidance:
 
 ## Technology‑Specific Guidelines
 
-### Python Frontend (Streamlit) Guidelines
-- Detect and adhere to the specific Python version in use (as defined in `requirements.txt` / Dockerfile)
+### Python Frontend (Flask) Guidelines
+- Detect and adhere to the specific Python version in use (as defined in `requirements.txt` / Dockerfile — currently Python 3.12 in the Docker image)
 - Follow the same import organization found in existing modules (standard library → third‑party → local)
 - Use type hints for all functions and variables, matching the style used in existing frontend code
-- Prefer **synchronous** functions for UI interactions; only use async when performing heavy I/O that would block the UI
-- Use Streamlit best practices:
-  - Cache expensive data loading with `st.cache_data`
-  - Avoid side‑effects at the top‑level script; wrap logic in functions
-  - Keep UI code responsive and lightweight
-- Do **not** import backend modules directly; communicate via defined APIs or shared utilities
-- Apply the project's logging configuration (`utils.logging_config`) where appropriate
+- Prefer **synchronous** route handlers; Flask is WSGI-based — do not introduce async routes unless explicitly needed
+- Use Flask best practices:
+  - Use the **application factory** pattern (`create_app`); never import the `app` object directly — use `current_app`
+  - Keep routes inside blueprints (`blueprints/main/`, `blueprints/auth/`, `blueprints/admin/`); do not add routes to `app.py`
+  - All forms must use **Flask-WTF** with CSRF protection enabled — never disable CSRF
+  - Use `db.db.query_db` / `db.db.execute_db` for all database access; no raw `sqlite3` calls outside `db/`
+  - Sensitive values (API credentials) must be encrypted via `db/crypto.py` before storage
+  - Admin-only routes must use the `admin_required` decorator from `blueprints/admin/routes.py`
+  - Sanitize any HTML rendered from backend responses with `bleach` before passing to templates
+  - JavaScript in `static/js/` communicates only with Flask AJAX endpoints, which proxy to the backend
+- Do **not** import backend modules directly; communicate via `services/api_client.py` (`BackendAPIClient`)
+- The frontend stores a `job_id` in the Flask session and polls `/ajax/job-status/<job_id>` via `static/js/polling.js`
 - Write docstrings in Google style, matching existing frontend modules
 - Ensure all public functions have unit tests
 

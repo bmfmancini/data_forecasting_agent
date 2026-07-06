@@ -1,22 +1,24 @@
 from __future__ import annotations
 
 from typing import Any
-import pandas as pd
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_ollama import ChatOllama
 
-from core.config import GEMINI_MODEL, USE_OLLAMA, OLLAMA_BASE_URL, OLLAMA_MODEL, OLLAMA_API_KEY
+import pandas as pd
+
+from core.llm_factory import get_llm
 from core.logging_config import get_logger
-from schemas import ValidationResult
 from prompts.data_validation_prompt import DATA_VALIDATION_PROMPT
+from schemas import ValidationResult
 from utils.data_cleaning import audit_series, validate_schema
 
 logger = get_logger(__name__)
 
 
 def run_validation_agent(
-    df: pd.DataFrame, date_col: str, value_col: str, freq: str, preflight_options: dict[str, Any] | None = None
+    df: pd.DataFrame,
+    date_col: str,
+    value_col: str,
+    freq: str,
+    preflight_options: dict[str, Any] | None = None,
 ) -> ValidationResult:
     """Run the data validation ReAct agent and return a ValidationResult.
 
@@ -66,34 +68,33 @@ def run_validation_agent(
         issues.append("Very short series — forecasting results may be unreliable.")
 
     # ── LLM Setup ────────────────────────────────────────────────────────────
-    if USE_OLLAMA:
-        llm = ChatOllama(
-            model=OLLAMA_MODEL,
-            base_url=OLLAMA_BASE_URL,
-            temperature=0,
-            headers={"Authorization": f"Bearer {OLLAMA_API_KEY}"} if OLLAMA_API_KEY else None,
-        )
-    else:
-        llm = ChatGoogleGenerativeAI(model=GEMINI_MODEL, temperature=0)
+    llm = get_llm(temperature=0)
 
     options = preflight_options or {}
     auto_choices = [k for k, v in options.items() if v == "Let AI Decide"]
-    
+
     # Build a more descriptive remediation summary for the LLM to evaluate
     remediation_log = []
     if "duplicate_strategy" in auto_choices:
-        remediation_log.append("- Duplicates: Aggregated using 'mean' to preserve central tendency.")
+        remediation_log.append(
+            "- Duplicates: Aggregated using 'mean' to preserve central tendency."
+        )
     if "missing_strategy" in auto_choices:
-        remediation_log.append("- Missing Values: Filled via 'linear time-interpolation' to maintain trend continuity.")
+        remediation_log.append(
+            "- Missing Values: Filled via 'linear time-interpolation' to maintain trend continuity."
+        )
     if "frequency" in auto_choices:
-        remediation_log.append(f"- Frequency: Automatically inferred as '{freq}' based on the median time delta.")
+        remediation_log.append(
+            f"- Frequency: Automatically inferred as '{freq}' based on the median time delta."
+        )
 
     ai_instruction = (
         "\nNOTE: The user has selected 'Let AI Decide' for data quality remediation. "
         "The system has applied the following treatments:\n"
         + "\n".join(remediation_log)
         + "\n\nAs the Analyst, evaluate if these steps were statistically sound for this specific dataset and justify the reasoning."
-        if auto_choices else ""
+        if auto_choices
+        else ""
     )
 
     audit_info = audit_series(series)
@@ -123,27 +124,34 @@ def run_validation_agent(
 
     try:
         chain = prompt | llm
-        response = chain.invoke({
-            "report": quality_report,
-            "ai_instruction": ai_instruction
-        })
+        response = chain.invoke(
+            {"report": quality_report, "ai_instruction": ai_instruction}
+        )
         summary = response.content
         reasoning_steps = [
-            {"thought": "Computing quality metrics in Python...", "observation": quality_report},
-            {"thought": "Generating qualitative summary...", "observation": "Complete"}
+            {
+                "thought": "Computing quality metrics in Python...",
+                "observation": quality_report,
+            },
+            {"thought": "Generating qualitative summary...", "observation": "Complete"},
         ]
     except Exception as exc:
         logger.warning("Validation agent LLM call failed: %s", exc)
-        summary = f"Validation complete. Issues found: {len(issues)}. " + " ".join(issues)
-        reasoning_steps = [{
-            "thought": f"Validation agent failed: {str(exc)}",
-            "observation": "Proceeding with heuristic-based validation summary."
-        }]
+        summary = f"Validation complete. Issues found: {len(issues)}. " + " ".join(
+            issues
+        )
+        reasoning_steps = [
+            {
+                "thought": f"Validation agent failed: {str(exc)}",
+                "observation": "Proceeding with heuristic-based validation summary.",
+            }
+        ]
 
     logger.info("Validation complete. Issues: %s", issues)
 
     return ValidationResult(
-        is_valid=len([i for i in issues if "duplicate" in i or "missing value" in i]) == 0,
+        is_valid=len([i for i in issues if "duplicate" in i or "missing value" in i])
+        == 0,
         row_count=len(series),
         missing_timestamps=missing_ts,
         duplicate_timestamps=duplicate_ts,

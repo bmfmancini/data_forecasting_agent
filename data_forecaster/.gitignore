@@ -22,12 +22,22 @@ ENV/
 logs/
 chroma_db/
 
+# API key database (auto-generated at runtime, must not be committed)
+data/api_keys.db
+data/api_keys/
+
 # Temp upload directory
 uploads/
 tmp/
 
 # OS
 .DS_Store
+
+# Auto-generated TLS certificates (keep the directories, ignore the certs)
+certs/frontend/*.crt
+certs/frontend/*.key
+certs/backend/*.crt
+certs/backend/*.key
 Thumbs.db
 
 # IDE
@@ -35,4 +45,3 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
-*.html

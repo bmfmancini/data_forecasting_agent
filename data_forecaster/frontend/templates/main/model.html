@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Model Selection — Forecaster{% endblock %}
+{% block header %}🤖 Forecast Model Selection{% endblock %}
+{% block content %}
+<div class="alert alert-success">
+    <strong>Selected Model: {{ m.get('selected_model', '—') }}</strong>
+</div>
+<h5>Rationale</h5>
+<p>{{ m.get('explanation', 'No explanation available.') | md }}</p>
+{% if rejected %}
+<h5>Models not selected:</h5>
+<ul>
+    {% for model_name, reason in rejected.items() %}
+    <li><strong>{{ model_name }}:</strong> {{ reason }}</li>
+    {% endfor %}
+</ul>
+{% endif %}
+<h5>Model Comparison Metrics</h5>
+{% if comparison_json %}
+<div class="chart-container" data-chart='{{ comparison_json | safe }}'></div>
+{% else %}
+<p style="color:var(--text-muted-custom);">Comparison chart unavailable.</p>
+{% endif %}
+<h5 class="mt-3">Diagnostic Statistics</h5>
+<div class="card">
+    <div class="card-body">
+        <table class="table table-dark table-sm mb-0">
+            <thead><tr><th>Metric</th><th>Value</th><th>Interpretation</th></tr></thead>
+            <tbody>
+                <tr><td>ADF Statistic</td><td>{{ '%.4f' % s.get('adf_statistic', 0) }}</td><td>More negative = stronger evidence against unit root</td></tr>
+                <tr><td>ADF p-value</td><td>{{ '%.4f' % s.get('adf_p_value', 0) }}</td><td>&lt; 0.05 → reject unit root (stationary)</td></tr>
+                <tr><td>ADF Result</td><td>{{ 'Stationary' if s.get('is_stationary_adf') else 'Non-stationary' }}</td><td>ADF conclusion</td></tr>
+                <tr><td>KPSS Statistic</td><td>{{ '%.4f' % s.get('kpss_statistic', 0) }}</td><td>Lower = more likely stationary</td></tr>
+                <tr><td>KPSS p-value</td><td>{{ '%.4f' % s.get('kpss_p_value', 0) }}</td><td>&lt; 0.05 → reject stationarity (non-stationary)</td></tr>
+                <tr><td>KPSS Result</td><td>{{ 'Stationary' if s.get('is_stationary_kpss') else 'Non-stationary' }}</td><td>KPSS conclusion</td></tr>
+                <tr><td>Trend Detected</td><td>{{ 'Yes' if s.get('has_trend') else 'No' }}</td><td>Significant linear trend present</td></tr>
+                <tr><td>Trend Slope</td><td>{{ '%.6f' % s.get('trend_slope', 0) }}</td><td>Rate of change per period</td></tr>
+                <tr><td>Seasonal Period</td><td>{{ s.get('seasonal_period', 'None detected') }}</td><td>Seasonal cycle length (periods per season)</td></tr>
+                <tr><td>Dominant Period</td><td>{{ '%.2f' % s.get('dominant_period', 0) if s.get('dominant_period') else 'N/A' }}</td><td>Strongest frequency from periodogram</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+{% if m.get('reasoning_steps') %}
+<div class="card mt-3">
+    <div class="card-body">
+        <h6>🕵️ Model Selection Reasoning</h6>
+        {% for step in m.get('reasoning_steps', []) %}
+        <div class="reasoning-step mb-2">
+            <strong>Step {{ loop.index }}</strong>
+            {% set thought = (step.get('thought') or step.get('log') or '') %}
+            {% if thought %}<p class="small mb-0" style="color:var(--text-muted-custom);">{{ thought | md }}</p>{% endif %}
+            {% if step.get('observation') %}<p class="small mb-0"><em>Observation: {{ step['observation'] | md }}</em></p>{% endif %}
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+{% block scripts %}<script>Charts.renderAll();</script>{% endblock %}

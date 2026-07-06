@@ -1,0 +1,10 @@
+# Frontend HTTP→HTTPS redirect (envsubst template).
+#
+# Emitted as a separate server block so it can be omitted entirely by
+# leaving HTTP_PORT empty (the entrypoint skips this file in that case).
+
+server {
+    listen ${HTTP_PORT};
+    server_name _;
+    return 301 https://$host${FRONTEND_HTTPS_PORT_SUFFIX}$request_uri;
+}

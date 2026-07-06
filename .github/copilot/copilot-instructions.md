@@ -67,7 +67,7 @@ When context files don't provide specific guidance:
 - Follow existing patterns for memory and resource management
 - Match existing patterns for handling computationally expensive operations
 - Follow established patterns for asynchronous operations
-- Apply caching consistently with existing patterns (`st.cache_data` in Streamlit utilities)
+- Apply caching consistently with existing patterns
 - Optimize according to patterns evident in the codebase
 
 ### Security

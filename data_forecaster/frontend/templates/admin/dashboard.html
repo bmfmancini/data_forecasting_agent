@@ -1,0 +1,25 @@
+{% extends "admin/base.html" %}
+{% block title %}Dashboard — Admin{% endblock %}
+{% block header %}Admin Dashboard{% endblock %}
+{% block content %}
+{% if has_bootstrap %}
+<div class="alert alert-warning mb-4">
+    <strong>⚠ Initial API key in use.</strong><br>
+    The frontend API key was auto-configured from the <code>FRONTEND_API_KEY</code> environment variable.
+    For production security, rotate this key and update the stored credentials below.
+    <a href="{{ url_for('admin.api_keys') }}" class="alert-link">Manage API Keys →</a>
+</div>
+{% endif %}
+<div class="row g-3 mb-4">
+    <div class="col-md-3"><div class="metric-card"><div class="metric-value">{{ user_count }}</div><div class="metric-label">Application Users</div></div></div>
+    <div class="col-md-3"><div class="metric-card {{ 'metric-ok' if backend_ok else 'metric-warn' }}"><div class="metric-value">{{ 'Online' if backend_ok else 'Offline' }}</div><div class="metric-label">Backend Status</div></div></div>
+    <div class="col-md-3"><div class="metric-card"><div class="metric-value">{{ api_key_count }}</div><div class="metric-label">API Key Users</div></div></div>
+</div>
+<h5>Quick Links</h5>
+<div class="list-group" style="max-width:400px;">
+    <a href="{{ url_for('admin.users') }}" class="list-group-item list-group-item-action bg-dark-subtle">Manage Application Users</a>
+    <a href="{{ url_for('admin.api_keys') }}" class="list-group-item list-group-item-action bg-dark-subtle">Manage API Keys</a>
+    <a href="{{ url_for('admin.api_config') }}" class="list-group-item list-group-item-action bg-dark-subtle">Backend API Configuration</a>
+    <a href="{{ url_for('admin.settings') }}" class="list-group-item list-group-item-action bg-dark-subtle">Application Settings</a>
+</div>
+{% endblock %}

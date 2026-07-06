@@ -1,0 +1,70 @@
+version: "3.9"
+
+# Backend-only deployment — run on the backend host in a distributed setup.
+#
+#   docker-compose -f docker-compose.backend.yml up -d --build
+#
+# The backend Nginx listens on BACKEND_HTTPS_PORT (default 8443) and
+# terminates TLS with a self-signed certificate (auto-generated) or a
+# user-supplied certificate in certs/backend/.
+
+services:
+  backend:
+    build:
+      context: ../backend
+      dockerfile: ../docker/Dockerfile.backend
+    env_file:
+      - ../.env
+    volumes:
+      - logs_data:/app/logs
+      - chroma_data:/app/chroma_db
+      - file_store_data:/app/file_store
+      - ../data:/app/data
+      - api_key_data:/app/data/api_keys
+    restart: unless-stopped
+    networks:
+      - forecasting_network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+
+  nginx-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.nginx
+    environment:
+      - NGINX_ROLE=backend
+      - SSL_DOMAIN=${SSL_DOMAIN:-localhost}
+      - BACKEND_HTTPS_PORT=${BACKEND_HTTPS_PORT:-8443}
+      - BACKEND_UPSTREAM=backend:8000
+    ports:
+      - "${BACKEND_HTTPS_PORT:-8443}:${BACKEND_HTTPS_PORT:-8443}"
+    volumes:
+      - ../certs/backend:/etc/nginx/certs
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - forecasting_network
+    healthcheck:
+      test: ["CMD", "curl", "-kf", "https://localhost:${BACKEND_HTTPS_PORT:-8443}/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+networks:
+  forecasting_network:
+    driver: bridge
+
+volumes:
+  logs_data:
+  chroma_data:
+  file_store_data:
+  api_key_data:

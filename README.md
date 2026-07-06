@@ -1,230 +1,122 @@
 # Time Series Data Forecaster Agent
 
-An intelligent, multi-agent system for time series forecasting that combines statistical models with AI-powered analysis to provide comprehensive forecasting solutions.
+A multi-agent system that takes time series data, runs it through statistical forecasting models, and gives you back forecasts with AI-generated analysis and reports.
 
-## Overview
+## What it does
 
-The Time Series Data Forecaster Agent is a sophisticated application that automates the entire forecasting pipeline using a multi-agent architecture. It ingests time series data, performs comprehensive analysis, selects optimal forecasting models, generates predictions, and creates detailed reports with actionable insights.
+You upload a CSV or Excel file with time series data. Five AI agents then work through the pipeline:
 
-### Key Features
+1. **Data Validation** — cleans and validates the data
+2. **Statistical Analysis** — runs ACF/PACF, trend/seasonality checks, recommends transformations
+3. **Model Selection** — picks the best model based on the data characteristics
+4. **Forecasting** — runs ARIMA, SARIMA, Holt-Winters, or EWMA and generates predictions with confidence intervals
+5. **Report Generation** — puts together a report with charts and plain-English insights
 
-- **Multi-Agent Architecture**: Five specialized agents handle different aspects of the forecasting pipeline
-- **Multiple Forecasting Models**: ARIMA, SARIMA, Holt-Winters, and EWMA models
-- **AI-Powered Analysis**: Statistical analysis and model selection powered by LLMs
-- **Comprehensive Reporting**: Detailed reports with visualizations and business insights
-- **Interactive UI**: Streamlit-based web interface for easy data upload and analysis
-- **Docker Deployment**: Containerized application for easy deployment
-- **RAG Integration**: Memory-augmented analysis with ChromaDB vector database
+You interact with all of this through a Flask web UI with auth, an admin panel, and role-based access.
 
-## Architecture
+## Quick start
 
-![Agent Architecture](/data_forecaster/docs/agent_arch.jpeg)
-![Agent Workflow](/data_forecaster/docs/agent_workflow.jpeg)
+The easiest way to run this is with Docker. You'll need Docker and Docker Compose installed.
 
-The system consists of five specialized agents working in sequence:
+```bash
+git clone <repository-url>
+cd data_forecasting_agent/data_forecaster
 
-1. **Data Validation Agent**: Validates and preprocesses input data
-2. **Statistical Analysis Agent**: Performs comprehensive statistical analysis
-3. **Model Selection Agent**: Selects the optimal forecasting model using AI reasoning
-4. **Forecasting Agent**: Generates forecasts using multiple statistical models
-5. **Report Generation Agent**: Creates comprehensive reports with insights
+# The .env file already has sensible defaults — just edit the LLM section
+# to add your API key
 
-## Quick Start
+# Build and start everything (single-machine mode)
+./scripts/build_containers.sh --single
+```
 
-### Prerequisites
+That's it. Four containers come up:
 
-- Docker and Docker Compose
-- Python 3.9+ (for local development)
-- Google API Key (for Gemini models) OR **Ollama** (for local/cloud-based models accessed via Ollama)
+| Container | What it does | Port |
+|---|---|---|
+| `nginx-frontend` | TLS termination for the Flask app | `https://localhost` (443) |
+| `frontend` | Flask web UI | internal only |
+| `nginx-backend` | TLS termination for the API | `https://localhost:8443` |
+| `backend` | FastAPI + forecasting engine | internal only |
 
-> **Important Note on Ollama:** Ollama is currently required for both local and cloud-based model execution (e.g., `gpt-oss:120b-cloud`). You must install Ollama and manually download your model of choice using `ollama pull` before running the pipeline. 
->
-> *Future Release Note:* In a near future release, if you are using **Ollama Cloud**, pre-pulling models will no longer be required. However, the `ollama pull` step will always remain mandatory for models running on local hardware.
+Open `https://localhost` in your browser. Log in with `admin` / `admin` (you'll be prompted to change the password). The default API credentials (`frontend` / `frontend`) are already configured, so the frontend can talk to the backend out of the box.
 
+> **Heads up:** The default `frontend` API key is publicly known. Rotate it before exposing this to anything beyond your local machine. See [docs/api-auth.md](docs/api-auth.md) for how.
 
-### Using Docker (Recommended)
+## LLM setup
 
-1. Clone the repository:
-   ```bash
-   git clone <repository-url>
-   cd data_forecaster
-   ```
+The agents need an LLM to do their analysis. You can use either Google Gemini or Ollama.
 
-2. Set up environment variables:
-   ```bash
-   cp .env.example .env
-   # Edit .env to add your API keys
-   ```
+**Gemini** (easiest — just add your key):
+```bash
+# In .env
+GOOGLE_API_KEY=your_key_here
+USE_OLLAMA=false
+```
 
-3. Start the application:
-   ```bash
-   cd docker
-   docker-compose up --build
-   ```
+**Ollama** (runs locally or via Ollama Cloud):
+```bash
+# In .env
+USE_OLLAMA=true
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=llama3
+```
 
-4. Access the application:
-   - Frontend: http://localhost:8501
-   - Backend API: http://localhost:8000
+If you're running Ollama locally, pull the model first: `ollama pull llama3`.
 
-### Local Development
-
-1. **Set up Ollama** (if using Ollama-based models):
-   - Install Ollama.
-   - Pull the required model:
-     ```bash
-     ollama pull gpt-oss:120b-cloud
-     ```
-
-2. Install backend dependencies:
-   ```bash
-   cd backend
-   pip install -r requirements.txt
-   ```
-
-2. Install frontend dependencies:
-3. Install frontend dependencies:
-   ```bash
-   cd frontend
-   pip install -r requirements.txt
-   ```
-
-3. Start the backend:
-4. Start the backend:
-   ```bash
-   cd backend
-   uvicorn main:app --reload
-   ```
-
-4. Start the frontend:
-5. Start the frontend:
-   ```bash
-   cd frontend
-   streamlit run app.py
-   ```
-
-## Project Structure
+## Project layout
 
 ```
 data_forecaster/
-├── backend/                 # FastAPI backend service
-│   ├── agents/             # Specialized AI agents
-│   ├── core/               # Configuration and logging
-│   ├── forecasting/        # Statistical forecasting models
-│   ├── prompts/            # LLM prompts for agents
-│   ├── rag/                # RAG knowledge base
-│   ├── utils/              # Utility functions
-│   ├── main.py             # API endpoints
-│   └── orchestrator.py     # Pipeline orchestration
-├── frontend/               # Streamlit frontend
-│   ├── tabs/               # UI components for different views
-│   └── app.py              # Main application
-├── data/                   # Sample data
-├── docker/                 # Docker configuration
-└── docs/                   # Documentation
-```
-
-## Agents
-
-### 1. Data Validation Agent
-- Validates input data format and quality
-- Detects missing values, outliers, and inconsistencies
-- Prepares data for analysis
-
-### 2. Statistical Analysis Agent
-- Performs comprehensive statistical analysis
-- Calculates ACF/PACF, trend, seasonality
-- Recommends data transformations
-
-### 3. Model Selection Agent
-- Evaluates multiple forecasting models
-- Selects optimal model based on data characteristics
-- Provides reasoning for model selection
-
-### 4. Forecasting Agent
-- Implements multiple statistical forecasting models:
-  - ARIMA (AutoRegressive Integrated Moving Average)
-  - SARIMA (Seasonal ARIMA)
-  - Holt-Winters (Triple Exponential Smoothing)
-  - EWMA (Exponentially Weighted Moving Average)
-- Generates forecasts with confidence intervals
-
-### 5. Report Generation Agent
-- Creates comprehensive analysis reports
-- Provides business insights and recommendations
-- Generates visualizations and charts
-
-## Supported Models
-
-- **ARIMA**: AutoRegressive Integrated Moving Average for non-seasonal data
-- **SARIMA**: Seasonal ARIMA for data with seasonal patterns
-- **Holt-Winters**: Triple exponential smoothing for trend and seasonality
-- **EWMA**: Exponentially Weighted Moving Average for simple forecasting
-
-## API Endpoints
-
-### Backend (http://localhost:8000)
-
-- `GET /health` - Health check
-- `POST /upload` - Upload time series data
-- `POST /preflight` - Run data quality checks
-- `POST /analyze` - Start forecasting analysis
-- `GET /jobs/{job_id}` - Get job status and results
-- `POST /chat` - Chat with the analysis results
-
-## Configuration
-
-Environment variables can be set in the `.env` file:
-
-```bash
-# LLM Configuration
-GOOGLE_API_KEY=your_google_api_key
-GEMINI_MODEL=gemini-1.5-flash
-USE_OLLAMA=False
-OLLAMA_BASE_URL=http://host.docker.internal:11434
-OLLAMA_MODEL=llama3
-
-# File Upload Settings
-MAX_UPLOAD_MB=100
-ALLOWED_EXTENSIONS=csv,xlsx
-
-# Storage
-CHROMA_PERSIST_DIR=./chroma_db
-```
-
-## Testing
-
-Run backend tests:
-```bash
-cd backend
-python -m pytest tests/
+├── backend/              # FastAPI service
+│   ├── agents/           # The five AI agents
+│   ├── auth/             # API key auth (Argon2id)
+│   ├── forecasting/      # ARIMA, SARIMA, Holt-Winters, EWMA
+│   ├── rag/              # ChromaDB knowledge base
+│   └── main.py           # API endpoints
+├── frontend/             # Flask web app
+│   ├── blueprints/       # Routes (main, auth, admin)
+│   ├── db/               # SQLite helpers
+│   └── services/         # Backend API client, PDF export
+├── docker/               # Compose files, Dockerfiles, nginx configs
+├── certs/                # TLS certs (auto-generated or BYO)
+└── scripts/              # build_containers.sh and other helpers
 ```
 
 ## Documentation
 
-- [Forecasting Best Practices](docs/forecasting_best_practices.txt)
-- [ARIMA Model Guide](docs/arima.txt)
-- [SARIMA Model Guide](docs/sarima.txt)
-- [Holt-Winters Model Guide](docs/holt_winters.txt)
+Detailed docs are split out so this README stays short:
 
+- [Deployment guide](docs/deployment.md) — single-machine vs distributed, TLS certs, SSL verification
+- [API authentication](docs/api-auth.md) — how API keys work, rotating credentials, the default `frontend` user
+- [API reference](docs/api-reference.md) — endpoint list, error codes, request/response schemas
+- [Local development](docs/local-dev.md) — running without Docker, running the test suite
 
+## Tech stack
+
+| Layer | Tech |
+|---|---|
+| Backend | FastAPI, Uvicorn |
+| Frontend | Flask, Gunicorn, Flask-Login |
+| AI / LLM | LangChain, Google Gemini or Ollama |
+| Forecasting | pmdarima, statsmodels |
+| Vector DB | ChromaDB |
+| Deployment | Docker Compose, Nginx (TLS termination) |
+| Python | 3.11 (backend), 3.12 (frontend Docker image) |
+
+## Testing
+
+```bash
+cd data_forecaster
+python -m pytest tests/
+```
 
 ## License
 
-This project is licensed under the GNU General Public License v2.0  License - see the [LICENSE](LICENSE) file for details.
+GPL v2 — see [LICENSE](LICENSE).
 
 ## Acknowledgments
 
-- [Bala Priya C](https://www.freecodecamp.org/news/author/balapriyac/) for the data cleaning methods in the freeCodeCamp post [*How to Clean Time Series Data in Python*](https://www.freecodecamp.org/news/how-to-clean-time-series-data-in-python/) that inspired the `utils.data_cleaning` module
-
-- [Forecasting: Principles and Practice (3rd ed.)](https://otexts.com/fpp3/) by Hyndman & Athanasopoulos — the canonical reference for the ARIMA, SARIMA and exponential-smoothing methodology implemented in the `backend/forecasting` package
-
-- [Diogo Franquinho](https://diogofranquinho.com/notes/econometrics/time-series-analysis.html) for the concise *Time Series Analysis* technical notes covering stationarity, ACF, ARIMA and AIC-based model selection that informed the RAG knowledge base (`backend/rag/docs/`)
-As well as his Udemy courses!
-
-Other resources used
-
-- [Statsmodels](https://www.statsmodels.org/) for statistical modeling
-- [Pmdarima](https://alkaline-ml.com/pmdarima/) for ARIMA modeling
-- [Langchain](https://github.com/langchain-ai/langchain) for LLM integration
-- [Streamlit](https://streamlit.io/) for the frontend framework
-- [FastAPI](https://fastapi.tiangolo.com/) for the backend framework
+- [Forecasting: Principles and Practice (3rd ed.)](https://otexts.com/fpp3/) by Hyndman & Athanasopoulos — the forecasting methodology this is based on
+- [Bala Priya C](https://www.freecodecamp.org/news/author/balapriyac/) — data cleaning techniques that inspired `utils.data_cleaning`
+- [Diogo Franquinho](https://diogofranquinho.com/notes/econometrics/time-series-analysis.html) — time series analysis notes that informed the RAG knowledge base
+- [Statsmodels](https://www.statsmodels.org/), [Pmdarima](https://alkaline-ml.com/pmdarima/), [LangChain](https://github.com/langchain-ai/langchain), [Flask](https://flask.palletsprojects.com/), [FastAPI](https://fastapi.tiangola.com/)

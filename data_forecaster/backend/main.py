@@ -1,20 +1,53 @@
-"""Main FastAPI application module for the Data Forecaster API."""
-from __future__ import annotations
+"""Main FastAPI application module for the Data Forecaster API.
+
+Route handlers are kept thin — business logic lives in the
+``backend/services/`` package (file storage, job queue, pipeline
+orchestration, chat, and RAG).
+"""
 
 import asyncio
-import uuid
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator, Dict, Optional, cast, Annotated
+from typing import Any, AsyncIterator, Annotated
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import (
+    Body,
+    Depends,
+    FastAPI,
+    File,
+    HTTPException,
+    Request,
+    Response,
+    UploadFile,
+)
 from fastapi.middleware.cors import CORSMiddleware
 
 import core.config as settings
+from auth.api_key_db import (
+    create_api_user,
+    create_first_user,
+    delete_api_user,
+    has_any_users,
+    has_bootstrap_user,
+    init_db as init_api_key_db,
+    list_api_users,
+    rotate_api_key,
+    set_user_admin,
+    set_user_enabled,
+)
+from auth.dependency import require_admin_api_key, require_api_key
+from core.config import set_api_key_enabled
 from core.logging_config import get_logger
-from orchestrator import chat_with_data, index_analysis_results, run_pipeline
 from schemas import (
-    AnalysisResponse,
+    APIKeyRotatedResponse,
+    APIUserCreateRequest,
+    APIUserCreatedResponse,
+    APIUserResponse,
+    APIUserSetAdminRequest,
+    APIUserToggleRequest,
     AnalyzeRequest,
+    AuthStatusResponse,
+    BootstrapRequest,
+    BootstrapResponse,
     ChatRequest,
     ChatResponse,
     JobStatusResponse,
@@ -22,114 +55,128 @@ from schemas import (
     PreflightResponse,
     UploadResponse,
 )
+from services.chat_service import chat_general, chat_with_data
+from services.file_service import get_file, init_storage, store_file
+from services.job_service import (
+    create_job,
+    get_job,
+    get_job_status_only,
+    init_job_queue,
+    is_queue_ready,
+    job_worker,
+)
 from utils.data_parser import parse_upload
 from utils.preflight import run_preflight_checks
 
 logger = get_logger(__name__)
 
-# ── In-memory stores ──────────────────────────────────────────────────────────
-# Bounds for in-memory storage to prevent OOM restarts
-MAX_FILES = 50
-MAX_JOBS = 100
-
-# { file_id: { df, date_col, value_col, freq, filename } }
-_file_store: Dict[str, Dict[str, Any]] = {}
-
-# { job_id: { status, progress, step, request, result, error } }
-_job_store: Dict[str, Dict[str, Any]] = {}
-
-# ── Job queue & worker ────────────────────────────────────────────────────────
-JOB_QUEUE: asyncio.Queue[str] = cast(asyncio.Queue, None)
-
-
-def _update_job_progress(job_id: str, pct: int, step: str) -> None:
-    """Called from the pipeline thread; CPython GIL makes dict updates thread-safe."""
-    job = _job_store.get(job_id)
-    if job:
-        job["progress"] = pct
-        job["step"] = step
-
-
-async def _job_worker() -> None:
-    """Processes one job at a time from the FIFO queue."""
-    while True:
-        job_id: str = await JOB_QUEUE.get()
-        job = _job_store.get(job_id)
-        if job is None:
-            JOB_QUEUE.task_done()
-            continue
-
-        job["status"] = "running"
-        req = job["request"]
-        stored = _file_store.get(req["file_id"])
-
-        if stored is None:
-            job["status"] = "error"
-            job["step"] = "Error: uploaded file not found."
-            job["error"] = f"File ID '{req['file_id']}' not found in store."
-            JOB_QUEUE.task_done()
-            continue
-
-        def _run_pipeline_sync(r=req, s=stored, j_id=job_id) -> AnalysisResponse:
-            return run_pipeline(
-                df=s["df"],
-                file_id=r["file_id"],
-                date_col=r["date_col"],
-                value_col=r["value_col"],
-                freq=s["freq"],
-                forecast_horizon=r["forecast_horizon"],
-                forced_model=r["forced_model"],
-                user_prompt=r.get("user_prompt"),
-                preflight_options=r.get("preflight_options"),
-                chroma_persist_dir=settings.CHROMA_PERSIST_DIR,
-                progress_callback=lambda pct, step: _update_job_progress(j_id, pct, step),
-            )
-
-        try:
-            result: AnalysisResponse = await asyncio.to_thread(_run_pipeline_sync)
-            job["status"] = "done"
-            job["progress"] = 100
-            job["step"] = "Analysis complete."
-            job["result"] = result.model_dump()
-
-            # Requirement: Store the output results in the agent's memory
-            await asyncio.to_thread(
-                index_analysis_results,
-                file_id=req["file_id"],
-                analysis_result=result,
-                chroma_persist_dir=settings.CHROMA_PERSIST_DIR
-            )
-        except Exception as exc:  # pylint: disable=broad-exception-caught
-            logger.exception("Pipeline failed for job_id=%s file_id=%s", job_id, req["file_id"])
-            job["status"] = "error"
-            job["step"] = "Pipeline failed."
-            job["error"] = str(exc)
-        finally:
-            JOB_QUEUE.task_done()
+_JSON_MEDIA_TYPE: str = "application/json"
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    """Manage the lifecycle of the job worker queue."""
-    global JOB_QUEUE  # pylint: disable=global-statement
-    JOB_QUEUE = asyncio.Queue()
-    worker_task = asyncio.create_task(_job_worker())
+    """Manage the lifecycle of the job worker queue.
+
+    Initialises the API key database, re-enables auth if users from a
+    prior deployment exist, starts the job queue, and cancels the worker
+    on shutdown.
+    """
+    logger.info("Initializing API key database…")
+    init_api_key_db()
+    init_storage()
+    if has_any_users():
+        set_api_key_enabled(True)
+        logger.info("API users found — auth enabled.")
+    elif settings.FRONTEND_API_USERNAME and settings.FRONTEND_API_KEY:
+        # Auto-create the frontend service account from pre-shared env vars.
+        # This eliminates the need to scrape bootstrap keys from logs.
+        try:
+            create_first_user(
+                username=settings.FRONTEND_API_USERNAME,
+                api_key=settings.FRONTEND_API_KEY,
+            )
+            set_api_key_enabled(True)
+            logger.info(
+                "Frontend API user '%s' auto-created from env vars — auth enabled.",
+                settings.FRONTEND_API_USERNAME,
+            )
+            if settings.FRONTEND_API_KEY == "frontend":
+                logger.warning(
+                    "SECURITY: The frontend API key is the default 'frontend'. "
+                    "Rotate it via the admin panel and update the stored "
+                    "frontend credentials before production use."
+                )
+            else:
+                logger.warning(
+                    "The initial API key was sourced from the FRONTEND_API_KEY "
+                    "env var.  For production security, rotate this key via the "
+                    "admin panel and update the stored frontend credentials."
+                )
+        except ValueError as exc:
+            logger.warning("Failed to auto-create frontend API user: %s", exc)
+            logger.info("No API users — auth disabled (open mode).")
+    else:
+        logger.info("No API users — auth disabled (open mode).")
+    init_job_queue()
+    worker_task = asyncio.create_task(job_worker())
     yield
     worker_task.cancel()
-    await worker_task
+    try:
+        await worker_task
+    except asyncio.CancelledError:
+        pass
 
 
 app = FastAPI(title="Data Forecaster API", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8501", "http://frontend:8501"],
+    allow_origins=settings.CORS_ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=[
+        "X-API-Username",
+        "X-API-Key",
+        "Content-Type",
+        "X-Admin-Key",
+    ],
 )
 
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next: Any) -> Any:
+    """Add standard security headers to every response.
+
+    Sets ``X-Content-Type-Options``, ``X-Frame-Options``, and
+    ``Strict-Transport-Security`` to mitigate MIME sniffing, clickjacking,
+    and protocol downgrade attacks.
+    """
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Strict-Transport-Security"] = (
+        "max-age=31536000; includeSubDomains"
+    )
+    return response
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception) -> Response:
+    """Catch any uncaught exception and return a generic 500 response.
+
+    Logs the full exception server-side so details are available for
+    debugging without leaking them to the client.
+    """
+    logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+    return Response(
+        content='{"detail": "Internal server error."}',
+        media_type=_JSON_MEDIA_TYPE,
+        status_code=500,
+    )
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
+
 
 @app.get("/health")
 def health() -> dict[str, str]:
@@ -137,21 +184,223 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.post(
-    "/upload",
-    responses={
-        400: {"description": "Invalid file content, size, or format"},
-        500: {"description": "File parsing failed"}
-    }
-)
-async def upload_file(
-    file: Annotated[UploadFile, File(...)]
-) -> UploadResponse:
-    """Handle file uploads, validate types, and store in memory."""
-    logger.info("POST /upload  filename=%s  content_type=%s", file.filename, file.content_type)
+@app.get("/llm-health")
+def llm_health_endpoint() -> dict[str, Any]:
+    """Return a minimal LLM liveness status.
 
-    # ── Validate content-type ─────────────────────────────────────────────────
-    if file.content_type not in settings.ALLOWED_MIME_TYPES + ["application/octet-stream"]:
+    The public response is intentionally limited to ``llm_configured``
+    and ``llm_reachable`` booleans so that provider names, configuration
+    details, and error messages are not exposed to unauthenticated
+    callers.  The full :func:`llm_health` result is available for
+    internal/server-side use only.
+
+    Returns:
+        A JSON dict with keys ``llm_configured`` and ``llm_reachable``.
+    """
+    full = llm_health()
+    return {
+        "llm_configured": full.get("llm_configured", False),
+        "llm_reachable": full.get("llm_reachable", False),
+    }
+
+
+async def _check_ollama_reachable() -> bool:
+    """Return whether the configured Ollama endpoint responds.
+
+    Handles both Ollama Cloud (with optional API key) and local Ollama.
+    """
+    from core.config import OLLAMA_API_KEY, USE_OLLAMA_CLOUD
+    import httpx
+
+    try:
+        if USE_OLLAMA_CLOUD:
+            ollama_url = f"{settings.OLLAMA_BASE_URL}/api/version"
+            headers = {"Content-Type": _JSON_MEDIA_TYPE}
+            if OLLAMA_API_KEY:
+                headers["Authorization"] = f"Bearer {OLLAMA_API_KEY}"
+            async with httpx.AsyncClient() as client:
+                response = await client.get(ollama_url, headers=headers)
+                return response.status_code == 200
+        ollama_url = f"{settings.OLLAMA_BASE_URL}/api/tags"
+        async with httpx.AsyncClient() as client:
+            response = await client.get(ollama_url)
+            return response.status_code == 200
+    except Exception:
+        return False
+
+
+async def _check_gemini_reachable() -> bool:
+    """Return whether the Gemini API responds to a lightweight probe."""
+    from core.config import GOOGLE_API_KEY
+    import httpx
+
+    try:
+        gemini_url = (
+            "https://generativelanguage.googleapis.com/v1beta/models/"
+            f"{settings.GEMINI_MODEL}:countTokens"
+        )
+        headers = {"Content-Type": _JSON_MEDIA_TYPE}
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                gemini_url,
+                json={"contents": [{"parts": [{"text": "ping"}]}]},
+                headers=headers,
+                params={"key": GOOGLE_API_KEY},
+            )
+            return response.status_code == 200
+    except Exception:
+        return False
+
+
+def llm_health() -> dict[str, Any]:
+    """Check LLM connectivity and configuration.
+
+    Returns:
+        dict: A dictionary with keys:
+            - "llm_configured": bool indicating if an LLM provider is configured.
+            - "llm_reachable": bool indicating if the LLM is reachable.
+            - "llm_provider": str indicating the configured LLM provider ("gemini" or "ollama").
+            - "error": str containing error message if any, otherwise None.
+    """
+    from core.config import USE_OLLAMA, GOOGLE_API_KEY, OLLAMA_MODEL
+    import asyncio
+
+    result: dict[str, Any] = {
+        "llm_configured": False,
+        "llm_reachable": False,
+        "llm_provider": None,
+        "error": None,
+    }
+
+    if USE_OLLAMA:
+        result["llm_provider"] = "ollama"
+        if not OLLAMA_MODEL:
+            result["error"] = "OLLAMA_MODEL is not set."
+            return result
+        result["llm_configured"] = True
+        result["llm_reachable"] = asyncio.run(_check_ollama_reachable())
+        if not result["llm_reachable"]:
+            result["error"] = "Ollama server is not reachable."
+    elif GOOGLE_API_KEY:
+        result["llm_provider"] = "gemini"
+        result["llm_configured"] = True
+        result["llm_reachable"] = asyncio.run(_check_gemini_reachable())
+        if not result["llm_reachable"]:
+            result["error"] = "Gemini API is not reachable."
+    else:
+        result["error"] = (
+            "No LLM provider configured. Either set USE_OLLAMA=true with a "
+            "running Ollama instance, or set GOOGLE_API_KEY for Gemini."
+        )
+
+    return result
+
+
+# ── Auth Status & Bootstrap (unauthenticated, guarded) ────────────────────────
+
+
+@app.get("/auth-status", response_model=AuthStatusResponse)
+def auth_status() -> dict[str, Any]:
+    """Return whether API auth is enabled and whether any users exist.
+
+    This endpoint is unauthenticated so the frontend can determine
+    whether to show the "Enable Authentication" workflow.  It reveals
+    only boolean flags — no sensitive data.
+    """
+    return {
+        "auth_enabled": settings.API_KEY_ENABLED,
+        "has_users": has_any_users(),
+    }
+
+
+@app.post(
+    "/api-users/bootstrap",
+    response_model=BootstrapResponse,
+    responses={
+        400: {"description": "Invalid username or API key"},
+        403: {"description": "ADMIN_API_KEY missing or invalid"},
+        409: {"description": "API users already exist"},
+    },
+)
+def api_users_bootstrap(
+    request: BootstrapRequest,
+    http_request: Request,
+) -> dict[str, Any]:
+    """Create the first API user and enable authentication.
+
+    This is a one-time setup endpoint protected by the ``ADMIN_API_KEY``
+    deployment secret (sent via the ``X-Admin-Key`` header).  It only
+    succeeds when:
+
+    - ``ADMIN_API_KEY`` is set in the backend environment.
+    - The supplied ``X-Admin-Key`` header matches.
+    - No API users exist yet (bootstrap is one-time only).
+
+    On success, creates the user with the admin-supplied username and
+    key, enables ``API_KEY_ENABLED``, and returns the user dict.
+
+    Raises:
+        HTTPException: 403 when the admin key is missing or mismatched.
+        HTTPException: 409 when users already exist (bootstrap expired).
+    """
+    if not settings.ADMIN_API_KEY:
+        raise HTTPException(
+            status_code=403,
+            detail="ADMIN_API_KEY is not set on the backend. "
+            "Configure it in the backend .env to use bootstrap.",
+        )
+    supplied_key: str | None = http_request.headers.get("X-Admin-Key")
+    if not supplied_key or supplied_key != settings.ADMIN_API_KEY:
+        raise HTTPException(
+            status_code=403,
+            detail="Invalid or missing admin key.",
+        )
+
+    if has_any_users():
+        raise HTTPException(
+            status_code=409,
+            detail="API users already exist — bootstrap is no longer available.",
+        )
+
+    try:
+        user: dict[str, Any] = create_first_user(
+            username=request.username,
+            api_key=request.api_key,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    set_api_key_enabled(True)
+    logger.info(
+        "API auth enabled by bootstrap. User '%s' created.",
+        request.username,
+    )
+
+    return {"user": user, "auth_enabled": True}
+
+
+# ── File Upload & Analysis ────────────────────────────────────────────────────
+
+
+def _validate_upload_file(file: UploadFile, contents: bytes) -> str:
+    """Validate upload metadata and magic bytes.
+
+    Args:
+        file: The uploaded file object.
+        contents: Raw file bytes already read from *file*.
+
+    Returns:
+        The lower-cased file extension.
+
+    Raises:
+        HTTPException: 400 when content type, extension, size, or magic
+            bytes are invalid.
+    """
+    logger.info(
+        "POST /upload  filename=%s  content_type=%s", file.filename, file.content_type
+    )
+
+    if file.content_type not in settings.ALLOWED_MIME_TYPES:
         raise HTTPException(
             status_code=400,
             detail=(
@@ -160,16 +409,16 @@ async def upload_file(
             ),
         )
 
-    # ── Validate extension ────────────────────────────────────────────────────
     ext = (file.filename or "").rsplit(".", 1)[-1].lower()
     if ext not in settings.ALLOWED_EXTENSIONS:
         raise HTTPException(
             status_code=400,
-            detail=f"File extension '.{ext}' not allowed. Allowed: {settings.ALLOWED_EXTENSIONS}",
+            detail=(
+                f"File extension '.{ext}' not allowed. "
+                f"Allowed: {settings.ALLOWED_EXTENSIONS}"
+            ),
         )
 
-    # ── Read & validate size ──────────────────────────────────────────────────
-    contents = await file.read()
     if len(contents) > settings.MAX_UPLOAD_BYTES:
         raise HTTPException(
             status_code=400,
@@ -179,33 +428,59 @@ async def upload_file(
             ),
         )
 
-    # ── Parse ─────────────────────────────────────────────────────────────────
+    if not contents:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+    if ext == "xlsx" and contents[:4] != b"PK\x03\x04":
+        raise HTTPException(
+            status_code=400,
+            detail="File content does not match XLSX format (expected ZIP signature).",
+        )
+
+    if ext == "csv":
+        try:
+            contents[:4096].decode("utf-8")
+        except UnicodeDecodeError:
+            try:
+                contents[:4096].decode("latin-1")
+            except UnicodeDecodeError:
+                raise HTTPException(
+                    status_code=400,
+                    detail="File content does not appear to be a valid text/CSV file.",
+                ) from None
+
+    return ext
+
+
+@app.post(
+    "/upload",
+    responses={
+        400: {"description": "Invalid file content, size, or format"},
+        500: {"description": "File parsing failed"},
+    },
+)
+async def upload_file(
+    file: Annotated[UploadFile, File(...)],
+    _user: Annotated[dict, Depends(require_api_key)],
+) -> UploadResponse:
+    """Handle file uploads, validate types, and store in memory."""
+    contents = await file.read()
+    _validate_upload_file(file, contents)
+
     try:
-        df, date_col, value_col, freq = parse_upload(contents, file.filename or "upload.csv")
+        df, date_col, value_col, freq = parse_upload(
+            contents, file.filename or "upload.csv"
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Unexpected error during file parsing")
-        raise HTTPException(status_code=500, detail=f"Failed to parse file: {exc}") from exc
+        raise HTTPException(
+            status_code=500,
+            detail="An internal error occurred while parsing the file.",
+        ) from exc
 
-    # ── Store & return ────────────────────────────────────────────────────────
-    if len(_file_store) >= MAX_FILES:
-        # Evict oldest file to maintain memory stability and prevent OOM
-        oldest_file = next(iter(_file_store))
-        _file_store.pop(oldest_file)
-
-    file_id = str(uuid.uuid4())
-    _file_store[file_id] = {
-        "df": df,
-        "date_col": date_col,
-        "value_col": value_col,
-        "freq": freq,
-        "filename": file.filename,
-    }
-    logger.info(
-        "File stored: file_id=%s rows=%d date_col=%s value_col=%s freq=%s",
-        file_id, len(df), date_col, value_col, freq,
-    )
+    file_id = store_file(df, date_col, value_col, freq, file.filename)
 
     return UploadResponse(
         file_id=file_id,
@@ -222,24 +497,27 @@ async def upload_file(
     "/preflight",
     responses={
         400: {"description": "Preflight check failed"},
-        404: {"description": "Session data not found"}
-    }
+        404: {"description": "Session data not found"},
+    },
 )
-async def preflight_check(request: AnalyzeRequest) -> PreflightResponse:
+async def preflight_check(
+    body: Annotated[AnalyzeRequest, Body()],
+    _user: Annotated[dict, Depends(require_api_key)],
+) -> PreflightResponse:
     """Run data quality checks before starting the full analysis pipeline."""
-    stored = _file_store.get(request.file_id)
+    stored = get_file(body.file_id)
     if not stored:
         raise HTTPException(
             status_code=404,
-            detail="Session expired or data cleared from memory. Please re-upload your file."
+            detail="Session expired or data cleared from memory. Please re-upload your file.",
         )
 
-    date_col = request.date_col or stored["date_col"]
-    value_col = request.value_col or stored["value_col"]
+    date_col = body.date_col or stored["date_col"]
+    value_col = body.value_col or stored["value_col"]
 
     try:
         return run_preflight_checks(
-            stored["df"], date_col, value_col, request.forecast_horizon
+            stored["df"], date_col, value_col, body.forecast_horizon
         )
     except Exception as exc:
         logger.exception("Preflight failed")
@@ -251,59 +529,72 @@ async def preflight_check(request: AnalyzeRequest) -> PreflightResponse:
     status_code=202,
     responses={
         404: {"description": "Session data not found"},
-        503: {"description": "Background worker service not ready"}
-    }
+        503: {"description": "Background worker service not ready"},
+    },
 )
-def analyze(request: AnalyzeRequest) -> JobSubmitResponse:
+def analyze(
+    body: Annotated[AnalyzeRequest, Body()],
+    _user: Annotated[dict, Depends(require_api_key)],
+) -> JobSubmitResponse:
     """Enqueue a forecasting analysis job."""
     logger.info(
-        "POST /analyze  file_id=%s horizon=%d", request.file_id, request.forecast_horizon
+        "POST /analyze  file_id=%s horizon=%d",
+        body.file_id,
+        body.forecast_horizon,
     )
 
-    if JOB_QUEUE is None:
+    if not is_queue_ready():
         raise HTTPException(status_code=503, detail="Service not ready.")
 
-    stored = _file_store.get(request.file_id)
+    stored = get_file(body.file_id)
     if stored is None:
-        raise HTTPException(status_code=404, detail=f"File ID '{request.file_id}' not found.")
+        raise HTTPException(
+            status_code=404, detail=f"File ID '{body.file_id}' not found."
+        )
 
-    date_col = request.date_col or stored["date_col"]
-    value_col = request.value_col or stored["value_col"]
+    date_col = body.date_col or stored["date_col"]
+    value_col = body.value_col or stored["value_col"]
 
-    if len(_job_store) >= MAX_JOBS:
-        # Simple eviction of oldest job
-        oldest_key = next(iter(_job_store))
-        _job_store.pop(oldest_key)
-
-    job_id = str(uuid.uuid4())
-    _job_store[job_id] = {
-        "status": "pending",
-        "progress": 0,
-        "step": "Queued — waiting for an available slot…",
-        "request": {
-            "file_id": request.file_id,
-            "date_col": date_col,
-            "value_col": value_col,
-            "forecast_horizon": request.forecast_horizon,
-            "forced_model": request.forced_model,
-            "user_prompt": request.user_prompt,
-            "preflight_options": request.preflight_options,
-        },
-        "result": None,
-        "error": None,
-    }
-    JOB_QUEUE.put_nowait(job_id)
-    logger.info("Job enqueued: job_id=%s file_id=%s", job_id, request.file_id)
+    job_id = create_job(
+        file_id=body.file_id,
+        date_col=date_col,
+        value_col=value_col,
+        forecast_horizon=body.forecast_horizon,
+        forced_model=body.forced_model,
+        user_prompt=body.user_prompt,
+        preflight_options=body.preflight_options,
+    )
     return JobSubmitResponse(job_id=job_id, status="pending")
 
 
-@app.get(
-    "/jobs/{job_id}",
-    responses={404: {"description": "Job ID not found"}}
-)
-def get_job_status(job_id: str) -> JobStatusResponse:
-    """Retrieve the status and results of a specific background job."""
-    job = _job_store.get(job_id)
+# ── Job Status & Results ──────────────────────────────────────────────────────
+
+
+@app.get("/jobs/{job_id}/status", responses={404: {"description": "Job ID not found"}})
+def get_job_status_lightweight(
+    job_id: str,
+    _user: Annotated[dict, Depends(require_api_key)],
+) -> dict[str, Any]:
+    """Return only status/progress/step for lightweight polling.
+
+    This endpoint excludes the full ``result`` payload (which can be
+    large with base64 charts) so polling is fast.  Use
+    ``GET /jobs/{job_id}`` to retrieve the complete results once the
+    job is done.
+    """
+    status = get_job_status_only(job_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
+    return {"job_id": job_id, **status}
+
+
+@app.get("/jobs/{job_id}", responses={404: {"description": "Job ID not found"}})
+def get_job_status(
+    job_id: str,
+    _user: Annotated[dict, Depends(require_api_key)],
+) -> JobStatusResponse:
+    """Retrieve the full status and results of a specific background job."""
+    job = get_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
     return JobStatusResponse(
@@ -315,52 +606,204 @@ def get_job_status(job_id: str) -> JobStatusResponse:
         error=job.get("error"),
     )
 
+
+# ── Chat ──────────────────────────────────────────────────────────────────────
+
+
 @app.post(
     "/chat",
     responses={
         404: {"description": "Session data not found"},
-        500: {"description": "Chat agent processing error"}
-    }
+        500: {"description": "Chat agent processing error"},
+    },
 )
-async def chat_explorer(request: ChatRequest) -> ChatResponse:
-    """Allows users to chat with the agent about the uploaded data and results."""
-    # If file_id is provided, use the specific file data
+async def chat_explorer(
+    request: Annotated[ChatRequest, Body()],
+    _user: Annotated[dict, Depends(require_api_key)],
+) -> ChatResponse:
+    """Allow users to chat with the agent about the uploaded data and results."""
     if request.file_id:
-        stored = _file_store.get(request.file_id)
+        stored = get_file(request.file_id)
         if not stored:
             raise HTTPException(
                 status_code=404,
-                detail=("Chat session lost: the associated data is no longer in the server memory. "
-                        "Please re-run the analysis.")
+                detail=(
+                    "Chat session lost: the associated data is no longer "
+                    "in the server memory. Please re-run the analysis."
+                ),
             )
-        
+
         try:
-            # Delegate to orchestrator to query both the data and the indexed memory
             response = await asyncio.to_thread(
                 chat_with_data,
                 query=request.query,
                 df=stored["df"],
                 file_id=request.file_id,
-                chroma_persist_dir=settings.CHROMA_PERSIST_DIR
+                chroma_persist_dir=settings.CHROMA_PERSIST_DIR,
             )
             return ChatResponse(**response)
         except Exception as exc:
             logger.exception("Chat exploration failed")
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=500,
+                detail="An internal error occurred while processing the chat request.",
+            ) from exc
     else:
-        # General chat without specific file - use RAG knowledge base
         try:
-            from orchestrator import chat_general
-            
-            # Delegate to orchestrator for general questions using RAG
             response = await asyncio.to_thread(
                 chat_general,
                 query=request.query,
-                chroma_persist_dir=settings.CHROMA_PERSIST_DIR
+                chroma_persist_dir=settings.CHROMA_PERSIST_DIR,
             )
             return ChatResponse(**response)
-        except Exception as exc:
+        except Exception:
             logger.exception("General chat failed")
-            # Provide a basic response
-            answer = f"I can help with general time series forecasting questions. Technical details: {str(exc)}"
-            return ChatResponse(answer=answer)
+            return ChatResponse(
+                answer=(
+                    "I encountered an error while processing your request. "
+                    "Please try again later."
+                )
+            )
+
+
+# ── API User Management Endpoints (admin) ─────────────────────────────────────
+
+
+@app.get(
+    "/api-users",
+    response_model=list[APIUserResponse],
+    responses={403: {"description": "Authenticated user is not an admin"}},
+)
+def api_users_list(
+    _user: Annotated[dict, Depends(require_admin_api_key)],
+) -> list[dict[str, Any]]:
+    """List all API key users (never includes key hashes)."""
+    return list_api_users()
+
+
+@app.post(
+    "/api-users",
+    response_model=APIUserCreatedResponse,
+    status_code=201,
+    responses={
+        409: {"description": "Username already exists"},
+        500: {"description": "User created but not found"},
+    },
+)
+def api_users_create(
+    request: APIUserCreateRequest,
+    _user: Annotated[dict, Depends(require_admin_api_key)],
+) -> dict[str, Any]:
+    """Create a new API user and return the plaintext key once."""
+    try:
+        plaintext_key: str = create_api_user(
+            username=request.username,
+            description=request.description,
+            is_admin=request.is_admin,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    users: list[dict[str, Any]] = list_api_users()
+    new_user: dict[str, Any] | None = next(
+        (u for u in users if u["username"] == request.username), None
+    )
+    if new_user is None:
+        raise HTTPException(status_code=500, detail="User created but not found.")
+
+    return {"user": new_user, "api_key": plaintext_key}
+
+
+@app.post(
+    "/api-users/{user_id}/rotate",
+    response_model=APIKeyRotatedResponse,
+    responses={404: {"description": "API user not found"}},
+)
+def api_users_rotate(
+    user_id: int,
+    _user: Annotated[dict, Depends(require_admin_api_key)],
+) -> dict[str, Any]:
+    """Rotate an API user's key and return the new plaintext key once."""
+    try:
+        plaintext_key: str = rotate_api_key(user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    return {"user_id": user_id, "api_key": plaintext_key}
+
+
+@app.post(
+    "/api-users/{user_id}/toggle",
+    response_model=APIUserResponse,
+    responses={404: {"description": "API user not found"}},
+)
+def api_users_toggle(
+    user_id: int,
+    request: APIUserToggleRequest,
+    _user: Annotated[dict, Depends(require_admin_api_key)],
+) -> dict[str, Any]:
+    """Enable or disable an API user."""
+    try:
+        set_user_enabled(user_id, request.enabled)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    user: dict[str, Any] | None = next(
+        (u for u in list_api_users() if u["id"] == user_id), None
+    )
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found after update.")
+    return user
+
+
+@app.post(
+    "/api-users/{user_id}/admin",
+    response_model=APIUserResponse,
+    responses={404: {"description": "API user not found"}},
+)
+def api_users_set_admin(
+    user_id: int,
+    request: APIUserSetAdminRequest,
+    _user: Annotated[dict, Depends(require_admin_api_key)],
+) -> dict[str, Any]:
+    """Promote or demote an API user."""
+    try:
+        set_user_admin(user_id, request.is_admin)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    user: dict[str, Any] | None = next(
+        (u for u in list_api_users() if u["id"] == user_id), None
+    )
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found after update.")
+    return user
+
+
+@app.delete(
+    "/api-users/{user_id}",
+    status_code=204,
+    response_class=Response,
+    responses={404: {"description": "API user not found"}},
+)
+def api_users_delete(
+    user_id: int,
+    _user: Annotated[dict, Depends(require_admin_api_key)],
+) -> Response:
+    """Permanently delete an API user."""
+    try:
+        delete_api_user(user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return Response(status_code=204)
+
+
+@app.get(
+    "/api-users/bootstrap-status",
+    responses={403: {"description": "Authenticated user is not an admin"}},
+)
+def api_users_bootstrap_status(
+    _user: Annotated[dict, Depends(require_admin_api_key)],
+) -> dict[str, bool]:
+    """Check whether a bootstrap API user still exists."""
+    return {"has_bootstrap": has_bootstrap_user()}

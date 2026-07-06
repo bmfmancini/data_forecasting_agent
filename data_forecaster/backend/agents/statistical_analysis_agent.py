@@ -1,17 +1,16 @@
 from __future__ import annotations
 
-from typing import Any, Optional
 import re
+from typing import Any
 
 import numpy as np
 import pandas as pd
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_ollama import ChatOllama
 
-from core.config import GEMINI_MODEL, USE_OLLAMA, OLLAMA_BASE_URL, OLLAMA_MODEL, OLLAMA_API_KEY
+from core.llm_factory import get_llm
 from core.logging_config import get_logger
+from prompts.statistical_analysis_prompt import STATISTICAL_ANALYSIS_PROMPT
 from schemas import StatisticalResult
+from utils.data_cleaning import detect_outliers_iqr, detect_outliers_zscore
 from utils.statistical import (
     compute_acf_pacf,
     detect_trend,
@@ -23,16 +22,12 @@ from utils.statistical import (
     check_variance_stability,
     detect_change_points,
 )
-from utils.data_cleaning import detect_outliers_iqr, detect_outliers_zscore
-from prompts.statistical_analysis_prompt import STATISTICAL_ANALYSIS_PROMPT
 
 logger = get_logger(__name__)
 
 
 def run_statistical_agent(
-    series: pd.Series, 
-    seasonal_period: int = 12, 
-    user_domain: str = "General"
+    series: pd.Series, seasonal_period: int = 12, user_domain: str = "General"
 ) -> StatisticalResult:
     """Run statistical analysis ReAct agent and return a StatisticalResult."""
 
@@ -52,7 +47,12 @@ def run_statistical_agent(
             seasonal_period=seasonal_period,
             dominant_period=0.0,
             summary="The provided time series is constant (all values are identical). It is statistically stationary with no detectable trend or seasonal patterns.",
-            reasoning_steps=[{"thought": "Checking series variance...", "observation": "Series is constant. Bypassing ADF/KPSS tests."}],
+            reasoning_steps=[
+                {
+                    "thought": "Checking series variance...",
+                    "observation": "Series is constant. Bypassing ADF/KPSS tests.",
+                }
+            ],
         )
 
     adf = run_adf_test(series)
@@ -63,25 +63,28 @@ def run_statistical_agent(
     outliers_zscore = detect_outliers_zscore(series)
     white_noise = run_white_noise_test(series)
     var_stability = check_variance_stability(series)
-    
+
     # Determine which outlier detection method to recommend based on data characteristics
     # Z-score is better for normally distributed data, IQR for skewed distributions
     # We'll use a simple heuristic: if the data is relatively symmetric and not heavily skewed,
     # z-score might be more appropriate
     skewness = series.dropna().skew()
     kurtosis = series.dropna().kurtosis()
-    
+
     # Prefer z-score for more normal distributions (low skewness and kurtosis close to 0)
     # and when z-score detects fewer outliers than IQR (indicating IQR might be too aggressive)
-    use_zscore = (abs(skewness) < 1.0 and abs(kurtosis) < 3.0 and 
-                  outliers_zscore["count"] <= outliers_iqr["count"])
-    
+    use_zscore = (
+        abs(skewness) < 1.0
+        and abs(kurtosis) < 3.0
+        and outliers_zscore["count"] <= outliers_iqr["count"]
+    )
+
     # Use the selected outlier detection method for reporting
     outliers = outliers_zscore if use_zscore else outliers_iqr
 
     # Infer seasonal period: prefer explicit arg, validate against periodogram
     dom_period = periodogram["dominant_period"]
-    inferred_period: Optional[int] = seasonal_period
+    inferred_period: int | None = seasonal_period
     if dom_period < 100:
         pg_period = int(round(dom_period))
         if pg_period > 1:
@@ -89,7 +92,9 @@ def run_statistical_agent(
             if abs(pg_period - seasonal_period) > 2:
                 logger.info(
                     "Periodogram period %d differs from freq-derived period %d; using %d",
-                    pg_period, seasonal_period, seasonal_period,
+                    pg_period,
+                    seasonal_period,
+                    seasonal_period,
                 )
 
     # ── Build Statistical Profile ─────────────────────────────────────────────
@@ -97,14 +102,22 @@ def run_statistical_agent(
     change_points = detect_change_points(series)
     acf_data = compute_acf_pacf(series)
     conf_bound = 1.96 / np.sqrt(len(series))
-    sig_acf = [i for i, v in enumerate(acf_data["acf_values"][1:], 1) if abs(v) > conf_bound]
-    
+    sig_acf = [
+        i for i, v in enumerate(acf_data["acf_values"][1:], 1) if abs(v) > conf_bound
+    ]
+
     # Treat 'Skip' or the generic 'Other' as a trigger for AI inference
     is_inferred = user_domain in ["Skip / Let AI Guess", "Other (Custom)"]
-    domain_info = f"USER-SPECIFIED DOMAIN: {user_domain}" if not is_inferred else "DOMAIN: User skipped or requested inference (AI must infer domain from stats)"
+    domain_info = (
+        f"USER-SPECIFIED DOMAIN: {user_domain}"
+        if not is_inferred
+        else "DOMAIN: User skipped or requested inference (AI must infer domain from stats)"
+    )
 
     # Add information about which outlier detection method was used
-    outlier_method_info = f"Outliers ({'Z-score' if use_zscore else 'IQR'}): {outliers['interpretation']}"
+    outlier_method_info = (
+        f"Outliers ({'Z-score' if use_zscore else 'IQR'}): {outliers['interpretation']}"
+    )
     outlier_comparison = f"Outlier Comparison: IQR found {outliers_iqr['count']} outliers, Z-score found {outliers_zscore['count']} outliers"
 
     profile = (
@@ -126,15 +139,7 @@ def run_statistical_agent(
     )
 
     # ── LLM Setup ────────────────────────────────────────────────────────────
-    if USE_OLLAMA:
-        llm = ChatOllama(
-            model=OLLAMA_MODEL, 
-            base_url=OLLAMA_BASE_URL, 
-            temperature=0,
-            headers={"Authorization": f"Bearer {OLLAMA_API_KEY}"} if OLLAMA_API_KEY else None,
-        )
-    else:
-        llm = ChatGoogleGenerativeAI(model=GEMINI_MODEL, temperature=0)
+    llm = get_llm(temperature=0)
 
     prompt = STATISTICAL_ANALYSIS_PROMPT
 
@@ -156,10 +161,16 @@ def run_statistical_agent(
             recommended_remediation.append("box_cox")
         if "CHANGE_POINTS_DETECTED" in summary:
             recommended_remediation.append("change_point_analysis")
-            
+
         reasoning_steps = [
-            {"thought": "Running ADF, KPSS, and STL in Python...", "observation": profile},
-            {"thought": "Generating qualitative interpretation...", "observation": "Complete"}
+            {
+                "thought": "Running ADF, KPSS, and STL in Python...",
+                "observation": profile,
+            },
+            {
+                "thought": "Generating qualitative interpretation...",
+                "observation": "Complete",
+            },
         ]
     except Exception as exc:
         logger.warning("Statistical agent LLM call failed: %s", exc)
@@ -168,14 +179,17 @@ def run_statistical_agent(
             f"KPSS: {'stationary' if kpss_res['is_stationary'] else 'non-stationary'}. "
             f"Trend: {'present' if trend['has_trend'] else 'absent'}."
         )
-        reasoning_steps = [{
-            "thought": f"Statistical agent failed: {str(exc)}",
-            "observation": "Falling back to raw statistical test results."
-        }]
+        reasoning_steps = [
+            {
+                "thought": f"Statistical agent failed: {str(exc)}",
+                "observation": "Falling back to raw statistical test results.",
+            }
+        ]
 
     logger.info(
         "Statistical analysis complete. stationary_adf=%s seasonal_period=%s",
-        adf["is_stationary"], inferred_period,
+        adf["is_stationary"],
+        inferred_period,
     )
 
     return StatisticalResult(

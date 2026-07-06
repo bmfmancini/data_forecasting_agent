@@ -1,22 +1,24 @@
 from __future__ import annotations
 
 import io
-from typing import Optional
 
 import pandas as pd
 
+import core.config as settings
 from core.logging_config import get_logger
 
 logger = get_logger(__name__)
 
-ALLOWED_EXTENSIONS = {"csv", "xlsx"}
+# Re-export the canonical list from core.config so callers can import
+# from either location without duplication.
+ALLOWED_EXTENSIONS = set(settings.ALLOWED_EXTENSIONS)
 
 
 def parse_upload(
     content: bytes,
     filename: str,
-    date_col: Optional[str] = None,
-    value_col: Optional[str] = None,
+    date_col: str | None = None,
+    value_col: str | None = None,
 ) -> tuple[pd.DataFrame, str, str, str]:
     """Parse uploaded CSV or XLSX bytes into a cleaned DataFrame.
 
@@ -27,7 +29,9 @@ def parse_upload(
     if ext not in ALLOWED_EXTENSIONS:
         raise ValueError(f"Unsupported file type: .{ext}")
 
-    logger.info("Parsing upload: filename=%s ext=%s bytes=%d", filename, ext, len(content))
+    logger.info(
+        "Parsing upload: filename=%s ext=%s bytes=%d", filename, ext, len(content)
+    )
 
     if ext == "csv":
         df = pd.read_csv(io.BytesIO(content))
@@ -44,7 +48,9 @@ def parse_upload(
     if date_col is None:
         raise ValueError("Could not detect a date column. Please specify date_col.")
     if value_col is None:
-        raise ValueError("Could not detect a numeric value column. Please specify value_col.")
+        raise ValueError(
+            "Could not detect a numeric value column. Please specify value_col."
+        )
 
     logger.info("Detected columns: date_col=%s  value_col=%s", date_col, value_col)
 
@@ -67,9 +73,19 @@ def parse_upload(
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _detect_date_column(df: pd.DataFrame) -> Optional[str]:
+
+def _detect_date_column(df: pd.DataFrame) -> str | None:
     """Return first column that can be parsed as dates."""
-    date_keywords = {"date", "time", "month", "year", "day", "period", "ds", "timestamp"}
+    date_keywords = {
+        "date",
+        "time",
+        "month",
+        "year",
+        "day",
+        "period",
+        "ds",
+        "timestamp",
+    }
     # keyword match first
     for col in df.columns:
         if any(kw in col.lower() for kw in date_keywords):
@@ -90,7 +106,7 @@ def _detect_date_column(df: pd.DataFrame) -> Optional[str]:
     return None
 
 
-def _detect_value_column(df: pd.DataFrame, exclude: Optional[str]) -> Optional[str]:
+def _detect_value_column(df: pd.DataFrame, exclude: str | None) -> str | None:
     """Return the first numeric column that is not the date column.
 
     This is intentionally simple — the frontend exposes all columns so the

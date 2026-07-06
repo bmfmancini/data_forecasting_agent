@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 from pydantic import BaseModel, Field
 
 
@@ -9,9 +9,9 @@ class UploadResponse(BaseModel):
     filename: str
     rows: int
     columns: list[str]
-    detected_date_col: Optional[str] = None
-    detected_value_col: Optional[str] = None
-    detected_frequency: Optional[str] = None
+    detected_date_col: str | None = None
+    detected_value_col: str | None = None
+    detected_frequency: str | None = None
 
 
 class PreflightDecision(BaseModel):
@@ -26,7 +26,7 @@ class PreflightDecision(BaseModel):
 
 class PreflightResponse(BaseModel):
     status: str  # "ready" | "warning" | "needs_input"
-    detected_frequency: Optional[str] = None
+    detected_frequency: str | None = None
     row_count: int
     usable_observations: int
     duplicate_timestamps: int
@@ -42,24 +42,26 @@ class PreflightResponse(BaseModel):
 class AnalyzeRequest(BaseModel):
     file_id: str
     forecast_horizon: int
-    date_col: Optional[str] = None
-    value_col: Optional[str] = None
-    forced_model: Optional[str] = None  # "Holt-Winters" | "ARIMA" | "SARIMA" | None (auto)
-    user_prompt: Optional[str] = None   # Extra instructions appended to the report prompt
-    preflight_options: Optional[dict[str, Any]] = Field(default_factory=dict)
+    date_col: str | None = None
+    value_col: str | None = None
+    forced_model: str | None = None  # "Holt-Winters" | "ARIMA" | "SARIMA" | None (auto)
+    user_prompt: str | None = None  # Extra instructions appended to the report prompt
+    preflight_options: dict[str, Any] | None = Field(default_factory=dict)
 
 
 class ChatRequest(BaseModel):
     """Request schema for the data explorer chat."""
-    file_id: Optional[str] = None
-    query: str
+
+    file_id: str | None = None
+    query: str = Field(..., max_length=2000)
 
 
 class ChatResponse(BaseModel):
     """Response schema for the data explorer chat."""
+
     answer: str
-    visualization_data: Optional[dict[str, Any]] = None
-    visualization_type: Optional[str] = None
+    visualization_data: dict[str, Any] | None = None
+    visualization_type: str | None = None
 
 
 class ValidationResult(BaseModel):
@@ -69,8 +71,8 @@ class ValidationResult(BaseModel):
     duplicate_timestamps: int
     missing_values: int
     is_regular: bool
-    frequency: Optional[str] = None
-    frequency_alias: Optional[str] = None
+    frequency: str | None = None
+    frequency_alias: str | None = None
     issues: list[str]
     summary: str
     reasoning_steps: list[dict[str, Any]] = Field(default_factory=list)
@@ -89,10 +91,12 @@ class StatisticalResult(BaseModel):
     outlier_ratio: float = 0.0
     is_white_noise: bool = False
     white_noise_p_value: float = 1.0
-    recommended_remediation: list[str] = Field(default_factory=list) # e.g. ["iqr_clip", "box_cox"]
-    domain: Optional[str] = None
-    seasonal_period: Optional[int] = None
-    dominant_period: Optional[float] = None
+    recommended_remediation: list[str] = Field(
+        default_factory=list
+    )  # e.g. ["iqr_clip", "box_cox"]
+    domain: str | None = None
+    seasonal_period: int | None = None
+    dominant_period: float | None = None
     summary: str
     reasoning_steps: list[dict[str, Any]] = Field(default_factory=list)
 
@@ -100,10 +104,10 @@ class StatisticalResult(BaseModel):
 class ModelSelectionResult(BaseModel):
     selected_model: str
     explanation: str
-    holt_winters_rejected_reason: Optional[str] = None
-    arima_rejected_reason: Optional[str] = None
-    sarima_rejected_reason: Optional[str] = None
-    ewma_rejected_reason: Optional[str] = None
+    holt_winters_rejected_reason: str | None = None
+    arima_rejected_reason: str | None = None
+    sarima_rejected_reason: str | None = None
+    ewma_rejected_reason: str | None = None
     reasoning_steps: list[dict[str, Any]] = Field(default_factory=list)
 
 
@@ -128,9 +132,12 @@ class AnalysisResponse(BaseModel):
     report: str
     report_reasoning: list[dict[str, Any]] = Field(default_factory=list)
     strategic_visual_recommendations: list[dict[str, str]] = Field(default_factory=list)
+    llm_fallback: bool = (
+        False  # Indicates if the LLM was not used for report generation
+    )
     chart_historical: dict
     chart_stl: dict
-    chart_acf_pacf: str          # base64 PNG
+    chart_acf_pacf: str  # base64 PNG
     chart_forecast: dict
     chart_model_comparison: dict
 
@@ -145,5 +152,85 @@ class JobStatusResponse(BaseModel):
     status: str  # "pending" | "running" | "done" | "error"
     progress: int  # 0–100
     step: str
-    result: Optional[dict] = None
-    error: Optional[str] = None
+    result: dict | None = None
+    error: str | None = None
+
+
+# ── API Key Management Schemas ────────────────────────────────────────────────
+
+
+class APIUserCreateRequest(BaseModel):
+    """Request schema for creating a new API user."""
+
+    username: str
+    description: str = ""
+    is_admin: bool = False
+
+
+class APIUserResponse(BaseModel):
+    """Response schema for a single API user (never includes the key hash)."""
+
+    id: int
+    username: str
+    description: str
+    enabled: bool
+    bootstrap: bool
+    is_admin: bool
+    created_at: str
+    last_used: str | None = None
+    last_used_ip: str | None = None
+
+
+class APIUserCreatedResponse(BaseModel):
+    """Response schema after creating a user — includes one-time plaintext key."""
+
+    user: APIUserResponse
+    api_key: str
+
+
+class APIKeyRotatedResponse(BaseModel):
+    """Response schema after rotating a key — includes one-time plaintext key."""
+
+    user_id: int
+    api_key: str
+
+
+class APIUserToggleRequest(BaseModel):
+    """Request schema for enabling/disabling an API user."""
+
+    enabled: bool
+
+
+class APIUserSetAdminRequest(BaseModel):
+    """Request schema for promoting or demoting an API user."""
+
+    is_admin: bool
+
+
+# ── Bootstrap / Auth Status Schemas ──────────────────────────────────────────
+
+
+class BootstrapRequest(BaseModel):
+    """Request schema for the one-time bootstrap endpoint.
+
+    The admin supplies the desired username and API key for the first
+    API user.  The ``admin_key`` field is sent via the ``X-Admin-Key``
+    header rather than the body.
+    """
+
+    username: str
+    api_key: str
+
+
+class BootstrapResponse(BaseModel):
+    """Response schema after a successful bootstrap — confirms the user."""
+
+    user: APIUserResponse
+    auth_enabled: bool = True
+
+
+class AuthStatusResponse(BaseModel):
+    """Response schema for the auth-status endpoint."""
+
+    auth_enabled: bool
+    has_users: bool

@@ -1,0 +1,100 @@
+{% extends "admin/base.html" %}
+{% block title %}API Keys — Admin{% endblock %}
+{% block header %}🔑 API Key Management{% endblock %}
+{% block content %}
+{% if has_bootstrap %}
+<div class="alert alert-warning">
+    <strong>⚠ Initial API key in use.</strong><br>
+    The frontend API key was auto-configured from the <code>FRONTEND_API_KEY</code> environment variable.
+    For production security, rotate this key (🔄 below), copy the new plaintext key, then update the
+    <a href="{{ url_for('admin.api_config') }}" class="alert-link">API Configuration</a> with the new credentials.
+</div>
+{% endif %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h5 class="mb-0">API Key Users</h5>
+    <a href="{{ url_for('admin.api_key_new') }}" class="btn btn-primary btn-sm">+ Create API User</a>
+</div>
+<div class="card">
+    <div class="card-body">
+        {% if api_users %}
+        <table class="table table-dark table-sm table-striped mb-0">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Username</th>
+                    <th>Description</th>
+                    <th>Enabled</th>
+                    <th>Admin</th>
+                    <th>Bootstrap</th>
+                    <th>Created</th>
+                    <th>Last Used</th>
+                    <th>Last IP</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for u in api_users %}
+                <tr>
+                    <td>{{ u.id }}</td>
+                    <td><strong>{{ u.username }}</strong></td>
+                    <td>{{ u.description or '—' }}</td>
+                    <td>
+                        {% if u.enabled %}
+                        <span class="badge bg-success">Enabled</span>
+                        {% else %}
+                        <span class="badge bg-secondary">Disabled</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if u.is_admin %}
+                        <span class="badge bg-primary">Admin</span>
+                        {% else %}
+                        <span style="color:var(--text-muted-custom);">—</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if u.bootstrap %}
+                        <span class="badge bg-warning text-dark">Bootstrap</span>
+                        {% else %}
+                        <span style="color:var(--text-muted-custom);">—</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ u.created_at or '—' }}</td>
+                    <td>{{ u.last_used or 'Never' }}</td>
+                    <td>{{ u.last_used_ip or '—' }}</td>
+                    <td>
+                        <form method="post" action="{{ url_for('admin.api_key_rotate', user_id=u.id) }}" style="display:inline;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-outline-warning btn-sm" title="Rotate Key">🔄</button>
+                        </form>
+                        <form method="post" action="{{ url_for('admin.api_key_toggle', user_id=u.id) }}" style="display:inline;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="enabled" value="{{ 'false' if u.enabled else 'true' }}">
+                            <button type="submit" class="btn btn-outline-info btn-sm" title="{{ 'Disable' if u.enabled else 'Enable' }}">
+                                {{ '⏸' if u.enabled else '▶' }}
+                            </button>
+                        </form>
+                        <form method="post" action="{{ url_for('admin.api_key_set_admin', user_id=u.id) }}" style="display:inline;"
+                              onsubmit="return confirm('{{ 'Demote' if u.is_admin else 'Promote' }} API user \u0027{{ u.username }}\u0027?');">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="is_admin" value="{{ 'false' if u.is_admin else 'true' }}">
+                            <button type="submit" class="btn btn-outline-{{ 'secondary' if u.is_admin else 'primary' }} btn-sm" title="{{ 'Demote to regular user' if u.is_admin else 'Promote to admin' }}">
+                                {{ '⬇' if u.is_admin else '⬆' }}
+                            </button>
+                        </form>
+                        <form method="post" action="{{ url_for('admin.api_key_delete', user_id=u.id) }}" style="display:inline;"
+                              onsubmit="return confirm('Delete API user \'{{ u.username }}\'? This cannot be undone.');">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-outline-danger btn-sm" title="Delete">🗑</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p style="color:var(--text-muted-custom);" class="mb-0">No API key users found. Create one to get started.</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

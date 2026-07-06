@@ -1,20 +1,17 @@
 from __future__ import annotations
 
 from typing import Any
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import pandas as pd
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_ollama import ChatOllama
 
-from core.config import GEMINI_MODEL, USE_OLLAMA, OLLAMA_BASE_URL, OLLAMA_MODEL, OLLAMA_API_KEY
+import pandas as pd
+
+from core.llm_factory import get_llm
 from core.logging_config import get_logger
 from forecasting.arima_model import fit_arima
+from forecasting.ewma_model import fit_ewma
 from forecasting.holt_winters import fit_holt_winters
 from forecasting.sarima_model import fit_sarima
-from forecasting.ewma_model import fit_ewma
-from schemas import ForecastResult, ModelSelectionResult, StatisticalResult
 from prompts.forecasting_prompt import FORECASTING_PROMPT
+from schemas import ForecastResult, ModelSelectionResult, StatisticalResult
 
 logger = get_logger(__name__)
 
@@ -35,7 +32,7 @@ def run_forecasting_agent(
     """
     seasonal_period = stat_result.seasonal_period or 12
     results_store: dict[str, dict[str, Any]] = {}
-    
+
     # ── Fit all models directly in Python ─────────────────────────────────────
     for name, fn, kwargs in [
         ("Holt-Winters", fit_holt_winters, {}),
@@ -50,39 +47,36 @@ def run_forecasting_agent(
 
     comparison_summary = "Model comparison metrics (lower is better):\n"
     for name, res in results_store.items():
-        comparison_summary += (
-            f"- {name}: RMSE={res['rmse']:.4f}, MAE={res['mae']:.4f}, MAPE={res['mape']:.2f}%\n"
-        )
+        comparison_summary += f"- {name}: RMSE={res['rmse']:.4f}, MAE={res['mae']:.4f}, MAPE={res['mape']:.2f}%\n"
 
     # ── LLM Setup ────────────────────────────────────────────────────────────
-    if USE_OLLAMA:
-        llm = ChatOllama(
-            model=OLLAMA_MODEL, 
-            base_url=OLLAMA_BASE_URL, 
-            temperature=0,
-            headers={"Authorization": f"Bearer {OLLAMA_API_KEY}"} if OLLAMA_API_KEY else None,
-        )
-    else:
-        llm = ChatGoogleGenerativeAI(model=GEMINI_MODEL, temperature=0)
+    llm = get_llm(temperature=0)
 
     prompt = FORECASTING_PROMPT
 
     try:
         chain = prompt | llm
-        response = chain.invoke({
-            "selected": model_selection.selected_model,
-            "summary": comparison_summary
-        })
+        response = chain.invoke(
+            {"selected": model_selection.selected_model, "summary": comparison_summary}
+        )
         reasoning_steps = [
-            {"thought": "Fitting Holt-Winters, ARIMA, and SARIMA in Python...", "observation": comparison_summary},
-            {"thought": "Analyzing metrics for performance comparison...", "observation": response.content}
+            {
+                "thought": "Fitting Holt-Winters, ARIMA, and SARIMA in Python...",
+                "observation": comparison_summary,
+            },
+            {
+                "thought": "Analyzing metrics for performance comparison...",
+                "observation": response.content,
+            },
         ]
     except Exception as exc:
         logger.warning("Forecasting agent LLM call failed: %s", exc)
-        reasoning_steps = [{
-            "thought": "LLM analysis failed, relying on direct Python metrics.",
-            "observation": comparison_summary
-        }]
+        reasoning_steps = [
+            {
+                "thought": "LLM analysis failed, relying on direct Python metrics.",
+                "observation": comparison_summary,
+            }
+        ]
 
     # ── Select result for the chosen model ───────────────────────────────────
     selected = model_selection.selected_model
@@ -94,7 +88,9 @@ def run_forecasting_agent(
             elif selected == "ARIMA":
                 results_store[selected] = fit_arima(series, forecast_horizon)
             else:
-                results_store[selected] = fit_sarima(series, forecast_horizon, seasonal_period)
+                results_store[selected] = fit_sarima(
+                    series, forecast_horizon, seasonal_period
+                )
         except Exception as exc:
             logger.error("Could not fit selected model %s: %s", selected, exc)
             # Fall back to any available result
@@ -111,7 +107,9 @@ def run_forecasting_agent(
     forecast_dates: list[str] = []
     if last_date is not None:
         try:
-            date_range = pd.date_range(start=last_date, periods=forecast_horizon + 1, freq=freq)[1:]
+            date_range = pd.date_range(
+                start=last_date, periods=forecast_horizon + 1, freq=freq
+            )[1:]
             forecast_dates = date_range.strftime("%Y-%m-%d").tolist()
         except Exception:
             forecast_dates = [str(i + 1) for i in range(forecast_horizon)]

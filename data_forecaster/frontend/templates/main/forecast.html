@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Forecast — Forecaster{% endblock %}
+{% block header %}🔮 Forecast{% endblock %}
+{% block content %}
+<div class="row g-3 mb-3">
+    <div class="col-md-4"><div class="metric-card"><div class="metric-value">{{ '%.4f' % fc.get('rmse', 0) }}</div><div class="metric-label">RMSE</div></div></div>
+    <div class="col-md-4"><div class="metric-card"><div class="metric-value">{{ '%.4f' % fc.get('mae', 0) }}</div><div class="metric-label">MAE</div></div></div>
+    <div class="col-md-4"><div class="metric-card"><div class="metric-value">{{ '%.2f' % fc.get('mape', 0) }}%</div><div class="metric-label">MAPE</div></div></div>
+</div>
+<h5>Forecast Chart</h5>
+{% if forecast_json %}
+<div class="chart-container" data-chart='{{ forecast_json | safe }}'></div>
+{% else %}
+<p style="color:var(--text-muted-custom);">Forecast chart unavailable.</p>
+{% endif %}
+<h5 class="mt-3">Forecast Values</h5>
+<div class="card">
+    <div class="card-body" style="max-height:400px; overflow-y:auto;">
+        <table class="table table-dark table-sm table-striped mb-0">
+            <thead><tr><th>Date</th><th>Forecast</th><th>Lower CI (95%)</th><th>Upper CI (95%)</th></tr></thead>
+            <tbody>
+                {% for row in forecast_rows %}
+                <tr>
+                    <td>{{ row.date }}</td>
+                    <td>{{ row.forecast }}</td>
+                    <td>{{ row.lower_ci }}</td>
+                    <td>{{ row.upper_ci }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% if fc.get('reasoning_steps') %}
+<div class="card mt-3">
+    <div class="card-body">
+        <h6>🕵️ Forecasting Reasoning</h6>
+        {% for step in fc.get('reasoning_steps', []) %}
+        <div class="reasoning-step mb-2">
+            <strong>Step {{ loop.index }}</strong>
+            {% set thought = (step.get('thought') or step.get('log') or '') %}
+            {% if thought %}<p class="small mb-0" style="color:var(--text-muted-custom);">{{ thought | md }}</p>{% endif %}
+            {% if step.get('observation') %}<p class="small mb-0"><em>Observation: {{ step['observation'] | md }}</em></p>{% endif %}
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+{% block scripts %}<script>Charts.renderAll();</script>{% endblock %}

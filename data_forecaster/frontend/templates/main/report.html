@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Report — Forecaster{% endblock %}
+{% block header %}📄 Report{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="mb-0">Forecast Report</h4>
+    <form method="post" action="{{ url_for('main.report_export') }}" style="display:inline;">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-outline-primary btn-sm">⬇️ Download Report as PDF</button>
+    </form>
+</div>
+
+{% if session.analysis_result.llm_fallback %}
+<div class="alert alert-warning">
+    ⚠️ The LLM was not available for report generation. A local template was used as a fallback.
+</div>
+{% endif %}
+
+<hr>
+<div class="report-body">
+{% for segment in segments %}
+    {% if segment.type == 'text' %}
+        {{ segment.html | safe }}
+    {% elif segment.type == 'chart' %}
+        {% if segment.tag == 'ACF_PACF' and segment.acf_b64 %}
+            <img src="data:image/png;base64,{{ segment.acf_b64 }}" class="img-fluid my-2" alt="ACF/PACF">
+        {% elif segment.chart_json %}
+            <div class="chart-container my-2" data-chart='{{ segment.chart_json | tojson }}'></div>
+        {% endif %}
+    {% endif %}
+{% endfor %}
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+// Check if LLM fallback occurred and display a warning if needed
+(function() {
+    const llmFallback = {{ session.analysis_result.llm_fallback | tojson }};
+    if (llmFallback) {
+        console.warn("LLM fallback occurred. A local template was used for report generation.");
+    }
+})();
+</script>
+<script>Charts.renderAll();</script>
+{% endblock %}

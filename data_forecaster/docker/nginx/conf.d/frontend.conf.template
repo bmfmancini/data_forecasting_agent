@@ -1,0 +1,38 @@
+# Frontend Nginx configuration (envsubst template).
+#
+# Variables substituted at container start:
+#   ${FRONTEND_HTTPS_PORT}  - HTTPS listen port (default 443)
+#   ${HTTP_PORT}            - HTTP listen port for redirect (default 80)
+#   ${FRONTEND_UPSTREAM}    - upstream flask service:port (default frontend:5000)
+#
+# The HTTP listener is only emitted when HTTP_PORT is non-empty.
+
+server {
+    listen ${FRONTEND_HTTPS_PORT} ssl;
+    server_name _;
+
+    ssl_certificate     /etc/nginx/certs/server.crt;
+    ssl_certificate_key /etc/nginx/certs/server.key;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         HIGH:!aNULL:!MD5;
+    ssl_session_cache   shared:SSL:10m;
+    ssl_session_timeout 10m;
+
+    # Allow large uploads (CSV/XLSX).  Match MAX_UPLOAD_MB on the backend.
+    client_max_body_size 256m;
+
+    # Forwarded headers so Flask sees the original scheme/host.
+    proxy_set_header Host              $host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header X-Forwarded-Host  $host;
+
+    proxy_http_version 1.1;
+    proxy_read_timeout  120s;
+    proxy_send_timeout  120s;
+
+    location / {
+        proxy_pass http://${FRONTEND_UPSTREAM};
+    }
+}

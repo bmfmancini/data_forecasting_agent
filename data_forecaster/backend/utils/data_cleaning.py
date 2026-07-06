@@ -11,13 +11,12 @@ schema validation.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, Literal
 
 import numpy as np
 import pandas as pd
 from pandas.tseries.frequencies import to_offset
 from scipy.signal import savgol_filter
-from sklearn.ensemble import IsolationForest
 from statsmodels.tsa.seasonal import seasonal_decompose
 
 from core.logging_config import get_logger
@@ -32,7 +31,6 @@ __all__ = [
     "detect_outliers_zscore",
     "apply_iqr_clipping",
     "apply_zscore_clipping",
-    "detect_outliers_isolation_forest",
     "treat_outliers",
     "resolve_duplicates",
     "smooth_series",
@@ -98,16 +96,23 @@ def reindex_series(series: pd.Series, freq: str) -> pd.Series:
     if not isinstance(series.index, pd.DatetimeIndex):
         raise ValueError("Series index must be a pandas DatetimeIndex.")
     series = series.sort_index()
-    full_idx = pd.date_range(start=series.index.min(), end=series.index.max(), freq=freq)
+    full_idx = pd.date_range(
+        start=series.index.min(), end=series.index.max(), freq=freq
+    )
     reindexed = series.reindex(full_idx)
-    logger.info("Reindexed series from %d to %d points using freq='%s'", len(series), len(reindexed), freq)
+    logger.info(
+        "Reindexed series from %d to %d points using freq='%s'",
+        len(series),
+        len(reindexed),
+        freq,
+    )
     return reindexed
 
 
 def impute_missing(
     series: pd.Series,
     method: Literal["forward-fill", "interpolate", "seasonal-decompose"],
-    limit: Optional[int] = None,
+    limit: int | None = None,
 ) -> pd.Series:
     """Impute missing values using the specified strategy.
 
@@ -126,11 +131,15 @@ def impute_missing(
     elif method == "seasonal-decompose":
         period = _infer_seasonal_period(series)
         if len(series) < 2 * period:
-            logger.warning("Series too short for seasonal decomposition imputation; falling back to interpolation.")
+            logger.warning(
+                "Series too short for seasonal decomposition imputation; falling back to interpolation."
+            )
             filled = series.interpolate(method="time", limit=limit)
         else:
             temp = series.interpolate(method="time")
-            decomp = seasonal_decompose(temp, model="additive", period=period, extrapolate_trend="freq")
+            decomp = seasonal_decompose(
+                temp, model="additive", period=period, extrapolate_trend="freq"
+            )
             reconstructed = decomp.trend + decomp.seasonal
             filled = series.copy()
             filled[filled.isna()] = reconstructed[filled.isna()]
@@ -282,30 +291,6 @@ def apply_zscore_clipping(series: pd.Series, threshold: float = 3.0) -> pd.Serie
     return clipped_series
 
 
-def detect_outliers_isolation_forest(series: pd.Series, contamination: float = 0.02) -> Dict[str, Any]:
-    """Detect multivariate outliers using Isolation Forest.
-
-    This function treats the series as a single‑feature array.
-
-    Args:
-        series: Input series.
-        contamination: Expected proportion of outliers in the data set.
-
-    Returns:
-        Dictionary with keys: ``lower_bound``, ``upper_bound`` and ``count``.
-    """
-    if series.isna().any():
-        series = series.dropna()
-    model = IsolationForest(contamination=contamination, random_state=42)
-    reshaped = series.values.reshape(-1, 1)
-    preds = model.fit_predict(reshaped)
-    outlier_mask = preds == -1
-    inlier_vals = series[~outlier_mask]
-    lower = inlier_vals.min()
-    upper = inlier_vals.max()
-    return {"lower_bound": lower, "upper_bound": upper, "count": int(outlier_mask.sum())}
-
-
 def treat_outliers(
     series: pd.Series,
     strategy: Literal["clip", "winsorize", "remove", "zscore_clip", "none"],
@@ -358,6 +343,7 @@ def resolve_duplicates(
         return series.groupby(level=0).mean()
     raise ValueError(f"Unsupported duplicate strategy: {strategy}")
 
+
 def smooth_series(
     series: pd.Series,
     method: Literal["ewma", "savgol", "none"],
@@ -384,9 +370,12 @@ def smooth_series(
         polyorder = params.get("polyorder", 2)
         if window % 2 == 0:
             window += 1
-        filtered = savgol_filter(series.values, window_length=window, polyorder=polyorder)
+        filtered = savgol_filter(
+            series.values, window_length=window, polyorder=polyorder
+        )
         return pd.Series(filtered, index=series.index)
     raise ValueError(f"Unsupported smoothing method: {method}")
+
 
 def validate_schema(
     series: pd.Series,
@@ -408,9 +397,11 @@ def validate_schema(
     """
     report: Dict[str, Any] = {}
     inferred = pd.infer_freq(series.index)
-    report["freq_regular"] = inferred == config.get("expected_freq")
+    report["freq_regular"] = bool(inferred == config.get("expected_freq"))
     missing_rate = series.isna().mean()
-    report["missing_below_threshold"] = missing_rate <= config.get("max_missing_rate", 0.05)
+    report["missing_below_threshold"] = bool(
+        missing_rate <= config.get("max_missing_rate", 0.05)
+    )
     report["missing_rate"] = round(missing_rate, 4)
     if series.dropna().empty:
         report["values_in_range"] = True
@@ -420,13 +411,15 @@ def validate_schema(
             config.get("min_value", -np.inf),
             config.get("max_value", np.inf),
         )
-        report["values_in_range"] = in_range.all()
+        report["values_in_range"] = bool(in_range.all())
         report["out_of_range_count"] = int((~in_range).sum())
-    report["no_duplicates"] = not series.index.duplicated().any()
-    report["index_monotonic"] = series.index.is_monotonic_increasing
+    report["no_duplicates"] = bool(not series.index.duplicated().any())
+    report["index_monotonic"] = bool(series.index.is_monotonic_increasing)
     return report
 
+
 # ---------------------------------------------------------------------------
+
 
 def _infer_seasonal_period(series: pd.Series) -> int:
     """Infer seasonal period from the series frequency.
@@ -437,16 +430,23 @@ def _infer_seasonal_period(series: pd.Series) -> int:
     if not freq:
         return 12
     mapping = {
-        "M": 12, "MS": 12,
-        "Q": 4, "QS": 4,
+        "M": 12,
+        "ME": 12,
+        "MS": 12,
+        "Q": 4,
+        "QE": 4,
+        "QS": 4,
         "W": 52,
         "D": 7,
         "B": 5,
         "H": 24,
+        "h": 24,
     }
     try:
         offset = to_offset(freq)
         base = offset.name
-    except Exception:
-        base = freq
+    except (ValueError, TypeError):
+        base = str(freq)
+    # Strip anchored-suffix (e.g. "W-SUN" -> "W", "QS-JAN" -> "QS").
+    base = base.split("-")[0]
     return mapping.get(base, 12)

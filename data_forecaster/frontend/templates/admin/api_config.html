@@ -1,0 +1,81 @@
+{% extends "admin/base.html" %}
+{% block title %}API Configuration — Admin{% endblock %}
+{% block header %}Backend API Configuration{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-7">
+        {% if auth_status and not auth_status.auth_enabled %}
+        <div class="card mb-3 border-warning">
+            <div class="card-body">
+                <h5 class="card-title text-warning">API Authentication: Disabled</h5>
+                <p class="small text-muted mb-2">The backend API is currently open (no auth required). Enable authentication to secure it.</p>
+                <form method="post" action="{{ url_for('admin.api_config_enable_auth') }}">
+                    {{ form.hidden_tag() }}
+                    <div class="mb-2">
+                        <label class="form-label small">Admin Key <span class="text-muted">(ADMIN_API_KEY from backend .env)</span></label>
+                        <input type="password" name="admin_key" class="form-control form-control-sm" placeholder="Deployment admin key" required>
+                    </div>
+                    <div class="row mb-2">
+                        <div class="col">
+                            <label class="form-label small">API Username</label>
+                            <input type="text" name="api_username" class="form-control form-control-sm" placeholder="e.g. frontend" required>
+                        </div>
+                        <div class="col">
+                            <label class="form-label small">API Key</label>
+                            <input type="text" name="api_key" class="form-control form-control-sm" placeholder="Choose a strong key" required>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-warning btn-sm">Create User &amp; Enable Auth</button>
+                </form>
+            </div>
+        </div>
+        {% elif auth_status and auth_status.auth_enabled %}
+        <div class="alert alert-success py-2 px-3 small mb-3">
+            API Authentication: <strong>Enabled</strong> — the backend requires API key credentials.
+        </div>
+        {% endif %}
+
+        <div class="card">
+            <div class="card-body">
+                <form method="post" novalidate>
+                    {{ form.hidden_tag() }}
+                    <div class="mb-3">{{ form.base_url.label(class="form-label") }}{{ form.base_url(class="form-control", placeholder="http://backend:8000") }}</div>
+                    <div class="mb-3">{{ form.api_username.label(class="form-label") }}{{ form.api_username(class="form-control", placeholder="X-API-Username") }}</div>
+                    <div class="mb-3">{{ form.api_password.label(class="form-label") }}{{ form.api_password(class="form-control", placeholder="X-API-Key") }}
+                        <small class="text-muted">Leave blank to keep existing credentials. Enter both username and key to update.</small>
+                    </div>
+                    <div class="mb-3">{{ form.timeout.label(class="form-label") }}{{ form.timeout(class="form-control") }}</div>
+                    <div class="mb-3 form-check">
+                        {{ form.verify_ssl(class="form-check-input") }}
+                        {{ form.verify_ssl.label(class="form-check-label") }}
+                        <small class="text-muted d-block">Uncheck when the backend uses a self-signed certificate.</small>
+                    </div>
+                    <div class="d-flex justify-content-between">
+                        <button type="button" id="btn-test-conn" class="btn btn-outline-info btn-sm">Test Connection</button>
+                        {{ form.submit(class="btn btn-primary btn-sm") }}
+                    </div>
+                </form>
+                <div id="test-result" class="mt-3"></div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+document.getElementById("btn-test-conn").addEventListener("click", function() {
+    var resultEl = document.getElementById("test-result");
+    resultEl.innerHTML = '<span style="color:var(--text-muted-custom);">Testing…</span>';
+    fetch("{{ url_for('admin.api_config_test') }}", {
+        method: "POST",
+        headers: { "X-CSRFToken": document.querySelector('meta[name="csrf-token"]').getAttribute("content") }
+    }).then(function(r) { return r.json(); })
+    .then(function(data) {
+        var cls = data.ok ? "alert-success" : "alert-danger";
+        resultEl.innerHTML = '<div class="alert ' + cls + ' py-2 px-3 small mb-0">' + data.message + '</div>';
+    }).catch(function() {
+        resultEl.innerHTML = '<div class="alert alert-danger py-2 px-3 small mb-0">Request failed.</div>';
+    });
+});
+</script>
+{% endblock %}
