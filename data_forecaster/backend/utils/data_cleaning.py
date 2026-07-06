@@ -445,8 +445,8 @@ def _infer_seasonal_period(series: pd.Series) -> int:
     try:
         offset = to_offset(freq)
         base = offset.name
-    except Exception:
-        base = freq
+    except (ValueError, TypeError):
+        base = str(freq)
     # Strip anchored-suffix (e.g. "W-SUN" -> "W", "QS-JAN" -> "QS").
     base = base.split("-")[0]
     return mapping.get(base, 12)

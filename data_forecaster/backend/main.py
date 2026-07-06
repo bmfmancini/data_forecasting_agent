@@ -121,7 +121,10 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     worker_task = asyncio.create_task(job_worker())
     yield
     worker_task.cancel()
-    await worker_task
+    try:
+        await worker_task
+    except asyncio.CancelledError:
+        pass
 
 
 app = FastAPI(title="Data Forecaster API", version="1.0.0", lifespan=lifespan)
@@ -183,13 +186,22 @@ def health() -> dict[str, str]:
 
 @app.get("/llm-health")
 def llm_health_endpoint() -> dict[str, Any]:
-    """Return LLM configuration and reachability status.
+    """Return a minimal LLM liveness status.
+
+    The public response is intentionally limited to ``llm_configured``
+    and ``llm_reachable`` booleans so that provider names, configuration
+    details, and error messages are not exposed to unauthenticated
+    callers.  The full :func:`llm_health` result is available for
+    internal/server-side use only.
 
     Returns:
-        A JSON dict with keys ``llm_configured``, ``llm_reachable``,
-        ``llm_provider``, and ``error``.
+        A JSON dict with keys ``llm_configured`` and ``llm_reachable``.
     """
-    return llm_health()
+    full = llm_health()
+    return {
+        "llm_configured": full.get("llm_configured", False),
+        "llm_reachable": full.get("llm_reachable", False),
+    }
 
 
 async def _check_ollama_reachable() -> bool:

@@ -25,7 +25,7 @@
         {% if segment.tag == 'ACF_PACF' and segment.acf_b64 %}
             <img src="data:image/png;base64,{{ segment.acf_b64 }}" class="img-fluid my-2" alt="ACF/PACF">
         {% elif segment.chart_json %}
-            <div class="chart-container my-2" data-chart='{{ segment.chart_json | safe }}'></div>
+            <div class="chart-container my-2" data-chart='{{ segment.chart_json | tojson }}'></div>
         {% endif %}
     {% endif %}
 {% endfor %}
@@ -35,8 +35,8 @@
 <script>
 // Check if LLM fallback occurred and display a warning if needed
 (function() {
-    const result = {{ session.analysis_result | tojson }};
-    if (result && result.llm_fallback) {
+    const llmFallback = {{ session.analysis_result.llm_fallback | tojson }};
+    if (llmFallback) {
         console.warn("LLM fallback occurred. A local template was used for report generation.");
     }
 })();

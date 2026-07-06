@@ -7,6 +7,8 @@
  */
 
 (function () {
+  "use strict";
+
   /**
    * Check LLM health and display a warning if the LLM is unreachable or not configured.
    */
@@ -57,7 +59,6 @@
     }
     warningEl.textContent = "⚠️ LLM: " + message;
   }
-  "use strict";
 
   // Check LLM health on page load
   checkLLMHealth();

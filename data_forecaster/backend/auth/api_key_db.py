@@ -68,6 +68,32 @@ def _get_connection() -> sqlite3.Connection:
     return conn
 
 
+def get_connection(db_path: str | None = None) -> sqlite3.Connection:
+    """Open a new SQLite connection with ``Row`` row factory.
+
+    Args:
+        db_path: Optional directory containing ``api_keys.db``.  When
+            ``None``, the configured default path is used.
+
+    Returns:
+        A :class:`sqlite3.Connection` configured for dict-style row
+        access.
+    """
+    if db_path is not None:
+        os.makedirs(db_path, exist_ok=True)
+        db_file: str = os.path.join(db_path, "api_keys.db")
+    else:
+        db_file = _get_db_path()
+    conn: sqlite3.Connection = sqlite3.connect(
+        db_file,
+        detect_types=sqlite3.PARSE_DECLTYPES,
+    )
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+
 def init_db() -> None:
     """Create the ``api_users`` table if needed.
 
@@ -252,9 +278,7 @@ def list_api_users() -> list[dict[str, Any]]:
                 "is_admin": bool(r["is_admin"]),
                 "created_at": str(r["created_at"]),
                 "last_used": str(r["last_used"]) if r["last_used"] else None,
-                "last_used_ip": (
-                    str(r["last_used_ip"]) if r["last_used_ip"] else None
-                ),
+                "last_used_ip": (str(r["last_used_ip"]) if r["last_used_ip"] else None),
             }
             for r in rows
         ]
@@ -293,9 +317,7 @@ def get_api_user(user_id: int) -> dict[str, Any] | None:
             "is_admin": bool(row["is_admin"]),
             "created_at": str(row["created_at"]),
             "last_used": str(row["last_used"]) if row["last_used"] else None,
-            "last_used_ip": (
-                str(row["last_used_ip"]) if row["last_used_ip"] else None
-            ),
+            "last_used_ip": (str(row["last_used_ip"]) if row["last_used_ip"] else None),
         }
     finally:
         conn.close()

@@ -89,6 +89,9 @@ def require_admin_api_key(request: Request) -> dict[str, Any]:
         HTTPException: 401 Unauthorized when credentials are missing or
             invalid, or 403 Forbidden when the user is not an admin.
     """
+    if not settings.API_KEY_ENABLED:
+        return {}
+
     user: dict[str, Any] = require_api_key(request)
     if not user.get("is_admin"):
         raise HTTPException(

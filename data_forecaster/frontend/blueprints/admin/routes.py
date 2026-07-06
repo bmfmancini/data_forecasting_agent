@@ -237,7 +237,7 @@ def _update_user(
                 pw_hash,
                 int(role_row["id"]),
                 int(new_active),
-                int(force_reset or 1),
+                int(force_reset),
                 user_id,
             ),
         )
@@ -457,8 +457,13 @@ def api_config() -> str | Response:
         Rendered config template on GET or validation error; redirect on success.
     """
     form = APIConfigForm()
-    _load_api_config_form(form)
     auth_status = _fetch_backend_auth_status()
+
+    if request.method == "GET":
+        _load_api_config_form(form)
+        return render_template(
+            "admin/api_config.html", form=form, auth_status=auth_status
+        )
 
     if not form.validate_on_submit():
         return render_template(
@@ -763,19 +768,33 @@ def api_key_rotate(user_id: int) -> Response:
                     "success",
                 )
                 # Auto-update the frontend's stored credentials so the
-                # connection to the backend is not broken.
-                from db.crypto import encrypt
+                # connection to the backend is not broken.  Isolate this
+                # in its own try/except so a credential-update failure does
+                # not mask the successful backend rotation.
+                try:
+                    from db.crypto import encrypt
 
-                execute_db(
-                    "UPDATE api_credentials"
-                    " SET encrypted_username = ?, encrypted_password = ?"
-                    " WHERE label = 'default'",
-                    (encrypt(active_username), encrypt(new_key)),
-                )
-                flash(
-                    "The frontend's API credentials have been updated automatically.",
-                    "success",
-                )
+                    execute_db(
+                        "UPDATE api_credentials"
+                        " SET encrypted_username = ?, encrypted_password = ?"
+                        " WHERE label = 'default'",
+                        (encrypt(active_username), encrypt(new_key)),
+                    )
+                    flash(
+                        "The frontend's API credentials have been updated "
+                        "automatically.",
+                        "success",
+                    )
+                except Exception as cred_exc:
+                    logger.exception(
+                        "Failed to update frontend credentials after rotation"
+                    )
+                    flash(
+                        f"Key rotated but frontend credentials update failed: "
+                        f"{cred_exc}. Manually update the stored frontend "
+                        f"credentials to match the new key.",
+                        "warning",
+                    )
             else:
                 flash(
                     f"API key rotated successfully. New key (copy now — shown once): "
@@ -846,6 +865,27 @@ def api_key_set_admin(user_id: int) -> Response:
     is_admin: bool = request.form.get("is_admin", "").lower() in ("true", "1", "on")
     client = get_api_client()
     try:
+        # Guard: don't allow demoting the user the frontend is actively
+        # using for backend authentication — that would lock the admin
+        # panel out of backend user-management calls.
+        if not is_admin:
+            active_username: str | None = client._api_username
+            if active_username:
+                list_resp = client.list_api_users()
+                if list_resp.status_code == 200:
+                    target = next(
+                        (u for u in list_resp.json() if u.get("id") == user_id),
+                        None,
+                    )
+                    if target and target.get("username") == active_username:
+                        flash(
+                            f"Cannot demote the API user '{active_username}' — it is "
+                            "currently used by this frontend for backend "
+                            "authentication.",
+                            "danger",
+                        )
+                        return redirect(url_for(_ADMIN_API_KEYS_ENDPOINT))
+
         resp = client.set_api_user_admin(user_id, is_admin)
         if resp.status_code == 200:
             action: str = "promoted to admin" if is_admin else "demoted to regular user"

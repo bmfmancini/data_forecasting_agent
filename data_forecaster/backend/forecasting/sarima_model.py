@@ -105,10 +105,18 @@ def fit_sarima(
     except Exception as exc:
         logger.warning("SARIMA training failed: %s", exc)
 
-    # Fit the model on the full series using parameters from training
+    # Fit the model on the full series using parameters from training.
+    # Fall back to default orders when auto_arima failed (train_model is None),
+    # matching the pattern used in arima_model.py.
+    order = train_model.order if train_model is not None else (1, 1, 1)
+    seasonal_order = (
+        train_model.seasonal_order
+        if train_model is not None
+        else (0, 0, 0, seasonal_period)
+    )
     full_model = pm.ARIMA(
-        order=train_model.order,
-        seasonal_order=train_model.seasonal_order,
+        order=order,
+        seasonal_order=seasonal_order,
         suppress_warnings=True,
     ).fit(series)
 

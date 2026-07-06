@@ -48,6 +48,27 @@ _login_required: Callable[[_F], _F] = login_required  # type: ignore[assignment]
 _FORECAST_SETUP_ENDPOINT: str = "main.forecast_setup"
 _BACKEND_CONN_ERROR: str = "Backend connection error."
 
+
+def _safe_error_detail(resp: Any, fallback: str = "Request failed.") -> str:
+    """Safely extract an error detail from a backend response.
+
+    Args:
+        resp: The backend response object.
+        fallback: Message to use when the body is not JSON or has no
+            ``detail`` key.
+
+    Returns:
+        The error detail string, or ``fallback`` if it cannot be parsed.
+    """
+    try:
+        body = resp.json()
+        if isinstance(body, dict):
+            return str(body.get("detail", fallback))
+        return fallback
+    except Exception:
+        return fallback
+
+
 _CHART_FIELD_BY_TAG: dict[str, str] = {
     "HISTORICAL": "chart_historical",
     "STL": "chart_stl",
@@ -147,7 +168,7 @@ def _build_chart_segment(tag: str, result: dict[str, Any]) -> dict[str, Any]:
     return {
         "type": "chart",
         "tag": tag,
-        "chart_json": json.dumps(chart_data) if chart_data else None,
+        "chart_json": chart_data if chart_data else None,
     }
 
 
@@ -528,7 +549,7 @@ def _forward_upload(file: Any) -> Response:
             session["preview_data"] = _parse_preview(content, filename)
             return make_response(jsonify(upload_info), 200)
         return make_response(
-            jsonify({"error": resp.json().get("detail", "Upload failed.")}),
+            jsonify({"error": _safe_error_detail(resp, "Upload failed.")}),
             resp.status_code,
         )
     except Exception:
@@ -594,7 +615,7 @@ def api_columns() -> Response:
             session["preflight_options"] = _preflight_defaults(preflight)
             return jsonify({"preflight": preflight})
         return make_response(
-            jsonify({"error": resp.json().get("detail", "Preflight failed.")}),
+            jsonify({"error": _safe_error_detail(resp, "Preflight failed.")}),
             resp.status_code,
         )
     except Exception:
@@ -683,7 +704,7 @@ def api_analyze() -> Response:
             session["analysis_error"] = None
             return make_response(jsonify({"job_id": job_id}), 202)
         return make_response(
-            jsonify({"error": resp.json().get("detail", "Failed to submit job.")}),
+            jsonify({"error": _safe_error_detail(resp, "Failed to submit job.")}),
             resp.status_code,
         )
     except Exception:
@@ -696,10 +717,11 @@ def _handle_done_job(
 ) -> Response:
     """Fetch full results for a completed job and update session state."""
     results_resp = client.get_job_results(job_id)
-    if results_resp.status_code == 200:
-        result_data = results_resp.json().get("result", {})
-        session["analysis_result"] = result_data
-        session["llm_fallback"] = result_data.get("llm_fallback", False)
+    if results_resp.status_code != 200:
+        return _handle_error_job(client, job_id, status_data)
+    result_data = results_resp.json().get("result", {})
+    session["analysis_result"] = result_data
+    session["llm_fallback"] = result_data.get("llm_fallback", False)
     session["job_running"] = False
     session["job_id"] = None
     session["analysis_error"] = None
@@ -787,8 +809,12 @@ def api_job_status() -> Response:
 
 
 @main_bp.route("/api/llm-health")
+@_login_required
 def api_llm_health() -> Response:
     """Proxy the LLM health check request to the backend.
+
+    Requires authentication to avoid exposing backend LLM state to
+    public callers.
 
     Returns:
         JSON response from the backend's `/llm-health` endpoint.
@@ -842,7 +868,7 @@ def api_chat() -> Response:
             session["chat_history"] = chat_history
             return jsonify(result)
         return make_response(
-            jsonify({"error": resp.json().get("detail", "Chat request failed.")}),
+            jsonify({"error": _safe_error_detail(resp, "Chat request failed.")}),
             resp.status_code,
         )
     except Exception:

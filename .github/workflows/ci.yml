@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [ "**" ]
+    branches: [ main, dev ]
   pull_request:
     branches: [ "**" ]
 
@@ -31,11 +31,10 @@ jobs:
         # Install project requirements if they exist
         if [ -f data_forecaster/backend/requirements.txt ]; then pip install -r data_forecaster/backend/requirements.txt; fi
         if [ -f data_forecaster/frontend/requirements.txt ]; then pip install -r data_forecaster/frontend/requirements.txt; fi
-        # Install development tools
-        pip install pylint mypy black pytest pip-audit
+        # Install development tools (pinned for reproducible CI runs)
+        pip install pylint==3.3.* mypy==1.13.* black==24.10.* pytest==8.3.* pip-audit==2.7.*
 
     - name: Run Black (check mode)
-      continue-on-error: true
       run: |
         black --check .
 
@@ -45,7 +44,6 @@ jobs:
         pylint **/*.py || true
 
     - name: Run MyPy (informational)
-      continue-on-error: true
       run: |
         mypy .
 

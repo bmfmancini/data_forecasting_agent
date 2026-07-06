@@ -7,11 +7,14 @@ from pandas.tseries.frequencies import to_offset
 import sys
 import os
 
-# Add the project root to the Python path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
-# Seeded Generator for deterministic, reproducible test data.
-rng = np.random.default_rng(seed=42)
+# Add the backend directory to the path so that backend-internal imports
+# (e.g. ``from core.logging_config import ...``) resolve correctly.
+sys.path.insert(
+    0,
+    os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "data_forecaster", "backend")
+    ),
+)
 
 from data_forecaster.backend.utils.data_cleaning import (
     apply_iqr_clipping,
@@ -32,6 +35,7 @@ from data_forecaster.backend.utils.data_cleaning import (
 @pytest.fixture
 def sample_series():
     """Fixture for a sample time series."""
+    rng = np.random.default_rng(seed=42)
     dates = pd.date_range(start="2023-01-01", periods=100, freq="D")
     values = rng.normal(loc=100, scale=10, size=100).clip(0, 200)
     return pd.Series(values, index=dates)
@@ -40,6 +44,7 @@ def sample_series():
 @pytest.fixture
 def series_with_missing():
     """Fixture for a time series with missing values."""
+    rng = np.random.default_rng(seed=42)
     dates = pd.date_range(start="2023-01-01", periods=100, freq="D")
     values = rng.normal(loc=100, scale=10, size=100).clip(0, 200)
     series = pd.Series(values, index=dates)
@@ -51,6 +56,7 @@ def series_with_missing():
 @pytest.fixture
 def series_with_duplicates():
     """Fixture for a time series with duplicate timestamps."""
+    rng = np.random.default_rng(seed=42)
     dates = pd.date_range(start="2023-01-01", periods=100, freq="D")
     values = rng.normal(loc=100, scale=10, size=100).clip(0, 200)
     series = pd.Series(values, index=dates)
@@ -64,6 +70,7 @@ def series_with_duplicates():
 @pytest.fixture
 def series_with_outliers():
     """Fixture for a time series with outliers."""
+    rng = np.random.default_rng(seed=42)
     dates = pd.date_range(start="2023-01-01", periods=100, freq="D")
     values = rng.normal(loc=100, scale=10, size=100).clip(0, 200)
     series = pd.Series(values, index=dates)
@@ -76,6 +83,7 @@ def series_with_outliers():
 @pytest.fixture
 def irregular_series():
     """Fixture for an irregular time series."""
+    rng = np.random.default_rng(seed=42)
     dates = pd.to_datetime(
         [
             "2023-01-01",

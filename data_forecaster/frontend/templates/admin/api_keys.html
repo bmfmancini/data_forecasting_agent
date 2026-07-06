@@ -74,7 +74,8 @@
                                 {{ '⏸' if u.enabled else '▶' }}
                             </button>
                         </form>
-                        <form method="post" action="{{ url_for('admin.api_key_set_admin', user_id=u.id) }}" style="display:inline;">
+                        <form method="post" action="{{ url_for('admin.api_key_set_admin', user_id=u.id) }}" style="display:inline;"
+                              onsubmit="return confirm('{{ 'Demote' if u.is_admin else 'Promote' }} API user \u0027{{ u.username }}\u0027?');">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <input type="hidden" name="is_admin" value="{{ 'false' if u.is_admin else 'true' }}">
                             <button type="submit" class="btn btn-outline-{{ 'secondary' if u.is_admin else 'primary' }} btn-sm" title="{{ 'Demote to regular user' if u.is_admin else 'Promote to admin' }}">

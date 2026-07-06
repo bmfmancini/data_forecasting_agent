@@ -163,8 +163,10 @@ class TestAdminEndpoints:
         """An admin can promote a regular user to admin."""
         admin_name, admin_key = admin_user
         create_api_user(username="to-promote", description="", is_admin=False)
+        users = list_api_users()
+        to_promote = next(u for u in users if u["username"] == "to-promote")
         response = client.post(
-            "/api-users/2/admin",
+            f"/api-users/{to_promote['id']}/admin",
             headers=_auth_headers(admin_name, admin_key),
             json={"is_admin": True},
         )

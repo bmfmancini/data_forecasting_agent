@@ -22,18 +22,20 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import getpass
 import os
+import sqlite3
 import sys
 
 # Ensure local modules are importable when run as ``python -m`` or directly.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from auth.api_key_db import _get_connection, hash_api_key
+from auth.api_key_db import get_connection, hash_api_key
 from core.config import API_KEY_DB_PATH
 
 
 def _resolve_user(
-    conn: any,
+    conn: sqlite3.Connection,
     username: str | None,
     user_id: int | None,
 ) -> tuple[int, str]:
@@ -50,7 +52,7 @@ def _resolve_user(
     Raises:
         SystemExit: When no user matches or both/neither identifiers are given.
     """
-    if bool(username) == bool(user_id):
+    if (username is not None) == (user_id is not None):
         print(
             "Error: provide exactly one of --username USERNAME or --id ID.",
             file=sys.stderr,
@@ -104,8 +106,8 @@ Examples:
     parser.add_argument(
         "--key",
         dest="api_key",
-        default=os.environ.get("FRONTEND_API_KEY", ""),
-        help="New plaintext API key. Defaults to FRONTEND_API_KEY env var.",
+        default=None,
+        help="New plaintext API key. If omitted, prompted interactively.",
     )
     parser.add_argument(
         "--db-path",
@@ -116,11 +118,17 @@ Examples:
 
     args = parser.parse_args()
 
-    if not args.api_key:
-        print(
-            "Error: no API key provided. Set --key or FRONTEND_API_KEY.",
-            file=sys.stderr,
-        )
+    api_key: str = args.api_key or ""
+    if not api_key:
+        if not sys.stdin.isatty():
+            print(
+                "Error: no API key provided. Use --key or run interactively.",
+                file=sys.stderr,
+            )
+            return 1
+        api_key = getpass.getpass("Enter new API key: ")
+    if not api_key:
+        print("Error: no API key provided.", file=sys.stderr)
         return 1
 
     db_file = os.path.join(args.db_path, "api_keys.db")
@@ -128,7 +136,7 @@ Examples:
         print(f"Error: database not found at {db_file}", file=sys.stderr)
         return 1
 
-    conn = _get_connection()
+    conn = get_connection(db_path=args.db_path)
     try:
         user_id, username = _resolve_user(conn, args.username, args.user_id)
         key_hash = hash_api_key(args.api_key)
