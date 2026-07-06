@@ -17,6 +17,7 @@ _backend_dir = os.path.abspath(_backend_dir)
 if _backend_dir not in sys.path:
     sys.path.insert(0, _backend_dir)
 
+import core.config as settings  # noqa: E402
 from auth.api_key_db import (  # noqa: E402
     create_api_user,
     create_first_user,
@@ -34,14 +35,23 @@ _ADMIN_KEY = "test-admin-key"
 
 @pytest.fixture(autouse=True)
 def _reset_api_key_db(tmp_path: Any, monkeypatch: Any) -> None:
-    """Use a fresh temporary SQLite database for every test."""
+    """Use a fresh temporary SQLite database for every test.
+
+    ``core.config`` caches env vars as module attributes at import
+    time, so ``monkeypatch.setenv`` alone is not enough — we must also
+    patch the cached attributes directly.
+    """
     db_dir = tmp_path / "api_keys"
     db_dir.mkdir()
     monkeypatch.setenv("API_KEY_DB_PATH", str(db_dir))
     monkeypatch.setenv("API_KEY_ENABLED", "true")
-    monkeypatch.setenv("ADMIN_API_KEY", "test-admin-key")
+    monkeypatch.setenv("ADMIN_API_KEY", _ADMIN_KEY)
     monkeypatch.setenv("CHROMA_PERSIST_DIR", str(tmp_path / "chroma"))
     monkeypatch.setenv("FILE_STORAGE_DIR", str(tmp_path / "files"))
+    # Patch the cached module attributes (read at import time).
+    monkeypatch.setattr(settings, "API_KEY_DB_PATH", str(db_dir))
+    monkeypatch.setattr(settings, "API_KEY_ENABLED", True)
+    monkeypatch.setattr(settings, "ADMIN_API_KEY", _ADMIN_KEY)
     init_db()
 
 

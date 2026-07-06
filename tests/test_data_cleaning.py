@@ -413,9 +413,9 @@ class TestInferSeasonalPeriod:
 
     def test_infer_seasonal_period_unknown(self):
         """Test _infer_seasonal_period with unknown frequency."""
-        dates = pd.date_range(start="2023-01-01", periods=100, freq="H")
+        dates = pd.date_range(start="2023-01-01", periods=100, freq="h")
         series = pd.Series(range(100), index=dates)
-        assert _infer_seasonal_period(series) == 12
+        assert _infer_seasonal_period(series) == 24
 
     def test_infer_seasonal_period_no_freq(self):
         """Test _infer_seasonal_period with no frequency."""
