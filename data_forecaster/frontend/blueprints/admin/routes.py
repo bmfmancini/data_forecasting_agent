@@ -221,9 +221,7 @@ def _update_user(
         force_reset:  Whether the user must change their password on next
             login.
     """
-    role_row = query_db(
-        "SELECT id FROM roles WHERE name = ?", (new_role,), one=True
-    )
+    role_row = query_db("SELECT id FROM roles WHERE name = ?", (new_role,), one=True)
     if not role_row or not isinstance(role_row, dict):
         raise ValueError("Invalid role.")
 
@@ -385,7 +383,9 @@ def _fetch_backend_auth_status() -> dict[str, Any]:
     return auth_status
 
 
-def _encrypt_credentials(username: str, password: str) -> tuple[str, str] | tuple[None, None]:
+def _encrypt_credentials(
+    username: str, password: str
+) -> tuple[str, str] | tuple[None, None]:
     """Encrypt API credentials, flashing and returning None on failure."""
     try:
         from db.crypto import encrypt
@@ -461,7 +461,9 @@ def api_config() -> str | Response:
     auth_status = _fetch_backend_auth_status()
 
     if not form.validate_on_submit():
-        return render_template("admin/api_config.html", form=form, auth_status=auth_status)
+        return render_template(
+            "admin/api_config.html", form=form, auth_status=auth_status
+        )
 
     base_url: str = str(form.base_url.data or "").rstrip("/")
     api_username: str = str(form.api_username.data or "").strip()

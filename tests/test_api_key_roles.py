@@ -85,9 +85,7 @@ class TestRequireAdminApiKey:
     ) -> None:
         """A regular API user receives 403 on admin endpoints."""
         username, key = regular_user
-        response = client.get(
-            "/api-users", headers=_auth_headers(username, key)
-        )
+        response = client.get("/api-users", headers=_auth_headers(username, key))
         assert response.status_code == 403
 
     def test_admin_user_succeeds(
@@ -95,9 +93,7 @@ class TestRequireAdminApiKey:
     ) -> None:
         """An admin API user can list API users."""
         username, key = admin_user
-        response = client.get(
-            "/api-users", headers=_auth_headers(username, key)
-        )
+        response = client.get("/api-users", headers=_auth_headers(username, key))
         assert response.status_code == 200
 
 
@@ -196,9 +192,7 @@ class TestSetUserAdmin:
     def test_set_user_admin_updates_flag(self) -> None:
         """set_user_admin updates the is_admin flag."""
         create_first_user(username="admin", api_key="secret")
-        _ = create_api_user(
-            username="regular", description="", is_admin=False
-        )
+        _ = create_api_user(username="regular", description="", is_admin=False)
         # create_api_user returns the plaintext key; find the actual id.
         users = list_api_users()
         regular = next(u for u in users if u["username"] == "regular")

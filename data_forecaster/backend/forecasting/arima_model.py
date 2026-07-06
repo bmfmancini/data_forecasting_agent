@@ -25,9 +25,7 @@ from core.logging_config import get_logger
 logger = get_logger(__name__)
 
 
-def _calculate_metrics(
-    test: pd.Series, model
-) -> tuple[float, float, float]:
+def _calculate_metrics(test: pd.Series, model) -> tuple[float, float, float]:
     """Calculate RMSE, MAE, and MAPE for the given model and test data.
 
     Args:

@@ -691,7 +691,9 @@ def api_analyze() -> Response:
         return make_response(jsonify({"error": _BACKEND_CONN_ERROR}), 503)
 
 
-def _handle_done_job(client: BackendAPIClient, job_id: str, status_data: dict[str, Any]) -> Response:
+def _handle_done_job(
+    client: BackendAPIClient, job_id: str, status_data: dict[str, Any]
+) -> Response:
     """Fetch full results for a completed job and update session state."""
     results_resp = client.get_job_results(job_id)
     if results_resp.status_code == 200:
@@ -712,7 +714,9 @@ def _handle_done_job(client: BackendAPIClient, job_id: str, status_data: dict[st
     )
 
 
-def _handle_error_job(client: BackendAPIClient, job_id: str, status_data: dict[str, Any]) -> Response:
+def _handle_error_job(
+    client: BackendAPIClient, job_id: str, status_data: dict[str, Any]
+) -> Response:
     """Fetch the error message for a failed job and update session state."""
     results_resp = client.get_job_results(job_id)
     error_msg: str = "Analysis failed."
@@ -753,9 +757,7 @@ def api_job_status() -> Response:
 
         status_resp = client.get_job_status_lightweight(job_id)
         if status_resp.status_code != 200:
-            return make_response(
-                jsonify({"error": "Failed to poll job status."}), 502
-            )
+            return make_response(jsonify({"error": "Failed to poll job status."}), 502)
 
         status_data: dict[str, Any] = status_resp.json()
         status: str = status_data.get("status", "")
@@ -797,9 +799,7 @@ def api_llm_health() -> Response:
         return make_response(jsonify(resp.json()), resp.status_code)
     except Exception:
         logger.exception("Failed to proxy LLM health check")
-        return make_response(
-            jsonify({"error": "Failed to check LLM health."}), 503
-        )
+        return make_response(jsonify({"error": "Failed to check LLM health."}), 503)
 
 
 @main_bp.route("/api/chat", methods=["POST"])

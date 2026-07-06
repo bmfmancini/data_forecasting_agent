@@ -132,7 +132,9 @@ class AnalysisResponse(BaseModel):
     report: str
     report_reasoning: list[dict[str, Any]] = Field(default_factory=list)
     strategic_visual_recommendations: list[dict[str, str]] = Field(default_factory=list)
-    llm_fallback: bool = False  # Indicates if the LLM was not used for report generation
+    llm_fallback: bool = (
+        False  # Indicates if the LLM was not used for report generation
+    )
     chart_historical: dict
     chart_stl: dict
     chart_acf_pacf: str  # base64 PNG

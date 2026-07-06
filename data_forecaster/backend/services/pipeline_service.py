@@ -233,9 +233,7 @@ def run_pipeline(
     _progress(100, "Analysis complete")
 
     # Check if LLM fallback occurred during report generation
-    llm_fallback = any(
-        step.get("llm_fallback", False) for step in report_reasoning
-    )
+    llm_fallback = any(step.get("llm_fallback", False) for step in report_reasoning)
 
     return AnalysisResponse(
         file_id=file_id,

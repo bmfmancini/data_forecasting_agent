@@ -240,9 +240,9 @@ Visual Strategy Recommendations: {visual_strategy}
         report = _fallback_report(validation, statistical, model_selection, forecast)
         reasoning_steps.append(
             {
-                "thought": f"Error: {exc}", 
+                "thought": f"Error: {exc}",
                 "observation": "Fallback generated",
-                "llm_fallback": True
+                "llm_fallback": True,
             }
         )
 

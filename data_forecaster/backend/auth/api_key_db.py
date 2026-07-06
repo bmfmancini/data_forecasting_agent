@@ -272,9 +272,7 @@ def get_api_user(user_id: int) -> dict[str, Any] | None:
         conn.close()
 
 
-def create_api_user(
-    username: str, description: str, is_admin: bool = False
-) -> str:
+def create_api_user(username: str, description: str, is_admin: bool = False) -> str:
     """Create a new API user and return the plaintext key (once).
 
     Args:
@@ -409,9 +407,7 @@ def set_user_admin(user_id: int, is_admin: bool) -> None:
             (int(is_admin), user_id),
         )
         conn.commit()
-        logger.info(
-            "API user id=%d admin status set to %s.", user_id, is_admin
-        )
+        logger.info("API user id=%d admin status set to %s.", user_id, is_admin)
     finally:
         conn.close()
 
