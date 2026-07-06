@@ -56,9 +56,7 @@ def require_api_key(request: Request) -> dict[str, Any]:
     if request.client:
         client_ip = request.client.host
 
-    user: dict[str, Any] | None = verify_api_key(
-        username, api_key, client_ip=client_ip
-    )
+    user: dict[str, Any] | None = verify_api_key(username, api_key, client_ip=client_ip)
 
     if user is None:
         raise HTTPException(

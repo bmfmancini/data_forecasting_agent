@@ -25,7 +25,7 @@ def get_fernet() -> Fernet:
     if not raw_key:
         raise RuntimeError(
             "FLASK_ENCRYPTION_KEY environment variable is not set. "
-            "Generate one with: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
+            'Generate one with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"'
         )
     return Fernet(raw_key.encode())
 

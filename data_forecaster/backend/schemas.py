@@ -44,12 +44,8 @@ class AnalyzeRequest(BaseModel):
     forecast_horizon: int
     date_col: str | None = None
     value_col: str | None = None
-    forced_model: str | None = (
-        None  # "Holt-Winters" | "ARIMA" | "SARIMA" | None (auto)
-    )
-    user_prompt: str | None = (
-        None  # Extra instructions appended to the report prompt
-    )
+    forced_model: str | None = None  # "Holt-Winters" | "ARIMA" | "SARIMA" | None (auto)
+    user_prompt: str | None = None  # Extra instructions appended to the report prompt
     preflight_options: dict[str, Any] | None = Field(default_factory=dict)
 
 

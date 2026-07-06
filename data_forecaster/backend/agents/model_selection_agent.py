@@ -132,25 +132,39 @@ def run_model_selection_agent(stat_result: StatisticalResult) -> ModelSelectionR
         if sp > 1:
             # Strong seasonality detected
             fallback_model = "SARIMA"
-            reasoning["Holt-Winters"] = "Strong seasonality makes SARIMA/Holt-Winters preferable."
-            reasoning["ARIMA"] = "Seasonal pattern detected; plain ARIMA ignores seasonality."
-            reasoning["EWMA"] = "Seasonal patterns present; EWMA does not capture seasonality."
+            reasoning["Holt-Winters"] = (
+                "Strong seasonality makes SARIMA/Holt-Winters preferable."
+            )
+            reasoning["ARIMA"] = (
+                "Seasonal pattern detected; plain ARIMA ignores seasonality."
+            )
+            reasoning["EWMA"] = (
+                "Seasonal patterns present; EWMA does not capture seasonality."
+            )
         elif stat_result.has_trend and abs(stat_result.trend_slope) > 0.1:
             # Strong trend present
             fallback_model = "Holt-Winters"
-            reasoning["ARIMA"] = "Trend present but Holt-Winters handles it more naturally."
+            reasoning["ARIMA"] = (
+                "Trend present but Holt-Winters handles it more naturally."
+            )
             reasoning["SARIMA"] = "No strong seasonality confirmed; SARIMA may overfit."
-            reasoning["EWMA"] = "Strong trend present; EWMA will lag behind trend changes."
+            reasoning["EWMA"] = (
+                "Strong trend present; EWMA will lag behind trend changes."
+            )
         elif stat_result.is_white_noise:
             # Random series
             fallback_model = "EWMA"
-            reasoning["Holt-Winters"] = "Series appears random; simple EWMA may suffice."
+            reasoning["Holt-Winters"] = (
+                "Series appears random; simple EWMA may suffice."
+            )
             reasoning["ARIMA"] = "Series is random noise; complex models may overfit."
             reasoning["SARIMA"] = "No patterns detected; SARIMA would overfit."
         else:
             # Default case
             fallback_model = "ARIMA"
-            reasoning["Holt-Winters"] = "No clear seasonal pattern or strong trend detected."
+            reasoning["Holt-Winters"] = (
+                "No clear seasonal pattern or strong trend detected."
+            )
             reasoning["SARIMA"] = "No seasonal period confirmed; SARIMA would overfit."
             reasoning["EWMA"] = "Series has patterns that ARIMA can better capture."
 

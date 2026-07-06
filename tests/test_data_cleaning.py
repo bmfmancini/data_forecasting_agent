@@ -73,10 +73,20 @@ def series_with_outliers():
 @pytest.fixture
 def irregular_series():
     """Fixture for an irregular time series."""
-    dates = pd.to_datetime([
-        "2023-01-01", "2023-01-02", "2023-01-04", "2023-01-05", "2023-01-07",
-        "2023-01-08", "2023-01-10", "2023-01-11", "2023-01-12", "2023-01-15"
-    ])
+    dates = pd.to_datetime(
+        [
+            "2023-01-01",
+            "2023-01-02",
+            "2023-01-04",
+            "2023-01-05",
+            "2023-01-07",
+            "2023-01-08",
+            "2023-01-10",
+            "2023-01-11",
+            "2023-01-12",
+            "2023-01-15",
+        ]
+    )
     values = np.random.normal(loc=100, scale=10, size=10).clip(0, 200)
     return pd.Series(values, index=dates)
 
@@ -111,7 +121,9 @@ class TestAuditSeries:
     def test_audit_series_invalid_index(self):
         """Test audit_series with an invalid index."""
         series = pd.Series([1, 2, 3], index=[1, 2, 3])
-        with pytest.raises(ValueError, match="Series index must be a pandas DatetimeIndex"):
+        with pytest.raises(
+            ValueError, match="Series index must be a pandas DatetimeIndex"
+        ):
             audit_series(series)
 
 
@@ -132,7 +144,9 @@ class TestReindexSeries:
     def test_reindex_series_invalid_index(self):
         """Test reindex_series with an invalid index."""
         series = pd.Series([1, 2, 3], index=[1, 2, 3])
-        with pytest.raises(ValueError, match="Series index must be a pandas DatetimeIndex"):
+        with pytest.raises(
+            ValueError, match="Series index must be a pandas DatetimeIndex"
+        ):
             reindex_series(series, "D")
 
 
@@ -196,7 +210,9 @@ class TestDetectOutliersZScore:
 
     def test_detect_outliers_zscore_constant_series(self):
         """Test detect_outliers_zscore with a constant series."""
-        series = pd.Series([10, 10, 10], index=pd.date_range(start="2023-01-01", periods=3, freq="D"))
+        series = pd.Series(
+            [10, 10, 10], index=pd.date_range(start="2023-01-01", periods=3, freq="D")
+        )
         result = detect_outliers_zscore(series)
         assert result["count"] == 0
         assert "constant series" in result["interpretation"]
@@ -207,7 +223,10 @@ class TestApplyIQRClipping:
     def test_apply_iqr_clipping(self, series_with_outliers):
         """Test apply_iqr_clipping with a series containing outliers."""
         clipped = apply_iqr_clipping(series_with_outliers)
-        outliers = series_with_outliers[(series_with_outliers < clipped.min()) | (series_with_outliers > clipped.max())]
+        outliers = series_with_outliers[
+            (series_with_outliers < clipped.min())
+            | (series_with_outliers > clipped.max())
+        ]
         assert len(outliers) > 0
         assert (clipped >= clipped.min()).all() and (clipped <= clipped.max()).all()
 
@@ -221,7 +240,9 @@ class TestApplyZScoreClipping:
 
     def test_apply_zscore_clipping_constant_series(self):
         """Test apply_zscore_clipping with a constant series."""
-        series = pd.Series([10, 10, 10], index=pd.date_range(start="2023-01-01", periods=3, freq="D"))
+        series = pd.Series(
+            [10, 10, 10], index=pd.date_range(start="2023-01-01", periods=3, freq="D")
+        )
         clipped = apply_zscore_clipping(series)
         assert (clipped == series).all()
 

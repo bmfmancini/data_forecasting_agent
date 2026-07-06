@@ -109,15 +109,13 @@ def users() -> str:
     Returns:
         Rendered HTML for the user management list page.
     """
-    rows = query_db(
-        """
+    rows = query_db("""
         SELECT u.id, u.username, r.name AS role, u.active, u.created_at,
                u.must_change_password
         FROM users u
         JOIN roles r ON r.id = u.role_id
         ORDER BY u.id
-        """
-    )
+        """)
     user_list: list[dict[str, Any]] = rows if isinstance(rows, list) else []
     return render_template("admin/users.html", users=user_list)
 
@@ -136,9 +134,7 @@ def user_force_reset(user_id: int) -> Response:
     Returns:
         A redirect response to the user management page.
     """
-    row = query_db(
-        "SELECT id, username FROM users WHERE id = ?", (user_id,), one=True
-    )
+    row = query_db("SELECT id, username FROM users WHERE id = ?", (user_id,), one=True)
     if not row or not isinstance(row, dict):
         flash("User not found.", "danger")
         return redirect(url_for("admin.users"))
@@ -243,20 +239,30 @@ def user_edit(user_id: int) -> str | Response:
 
         if new_password and new_password != confirm_password:
             flash("Passwords do not match.", "danger")
-            return render_template("admin/user_form.html", form=form, edit=True, target_user=row)
+            return render_template(
+                "admin/user_form.html", form=form, edit=True, target_user=row
+            )
 
         role_row = query_db(
             "SELECT id FROM roles WHERE name = ?", (new_role,), one=True
         )
         if not role_row or not isinstance(role_row, dict):
             flash("Invalid role.", "danger")
-            return render_template("admin/user_form.html", form=form, edit=True, target_user=row)
+            return render_template(
+                "admin/user_form.html", form=form, edit=True, target_user=row
+            )
 
         if new_password:
             pw_hash = generate_password_hash(new_password)
             execute_db(
                 "UPDATE users SET password_hash = ?, role_id = ?, active = ?, must_change_password = ? WHERE id = ?",
-                (pw_hash, int(role_row["id"]), int(new_active), int(force_reset or 1), user_id),
+                (
+                    pw_hash,
+                    int(role_row["id"]),
+                    int(new_active),
+                    int(force_reset or 1),
+                    user_id,
+                ),
             )
         else:
             execute_db(
@@ -300,7 +306,9 @@ def settings() -> str | Response:
         flash("Settings saved.", "success")
         return redirect(url_for("admin.settings"))
 
-    config_rows = query_db("SELECT key, value FROM app_config WHERE key IN (?)", (known_keys[0],))
+    config_rows = query_db(
+        "SELECT key, value FROM app_config WHERE key IN (?)", (known_keys[0],)
+    )
     config_map: dict[str, str] = {}
     if isinstance(config_rows, list):
         for r in config_rows:
@@ -411,9 +419,7 @@ def api_config() -> str | Response:
         flash("API configuration saved.", "success")
         return redirect(url_for("admin.api_config"))
 
-    return render_template(
-        "admin/api_config.html", form=form, auth_status=auth_status
-    )
+    return render_template("admin/api_config.html", form=form, auth_status=auth_status)
 
 
 @admin_bp.route("/api-config/test", methods=["POST"])

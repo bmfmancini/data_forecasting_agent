@@ -9,7 +9,16 @@ import asyncio
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Annotated
 
-from fastapi import Body, Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
+from fastapi import (
+    Body,
+    Depends,
+    FastAPI,
+    File,
+    HTTPException,
+    Request,
+    Response,
+    UploadFile,
+)
 from fastapi.middleware.cors import CORSMiddleware
 
 import core.config as settings

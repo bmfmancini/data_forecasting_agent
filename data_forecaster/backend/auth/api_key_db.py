@@ -214,9 +214,7 @@ def verify_api_key(
             "bootstrap": bool(row["bootstrap"]),
             "created_at": str(row["created_at"]),
             "last_used": str(row["last_used"]) if row["last_used"] else None,
-            "last_used_ip": (
-                str(row["last_used_ip"]) if row["last_used_ip"] else None
-            ),
+            "last_used_ip": (str(row["last_used_ip"]) if row["last_used_ip"] else None),
         }
     finally:
         conn.close()
@@ -230,14 +228,12 @@ def list_api_users() -> list[dict[str, Any]]:
     """
     conn: sqlite3.Connection = _get_connection()
     try:
-        rows: list[sqlite3.Row] = conn.execute(
-            """
+        rows: list[sqlite3.Row] = conn.execute("""
             SELECT id, username, description, enabled, bootstrap,
                    created_at, last_used, last_used_ip
             FROM api_users
             ORDER BY id
-            """
-        ).fetchall()
+            """).fetchall()
         return [dict(r) for r in rows]
     finally:
         conn.close()
@@ -371,9 +367,7 @@ def set_user_enabled(user_id: int, enabled: bool) -> None:
             (int(enabled), user_id),
         )
         conn.commit()
-        logger.info(
-            "API user id=%d %s.", user_id, "enabled" if enabled else "disabled"
-        )
+        logger.info("API user id=%d %s.", user_id, "enabled" if enabled else "disabled")
     finally:
         conn.close()
 

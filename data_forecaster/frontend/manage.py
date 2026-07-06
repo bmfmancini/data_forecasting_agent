@@ -65,18 +65,18 @@ def register_commands(app: Flask) -> None:
         from db.db import query_db
 
         with app.app_context():
-            rows = query_db(
-                """
+            rows = query_db("""
                 SELECT u.id, u.username, r.name AS role, u.active, u.created_at
                 FROM users u
                 JOIN roles r ON r.id = u.role_id
                 ORDER BY u.id
-                """
-            )
+                """)
             if not rows or not isinstance(rows, list):
                 click.echo("No users found.")
                 return
-            click.echo(f"{'ID':<5} {'Username':<20} {'Role':<10} {'Active':<8} {'Created'}")
+            click.echo(
+                f"{'ID':<5} {'Username':<20} {'Role':<10} {'Active':<8} {'Created'}"
+            )
             click.echo("-" * 65)
             for row in rows:
                 assert isinstance(row, dict)
@@ -156,9 +156,7 @@ def register_commands(app: Flask) -> None:
         from db.db import execute_db
 
         with app.app_context():
-            execute_db(
-                "DELETE FROM api_credentials WHERE label = ?", (label,)
-            )
+            execute_db("DELETE FROM api_credentials WHERE label = ?", (label,))
             click.echo(f"Credential '{label}' deleted.")
 
     @app.cli.command("generate-key")

@@ -323,19 +323,13 @@ def chat_with_data(
             main_date = date_cols[0]
             val_col = num_cols[0]
 
-            top_5 = df.nlargest(5, val_col)[[main_date, val_col]].to_string(
-                index=False
-            )
+            top_5 = df.nlargest(5, val_col)[[main_date, val_col]].to_string(index=False)
             bottom_5 = df.nsmallest(5, val_col)[[main_date, val_col]].to_string(
                 index=False
             )
 
-            data_snapshots = (
-                f"\nHIGHEST 5 RECORDS (Sorted by {val_col}):\n{top_5}\n"
-            )
-            data_snapshots += (
-                f"\nLOWEST 5 RECORDS (Sorted by {val_col}):\n{bottom_5}\n"
-            )
+            data_snapshots = f"\nHIGHEST 5 RECORDS (Sorted by {val_col}):\n{top_5}\n"
+            data_snapshots += f"\nLOWEST 5 RECORDS (Sorted by {val_col}):\n{bottom_5}\n"
     except Exception as exc:
         logger.warning("Failed to generate data highlights for chat: %s", exc)
 

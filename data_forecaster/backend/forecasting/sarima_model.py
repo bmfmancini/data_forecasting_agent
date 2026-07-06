@@ -25,7 +25,9 @@ from core.logging_config import get_logger
 logger = get_logger(__name__)
 
 
-def _calculate_metrics(train: pd.Series, test: pd.Series, model) -> tuple[float, float, float]:
+def _calculate_metrics(
+    train: pd.Series, test: pd.Series, model
+) -> tuple[float, float, float]:
     """Calculate RMSE, MAE, and MAPE for the given model and test data.
 
     Args:
@@ -43,7 +45,9 @@ def _calculate_metrics(train: pd.Series, test: pd.Series, model) -> tuple[float,
         test_fc, _ = model.predict(n_periods=len(test), return_conf_int=True)
         rmse = float(np.sqrt(np.mean((test.values - test_fc) ** 2)))
         mae = float(np.mean(np.abs(test.values - test_fc)))
-        mape = float(np.mean(np.abs((test.values - test_fc) / (test.values + 1e-8))) * 100)
+        mape = float(
+            np.mean(np.abs((test.values - test_fc) / (test.values + 1e-8))) * 100
+        )
         return rmse, mae, mape
     except Exception as exc:
         logger.warning("SARIMA metrics calculation failed: %s", exc)

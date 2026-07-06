@@ -28,12 +28,30 @@ from models import User
 logger = logging.getLogger(__name__)
 
 _BLEACH_ALLOWED_TAGS: list[str] = [
-    "p", "h1", "h2", "h3", "h4", "h5", "h6",
-    "ul", "ol", "li",
-    "strong", "em", "code", "pre",
-    "blockquote", "hr",
-    "a", "br",
-    "table", "thead", "tbody", "tr", "th", "td",
+    "p",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "ul",
+    "ol",
+    "li",
+    "strong",
+    "em",
+    "code",
+    "pre",
+    "blockquote",
+    "hr",
+    "a",
+    "br",
+    "table",
+    "thead",
+    "tbody",
+    "tr",
+    "th",
+    "td",
 ]
 
 _BLEACH_ALLOWED_ATTRS: dict[str, list[str]] = {
@@ -88,6 +106,7 @@ def create_app(config_name: str | None = None) -> Flask:
     _register_password_change(app)
 
     from manage import register_commands
+
     register_commands(app)
 
     return app
@@ -210,12 +229,14 @@ def _register_template_filters(app: Flask) -> None:
             str(text),
             extensions=["tables", "fenced_code", "nl2br"],
         )
-        return Markup(bleach.clean(
-            raw_html,
-            tags=_BLEACH_ALLOWED_TAGS,
-            attributes=_BLEACH_ALLOWED_ATTRS,
-            strip=True,
-        ))
+        return Markup(
+            bleach.clean(
+                raw_html,
+                tags=_BLEACH_ALLOWED_TAGS,
+                attributes=_BLEACH_ALLOWED_ATTRS,
+                strip=True,
+            )
+        )
 
 
 def _register_blueprints(app: Flask) -> None:

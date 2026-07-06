@@ -53,12 +53,30 @@ _CHART_FIELD_BY_TAG: dict[str, str] = {
 }
 
 _BLEACH_ALLOWED_TAGS: list[str] = [
-    "p", "h1", "h2", "h3", "h4", "h5", "h6",
-    "ul", "ol", "li",
-    "strong", "em", "code", "pre",
-    "blockquote", "hr",
-    "a", "br",
-    "table", "thead", "tbody", "tr", "th", "td",
+    "p",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "ul",
+    "ol",
+    "li",
+    "strong",
+    "em",
+    "code",
+    "pre",
+    "blockquote",
+    "hr",
+    "a",
+    "br",
+    "table",
+    "thead",
+    "tbody",
+    "tr",
+    "th",
+    "td",
 ]
 
 _BLEACH_ALLOWED_ATTRS: dict[str, list[str]] = {
@@ -141,22 +159,16 @@ def _parse_report_segments(
     for idx, segment in enumerate(parts):
         if idx % 2 == 0:
             if segment.strip():
-                segments.append(
-                    {"type": "text", "html": _markdown_to_html(segment)}
-                )
+                segments.append({"type": "text", "html": _markdown_to_html(segment)})
         else:
             tag = segment
             field = _CHART_FIELD_BY_TAG.get(tag)
             chart_data = result.get(field) if field else None
             if tag == "ACF_PACF":
-                segments.append(
-                    {"type": "chart", "tag": tag, "acf_b64": chart_data}
-                )
+                segments.append({"type": "chart", "tag": tag, "acf_b64": chart_data})
             else:
                 chart_json = json.dumps(chart_data) if chart_data else None
-                segments.append(
-                    {"type": "chart", "tag": tag, "chart_json": chart_json}
-                )
+                segments.append({"type": "chart", "tag": tag, "chart_json": chart_json})
 
     return segments
 
@@ -319,9 +331,7 @@ def forecast() -> str:
     result: dict[str, Any] = session.get("analysis_result") or {}
     fc: dict[str, Any] = result.get("forecast") or {}
     forecast_json: str | None = (
-        json.dumps(result["chart_forecast"])
-        if result.get("chart_forecast")
-        else None
+        json.dumps(result["chart_forecast"]) if result.get("chart_forecast") else None
     )
     forecast_rows: list[dict[str, Any]] = []
     dates = fc.get("forecast_dates", [])
@@ -425,7 +435,9 @@ def report_export() -> Response:
     base_name = filename.rsplit(".", 1)[0] if "." in filename else filename
     pdf_filename = f"forecast_report_{base_name}.pdf"
 
-    pdf_bytes = report_to_pdf(report_text, title=pdf_filename.replace("_", " ").replace(".pdf", ""))
+    pdf_bytes = report_to_pdf(
+        report_text, title=pdf_filename.replace("_", " ").replace(".pdf", "")
+    )
     return send_file(
         io.BytesIO(pdf_bytes),
         mimetype="application/pdf",
@@ -458,13 +470,17 @@ def load_demo() -> Response:
 
     try:
         client = get_api_client()
-        resp = client.upload_file("sample_airline_passengers.csv", demo_bytes, "text/csv")
+        resp = client.upload_file(
+            "sample_airline_passengers.csv", demo_bytes, "text/csv"
+        )
         if resp.status_code == 200:
             upload_info = resp.json()
             session["upload_info"] = upload_info
             session["date_col"] = upload_info.get("detected_date_col")
             session["value_col"] = upload_info.get("detected_value_col")
-            session["preview_data"] = _parse_preview(demo_bytes, "sample_airline_passengers.csv")
+            session["preview_data"] = _parse_preview(
+                demo_bytes, "sample_airline_passengers.csv"
+            )
             flash(
                 f"Demo data loaded — {upload_info.get('rows', 0)} rows "
                 "(airline passengers 1949-1960).",
@@ -516,7 +532,10 @@ def api_upload() -> Response:
             session["value_col"] = upload_info.get("detected_value_col")
             session["preview_data"] = _parse_preview(content, filename)
             return jsonify(upload_info)
-        return jsonify({"error": resp.json().get("detail", "Upload failed.")}), resp.status_code
+        return (
+            jsonify({"error": resp.json().get("detail", "Upload failed.")}),
+            resp.status_code,
+        )
     except Exception:
         logger.exception("Backend connection error during upload")
         return jsonify({"error": "Backend connection error."}), 503
@@ -557,7 +576,10 @@ def api_columns() -> Response:
             session["preflight_result"] = preflight
             session["preflight_options"] = _preflight_defaults(preflight)
             return jsonify({"preflight": preflight})
-        return jsonify({"error": resp.json().get("detail", "Preflight failed.")}), resp.status_code
+        return (
+            jsonify({"error": resp.json().get("detail", "Preflight failed.")}),
+            resp.status_code,
+        )
     except Exception:
         logger.exception("Backend connection error during preflight")
         return jsonify({"error": "Backend connection error."}), 503
@@ -600,18 +622,22 @@ def api_analyze() -> Response:
 
     date_col: str = str(data.get("date_col") or session.get("date_col") or "")
     value_col: str = str(data.get("value_col") or session.get("value_col") or "")
-    horizon: int = int(data.get("forecast_horizon") or session.get("forecast_horizon") or 12)
+    horizon: int = int(
+        data.get("forecast_horizon") or session.get("forecast_horizon") or 12
+    )
     model_choice: str = str(data.get("model_choice") or "Auto (AI selects)")
     user_prompt: str = str(data.get("user_prompt") or "").strip()
-    preflight_options: dict[str, Any] = data.get(
-        "preflight_options"
-    ) or session.get("preflight_options") or {}
+    preflight_options: dict[str, Any] = (
+        data.get("preflight_options") or session.get("preflight_options") or {}
+    )
 
     session["forecast_horizon"] = horizon
     session["model_choice"] = model_choice
     session["user_prompt"] = user_prompt
 
-    forced_model: str | None = None if model_choice == "Auto (AI selects)" else model_choice
+    forced_model: str | None = (
+        None if model_choice == "Auto (AI selects)" else model_choice
+    )
 
     payload: dict[str, Any] = {
         "file_id": file_id,
@@ -698,9 +724,7 @@ def api_job_status() -> Response:
             results_resp = client.get_job_results(job_id)
             error_msg: str = "Analysis failed."
             if results_resp.status_code == 200:
-                error_msg = str(
-                    results_resp.json().get("error", "Analysis failed.")
-                )
+                error_msg = str(results_resp.json().get("error", "Analysis failed."))
             session["job_running"] = False
             session["job_id"] = None
             session["analysis_error"] = error_msg

@@ -157,9 +157,7 @@ async def job_worker() -> None:
             JOB_QUEUE.task_done()
             continue
 
-        def _run_pipeline_sync(
-            r=req, s=stored, j_id=job_id
-        ) -> AnalysisResponse:
+        def _run_pipeline_sync(r=req, s=stored, j_id=job_id) -> AnalysisResponse:
             return run_pipeline(
                 df=s["df"],
                 file_id=r["file_id"],
