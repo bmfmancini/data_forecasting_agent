@@ -25,6 +25,31 @@ from core.logging_config import get_logger
 logger = get_logger(__name__)
 
 
+def _calculate_metrics(train: pd.Series, test: pd.Series, model) -> tuple[float, float, float]:
+    """Calculate RMSE, MAE, and MAPE for the given model and test data.
+
+    Args:
+        train: Training data.
+        test: Test data.
+        model: Trained ARIMA model.
+
+    Returns:
+        tuple[float, float, float]: RMSE, MAE, and MAPE metrics.
+    """
+    if len(test) == 0 or model is None:
+        return 0.0, 0.0, 0.0
+
+    try:
+        test_fc, _ = model.predict(n_periods=len(test), return_conf_int=True)
+        rmse = float(np.sqrt(np.mean((test.values - test_fc) ** 2)))
+        mae = float(np.mean(np.abs(test.values - test_fc)))
+        mape = float(np.mean(np.abs((test.values - test_fc) / (test.values + 1e-8))) * 100)
+        return rmse, mae, mape
+    except Exception as exc:
+        logger.warning("ARIMA metrics calculation failed: %s", exc)
+        return 0.0, 0.0, 0.0
+
+
 def fit_arima(series: pd.Series, forecast_horizon: int) -> dict:
     """Fit ARIMA via pmdarima auto_arima and return forecast + metrics.
 
@@ -61,11 +86,11 @@ def fit_arima(series: pd.Series, forecast_horizon: int) -> dict:
     )
     train, test = series.iloc[:split], series.iloc[split:]
 
-    rmse = mae = mape = 0.0
     train_model = None
+    rmse, mae, mape = 0.0, 0.0, 0.0
 
-    try:
-        if len(train) >= 2:
+    if len(train) >= 2:
+        try:
             train_model = pm.auto_arima(
                 train,
                 seasonal=False,
@@ -76,22 +101,12 @@ def fit_arima(series: pd.Series, forecast_horizon: int) -> dict:
                 suppress_warnings=True,
                 information_criterion="aic",
             )
-            if len(test) > 0:
-                test_fc, _ = train_model.predict(
-                    n_periods=len(test), return_conf_int=True
-                )
-                rmse = float(np.sqrt(np.mean((test.values - test_fc) ** 2)))
-                mae = float(np.mean(np.abs(test.values - test_fc)))
-                mape = float(
-                    np.mean(np.abs((test.values - test_fc) / (test.values + 1e-8)))
-                    * 100
-                )
-    except Exception as exc:
-        logger.warning("ARIMA metrics failed: %s", exc)
+            rmse, mae, mape = _calculate_metrics(train, test, train_model)
+        except Exception as exc:
+            logger.warning("ARIMA training failed: %s", exc)
 
     # Fit the model on the full series using the order from training
     order = train_model.order if train_model is not None else (1, 1, 1)
-
     full_model = pm.ARIMA(order=order, suppress_warnings=True).fit(series)
 
     logger.info("ARIMA selected order: %s", full_model.order)

@@ -115,37 +115,48 @@ def run_model_selection_agent(stat_result: StatisticalResult) -> ModelSelectionR
 
     suitability_summary = f"{get_hw_suitability()}\n\n{get_arima_suitability()}\n\n{get_sarima_suitability()}\n\n{get_ewma_suitability()}"
 
-    # ── Heuristic fallback selection (used if LLM fails) ─────────────────────
-    sp = stat_result.seasonal_period or 1
-    # Heuristic for model selection based on statistical properties
-    if sp > 1:
-        # Strong seasonality detected
-        fallback_model = "SARIMA"
-        hw_reason = "Strong seasonality makes SARIMA/Holt-Winters preferable."
-        arima_reason = "Seasonal pattern detected; plain ARIMA ignores seasonality."
-        sarima_reason = None
-        ewma_reason = "Seasonal patterns present; EWMA does not capture seasonality."
-    elif stat_result.has_trend and abs(stat_result.trend_slope) > 0.1:
-        # Strong trend present
-        fallback_model = "Holt-Winters"
-        hw_reason = None
-        arima_reason = "Trend present but Holt-Winters handles it more naturally."
-        sarima_reason = "No strong seasonality confirmed; SARIMA may overfit."
-        ewma_reason = "Strong trend present; EWMA will lag behind trend changes."
-    elif stat_result.is_white_noise:
-        # Random series
-        fallback_model = "EWMA"
-        hw_reason = "Series appears random; simple EWMA may suffice."
-        arima_reason = "Series is random noise; complex models may overfit."
-        sarima_reason = "No patterns detected; SARIMA would overfit."
-        ewma_reason = None
-    else:
-        # Default case
-        fallback_model = "ARIMA"
-        hw_reason = "No clear seasonal pattern or strong trend detected."
-        arima_reason = None
-        sarima_reason = "No seasonal period confirmed; SARIMA would overfit."
-        ewma_reason = "Series has patterns that ARIMA can better capture."
+    def _get_heuristic_fallback() -> tuple[str, dict[str, str | None]]:
+        """Determine the fallback model and reasoning based on statistical properties.
+
+        Returns:
+            tuple[str, dict[str, str | None]]: Fallback model and reasoning for each model.
+        """
+        sp = stat_result.seasonal_period or 1
+        reasoning = {
+            "Holt-Winters": None,
+            "ARIMA": None,
+            "SARIMA": None,
+            "EWMA": None,
+        }
+
+        if sp > 1:
+            # Strong seasonality detected
+            fallback_model = "SARIMA"
+            reasoning["Holt-Winters"] = "Strong seasonality makes SARIMA/Holt-Winters preferable."
+            reasoning["ARIMA"] = "Seasonal pattern detected; plain ARIMA ignores seasonality."
+            reasoning["EWMA"] = "Seasonal patterns present; EWMA does not capture seasonality."
+        elif stat_result.has_trend and abs(stat_result.trend_slope) > 0.1:
+            # Strong trend present
+            fallback_model = "Holt-Winters"
+            reasoning["ARIMA"] = "Trend present but Holt-Winters handles it more naturally."
+            reasoning["SARIMA"] = "No strong seasonality confirmed; SARIMA may overfit."
+            reasoning["EWMA"] = "Strong trend present; EWMA will lag behind trend changes."
+        elif stat_result.is_white_noise:
+            # Random series
+            fallback_model = "EWMA"
+            reasoning["Holt-Winters"] = "Series appears random; simple EWMA may suffice."
+            reasoning["ARIMA"] = "Series is random noise; complex models may overfit."
+            reasoning["SARIMA"] = "No patterns detected; SARIMA would overfit."
+        else:
+            # Default case
+            fallback_model = "ARIMA"
+            reasoning["Holt-Winters"] = "No clear seasonal pattern or strong trend detected."
+            reasoning["SARIMA"] = "No seasonal period confirmed; SARIMA would overfit."
+            reasoning["EWMA"] = "Series has patterns that ARIMA can better capture."
+
+        return fallback_model, reasoning
+
+    fallback_model, reasoning = _get_heuristic_fallback()
 
     # ── LLM Setup ────────────────────────────────────────────────────────────
     llm = get_llm(temperature=0)

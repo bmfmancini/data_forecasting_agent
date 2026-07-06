@@ -29,10 +29,12 @@ def password_change_required(f: _F) -> _F:
         if not current_user.is_authenticated:
             return redirect(url_for('auth.login', next=request.url))
         
-        if getattr(current_user, 'must_change_password', False):
-            if request.endpoint and request.endpoint != 'auth.change_password':
-                flash('You must change your password before you can continue.', 'warning')
-                return redirect(url_for('auth.change_password'))
+        if not getattr(current_user, 'must_change_password', False):
+            return f(*args, **kwargs)
         
-        return f(*args, **kwargs)
+        if not request.endpoint or request.endpoint == 'auth.change_password':
+            return f(*args, **kwargs)
+        
+        flash('You must change your password before you can continue.', 'warning')
+        return redirect(url_for('auth.change_password'))
     return decorated_function

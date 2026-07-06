@@ -25,6 +25,31 @@ from core.logging_config import get_logger
 logger = get_logger(__name__)
 
 
+def _calculate_metrics(train: pd.Series, test: pd.Series, model) -> tuple[float, float, float]:
+    """Calculate RMSE, MAE, and MAPE for the given model and test data.
+
+    Args:
+        train: Training data.
+        test: Test data.
+        model: Trained SARIMA model.
+
+    Returns:
+        tuple[float, float, float]: RMSE, MAE, and MAPE metrics.
+    """
+    if len(test) == 0 or model is None:
+        return 0.0, 0.0, 0.0
+
+    try:
+        test_fc, _ = model.predict(n_periods=len(test), return_conf_int=True)
+        rmse = float(np.sqrt(np.mean((test.values - test_fc) ** 2)))
+        mae = float(np.mean(np.abs(test.values - test_fc)))
+        mape = float(np.mean(np.abs((test.values - test_fc) / (test.values + 1e-8))) * 100)
+        return rmse, mae, mape
+    except Exception as exc:
+        logger.warning("SARIMA metrics calculation failed: %s", exc)
+        return 0.0, 0.0, 0.0
+
+
 def fit_sarima(
     series: pd.Series,
     forecast_horizon: int,
@@ -57,6 +82,9 @@ def fit_sarima(
     split = max(int(len(series) * 0.8), len(series) - forecast_horizon)
     train, test = series.iloc[:split], series.iloc[split:]
 
+    train_model = None
+    rmse, mae, mape = 0.0, 0.0, 0.0
+
     try:
         train_model = pm.auto_arima(
             train,
@@ -72,15 +100,9 @@ def fit_sarima(
             suppress_warnings=True,
             information_criterion="aic",
         )
-        test_fc, _ = train_model.predict(n_periods=len(test), return_conf_int=True)
-        rmse = float(np.sqrt(np.mean((test.values - test_fc) ** 2)))
-        mae = float(np.mean(np.abs(test.values - test_fc)))
-        mape = float(
-            np.mean(np.abs((test.values - test_fc) / (test.values + 1e-8))) * 100
-        )
+        rmse, mae, mape = _calculate_metrics(train, test, train_model)
     except Exception as exc:
-        logger.warning("SARIMA metrics failed: %s", exc)
-        rmse = mae = mape = 0.0
+        logger.warning("SARIMA training failed: %s", exc)
 
     # Fit the model on the full series using parameters from training
     full_model = pm.ARIMA(
