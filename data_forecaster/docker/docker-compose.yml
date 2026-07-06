@@ -81,7 +81,7 @@ services:
     networks:
       - forecasting_network
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "https://localhost:${BACKEND_HTTPS_PORT:-8443}/health"]
+      test: ["CMD", "wget", "--no-check-certificate", "-qO-", "https://localhost:${BACKEND_HTTPS_PORT:-8443}/health"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -109,7 +109,7 @@ services:
     networks:
       - forecasting_network
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "https://localhost:${FRONTEND_HTTPS_PORT:-443}/auth/login"]
+      test: ["CMD", "wget", "--no-check-certificate", "-qO-", "https://localhost:${FRONTEND_HTTPS_PORT:-443}/auth/login"]
       interval: 10s
       timeout: 5s
       retries: 5
