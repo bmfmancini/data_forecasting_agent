@@ -370,13 +370,6 @@ def api_users_bootstrap(
 # ── File Upload & Analysis ────────────────────────────────────────────────────
 
 
-@app.post(
-    "/upload",
-    responses={
-        400: {"description": "Invalid file content, size, or format"},
-        500: {"description": "File parsing failed"},
-    },
-)
 def _validate_upload_file(file: UploadFile, contents: bytes) -> str:
     """Validate upload metadata and magic bytes.
 
@@ -447,6 +440,13 @@ def _validate_upload_file(file: UploadFile, contents: bytes) -> str:
     return ext
 
 
+@app.post(
+    "/upload",
+    responses={
+        400: {"description": "Invalid file content, size, or format"},
+        500: {"description": "File parsing failed"},
+    },
+)
 async def upload_file(
     file: Annotated[UploadFile, File(...)],
     _user: Annotated[dict, Depends(require_api_key)],
