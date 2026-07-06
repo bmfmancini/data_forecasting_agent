@@ -242,7 +242,22 @@ def list_api_users() -> list[dict[str, Any]]:
             FROM api_users
             ORDER BY id
             """).fetchall()
-        return [dict(r) for r in rows]
+        return [
+            {
+                "id": int(r["id"]),
+                "username": str(r["username"]),
+                "description": str(r["description"]),
+                "enabled": bool(r["enabled"]),
+                "bootstrap": bool(r["bootstrap"]),
+                "is_admin": bool(r["is_admin"]),
+                "created_at": str(r["created_at"]),
+                "last_used": str(r["last_used"]) if r["last_used"] else None,
+                "last_used_ip": (
+                    str(r["last_used_ip"]) if r["last_used_ip"] else None
+                ),
+            }
+            for r in rows
+        ]
     finally:
         conn.close()
 
@@ -267,7 +282,21 @@ def get_api_user(user_id: int) -> dict[str, Any] | None:
             """,
             (user_id,),
         ).fetchone()
-        return dict(row) if row else None
+        if row is None:
+            return None
+        return {
+            "id": int(row["id"]),
+            "username": str(row["username"]),
+            "description": str(row["description"]),
+            "enabled": bool(row["enabled"]),
+            "bootstrap": bool(row["bootstrap"]),
+            "is_admin": bool(row["is_admin"]),
+            "created_at": str(row["created_at"]),
+            "last_used": str(row["last_used"]) if row["last_used"] else None,
+            "last_used_ip": (
+                str(row["last_used_ip"]) if row["last_used_ip"] else None
+            ),
+        }
     finally:
         conn.close()
 
