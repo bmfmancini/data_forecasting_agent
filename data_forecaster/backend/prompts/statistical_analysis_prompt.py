@@ -1,6 +1,7 @@
 """Prompt for the statistical analysis agent."""
 
 from langchain_core.prompts import ChatPromptTemplate
+from .prompt_utils import apply_token_budget, TOKEN_BUDGETS
 
 STATISTICAL_ANALYSIS_PROMPT = ChatPromptTemplate.from_messages(
     [
@@ -52,4 +53,9 @@ STATISTICAL_ANALYSIS_PROMPT = ChatPromptTemplate.from_messages(
             "- Do not optimize for transformation count; optimize for correctness.\n",
         ),
     ]
+)
+
+# Apply token budget (example budget: 300 tokens)
+STATISTICAL_ANALYSIS_PROMPT = apply_token_budget(
+    STATISTICAL_ANALYSIS_PROMPT, "statistical_analysis"
 )

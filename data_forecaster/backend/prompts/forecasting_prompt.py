@@ -1,6 +1,7 @@
 """Prompt for the forecasting agent."""
 
 from langchain_core.prompts import ChatPromptTemplate
+from .prompt_utils import apply_token_budget, TOKEN_BUDGETS
 
 FORECASTING_PROMPT = ChatPromptTemplate.from_messages(
     [
@@ -10,7 +11,9 @@ FORECASTING_PROMPT = ChatPromptTemplate.from_messages(
             "Holt-Winters, ARIMA, and SARIMA models. "
             "Your responsibility is to evaluate model performance and explain "
             "the rationale for model selection using evidence from the supplied results. "
-            "Remain strictly grounded in the provided metrics and diagnostics.",
+            "Remain strictly grounded in the provided metrics and diagnostics. "
+            "Use only the data provided. If a required metric is missing, state "
+            "'Information not available.' Do not infer or fabricate values.",
         ),
         (
             "human",
@@ -45,3 +48,6 @@ FORECASTING_PROMPT = ChatPromptTemplate.from_messages(
         ),
     ]
 )
+
+# Apply token budget (example budget: 400 tokens)
+FORECASTING_PROMPT = apply_token_budget(FORECASTING_PROMPT, "forecasting")
