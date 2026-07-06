@@ -696,11 +696,19 @@ def api_key_rotate(user_id: int) -> Response:
                     f"{new_key}",
                     "success",
                 )
+                # Auto-update the frontend's stored credentials so the
+                # connection to the backend is not broken.
+                from db.crypto import encrypt
+
+                execute_db(
+                    "UPDATE api_credentials"
+                    " SET encrypted_username = ?, encrypted_password = ?"
+                    " WHERE label = 'default'",
+                    (encrypt(active_username), encrypt(new_key)),
+                )
                 flash(
-                    "⚠ This user is currently used by the frontend. "
-                    "Update the API Configuration with the new key to "
-                    "restore backend connectivity.",
-                    "warning",
+                    "The frontend's API credentials have been updated automatically.",
+                    "success",
                 )
             else:
                 flash(
