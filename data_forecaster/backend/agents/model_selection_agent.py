@@ -170,7 +170,7 @@ def run_model_selection_agent(stat_result: StatisticalResult) -> ModelSelectionR
 
         return fallback_model, reasoning
 
-    fallback_model, _ = _get_heuristic_fallback()
+    fallback_model, fallback_reasoning = _get_heuristic_fallback()
 
     # ── LLM Setup ────────────────────────────────────────────────────────────
     llm = get_llm(temperature=0)
@@ -235,11 +235,12 @@ def run_model_selection_agent(stat_result: StatisticalResult) -> ModelSelectionR
             "Model selection agent LLM call failed: %s — using heuristic.", exc
         )
         selected_model = fallback_model
+        sp = stat_result.seasonal_period
         explanation = f"Heuristic selection: {fallback_model} chosen based on seasonal period={sp}."
-        hw_rej = hw_reason if selected_model != "Holt-Winters" else None
-        arima_rej = arima_reason if selected_model != "ARIMA" else None
-        sarima_rej = sarima_reason if selected_model != "SARIMA" else None
-        ewma_rej = ewma_reason if selected_model != "EWMA" else None
+        hw_rej = fallback_reasoning["Holt-Winters"]
+        arima_rej = fallback_reasoning["ARIMA"]
+        sarima_rej = fallback_reasoning["SARIMA"]
+        ewma_rej = fallback_reasoning["EWMA"]
         reasoning_steps = [
             {
                 "thought": f"Model selection agent failed: {str(exc)}",
