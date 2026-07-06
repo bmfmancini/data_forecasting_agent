@@ -45,8 +45,9 @@ jobs:
         mypy .
 
     - name: Run Pytest
+      working-directory: .
       run: |
-        pytest
+        pytest tests/ -v
 
     - name: Run pip-audit (dependency vulnerability scan)
       continue-on-error: true
