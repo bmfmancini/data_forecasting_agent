@@ -170,7 +170,7 @@ def run_model_selection_agent(stat_result: StatisticalResult) -> ModelSelectionR
 
         return fallback_model, reasoning
 
-    fallback_model, reasoning = _get_heuristic_fallback()
+    fallback_model, _ = _get_heuristic_fallback()
 
     # ── LLM Setup ────────────────────────────────────────────────────────────
     llm = get_llm(temperature=0)

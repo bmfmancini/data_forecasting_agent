@@ -28,6 +28,9 @@ from auth.api_key_db import (  # noqa: E402
 from auth.dependency import require_admin_api_key, require_api_key  # noqa: E402
 from main import app  # noqa: E402
 
+# Test API key reused from the ADMIN_API_KEY env var set in _reset_api_key_db.
+_ADMIN_KEY = "test-admin-key"
+
 
 @pytest.fixture(autouse=True)
 def _reset_api_key_db(tmp_path: Any, monkeypatch: Any) -> None:
@@ -51,8 +54,8 @@ def client() -> TestClient:
 @pytest.fixture
 def admin_user() -> tuple[str, str]:
     """Create an admin API user and return (username, plaintext_key)."""
-    plaintext = create_first_user(username="admin", api_key="admin-secret-key")
-    return "admin", "admin-secret-key"
+    create_first_user(username="admin", api_key=_ADMIN_KEY)
+    return "admin", _ADMIN_KEY
 
 
 @pytest.fixture
@@ -193,7 +196,7 @@ class TestSetUserAdmin:
     def test_set_user_admin_updates_flag(self) -> None:
         """set_user_admin updates the is_admin flag."""
         create_first_user(username="admin", api_key="secret")
-        user_id = create_api_user(
+        _ = create_api_user(
             username="regular", description="", is_admin=False
         )
         # create_api_user returns the plaintext key; find the actual id.

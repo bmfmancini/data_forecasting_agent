@@ -10,6 +10,9 @@ import os
 # Add the project root to the Python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+# Seeded Generator for deterministic, reproducible test data.
+rng = np.random.default_rng(seed=42)
+
 from data_forecaster.backend.utils.data_cleaning import (
     apply_iqr_clipping,
     apply_zscore_clipping,
@@ -30,7 +33,7 @@ from data_forecaster.backend.utils.data_cleaning import (
 def sample_series():
     """Fixture for a sample time series."""
     dates = pd.date_range(start="2023-01-01", periods=100, freq="D")
-    values = np.random.normal(loc=100, scale=10, size=100).clip(0, 200)
+    values = rng.normal(loc=100, scale=10, size=100).clip(0, 200)
     return pd.Series(values, index=dates)
 
 
@@ -38,7 +41,7 @@ def sample_series():
 def series_with_missing():
     """Fixture for a time series with missing values."""
     dates = pd.date_range(start="2023-01-01", periods=100, freq="D")
-    values = np.random.normal(loc=100, scale=10, size=100).clip(0, 200)
+    values = rng.normal(loc=100, scale=10, size=100).clip(0, 200)
     series = pd.Series(values, index=dates)
     series.iloc[10:20] = np.nan
     series.iloc[50:55] = np.nan
@@ -49,11 +52,11 @@ def series_with_missing():
 def series_with_duplicates():
     """Fixture for a time series with duplicate timestamps."""
     dates = pd.date_range(start="2023-01-01", periods=100, freq="D")
-    values = np.random.normal(loc=100, scale=10, size=100).clip(0, 200)
+    values = rng.normal(loc=100, scale=10, size=100).clip(0, 200)
     series = pd.Series(values, index=dates)
     # Add duplicates
     duplicate_dates = pd.date_range(start="2023-01-10", periods=5, freq="D")
-    duplicate_values = np.random.normal(loc=100, scale=10, size=5).clip(0, 200)
+    duplicate_values = rng.normal(loc=100, scale=10, size=5).clip(0, 200)
     duplicate_series = pd.Series(duplicate_values, index=duplicate_dates)
     return pd.concat([series, duplicate_series])
 
@@ -62,7 +65,7 @@ def series_with_duplicates():
 def series_with_outliers():
     """Fixture for a time series with outliers."""
     dates = pd.date_range(start="2023-01-01", periods=100, freq="D")
-    values = np.random.normal(loc=100, scale=10, size=100).clip(0, 200)
+    values = rng.normal(loc=100, scale=10, size=100).clip(0, 200)
     series = pd.Series(values, index=dates)
     # Add outliers
     series.iloc[10] = 500
@@ -87,7 +90,7 @@ def irregular_series():
             "2023-01-15",
         ]
     )
-    values = np.random.normal(loc=100, scale=10, size=10).clip(0, 200)
+    values = rng.normal(loc=100, scale=10, size=10).clip(0, 200)
     return pd.Series(values, index=dates)
 
 

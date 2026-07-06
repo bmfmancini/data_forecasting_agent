@@ -26,12 +26,11 @@ logger = get_logger(__name__)
 
 
 def _calculate_metrics(
-    train: pd.Series, test: pd.Series, model
+    test: pd.Series, model
 ) -> tuple[float, float, float]:
     """Calculate RMSE, MAE, and MAPE for the given model and test data.
 
     Args:
-        train: Training data.
         test: Test data.
         model: Trained ARIMA model.
 
@@ -105,7 +104,7 @@ def fit_arima(series: pd.Series, forecast_horizon: int) -> dict:
                 suppress_warnings=True,
                 information_criterion="aic",
             )
-            rmse, mae, mape = _calculate_metrics(train, test, train_model)
+            rmse, mae, mape = _calculate_metrics(test, train_model)
         except Exception as exc:
             logger.warning("ARIMA training failed: %s", exc)
 

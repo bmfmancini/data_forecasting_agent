@@ -191,7 +191,6 @@ def llm_health_endpoint() -> dict[str, Any]:
     """
     return llm_health()
 
-
 async def _check_ollama_reachable() -> bool:
     """Return whether the configured Ollama endpoint responds.
 
