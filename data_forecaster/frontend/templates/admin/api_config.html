@@ -45,6 +45,11 @@
                         <small class="text-muted">Leave blank to keep existing credentials. Enter both username and key to update.</small>
                     </div>
                     <div class="mb-3">{{ form.timeout.label(class="form-label") }}{{ form.timeout(class="form-control") }}</div>
+                    <div class="mb-3 form-check">
+                        {{ form.verify_ssl(class="form-check-input") }}
+                        {{ form.verify_ssl.label(class="form-check-label") }}
+                        <small class="text-muted d-block">Uncheck when the backend uses a self-signed certificate.</small>
+                    </div>
                     <div class="d-flex justify-content-between">
                         <button type="button" id="btn-test-conn" class="btn btn-outline-info btn-sm">Test Connection</button>
                         {{ form.submit(class="btn btn-primary btn-sm") }}

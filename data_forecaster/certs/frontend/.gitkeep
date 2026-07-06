@@ -1,0 +1,3 @@
+# Self-signed certificates are auto-generated here by the nginx entrypoint
+# on first boot.  Place your own server.crt and server.key here to use a
+# CA-trusted certificate instead.  Existing files are never overwritten.

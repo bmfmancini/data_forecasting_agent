@@ -1,0 +1,38 @@
+version: "3.9"
+
+# Distributed deployment — frontend host override.
+#
+# Apply this file on top of docker-compose.yml on the frontend machine to
+# remove the local backend and nginx-backend services and point the
+# frontend at a remote backend over HTTPS.
+#
+#   docker-compose -f docker-compose.yml -f docker-compose.distributed.yml up -d --build
+#
+# Set REMOTE_BACKEND_URL and API_VERIFY_SSL in .env before starting.
+
+services:
+  backend:
+    # Remove the backend service from this host.
+    profiles:
+      - donotstart
+    image: alpine:3.19
+    command: ["echo", "backend runs on a separate host"]
+    healthcheck:
+      test: ["NONE"]
+
+  nginx-backend:
+    # Remove the backend nginx proxy from this host.
+    profiles:
+      - donotstart
+    image: alpine:3.19
+    command: ["echo", "nginx-backend runs on a separate host"]
+    healthcheck:
+      test: ["NONE"]
+
+  frontend:
+    environment:
+      - FLASK_ENV=production
+      - BACKEND_URL=${REMOTE_BACKEND_URL:-https://api.example.com:8443}
+      - API_VERIFY_SSL=${API_VERIFY_SSL:-true}
+      - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
+    depends_on: []

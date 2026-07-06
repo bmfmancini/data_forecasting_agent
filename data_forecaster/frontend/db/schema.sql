@@ -27,5 +27,6 @@ CREATE TABLE IF NOT EXISTS api_credentials (
     encrypted_password TEXT,
     base_url           TEXT    NOT NULL,
     timeout            INTEGER NOT NULL DEFAULT 30,
+    verify_ssl         INTEGER NOT NULL DEFAULT 0,
     created_at         TEXT    NOT NULL DEFAULT (datetime('now'))
 );

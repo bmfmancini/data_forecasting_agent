@@ -1,0 +1,23 @@
+# Nginx reverse proxy with TLS termination and automatic self-signed
+# certificate generation.  Used for both the frontend and backend services;
+# the role is selected via the NGINX_ROLE environment variable.
+
+FROM nginx:1.27-alpine
+
+# openssl for cert generation; gettext provides envsubst.
+RUN apk add --no-cache openssl gettext
+
+# Copy templates and entrypoint.
+COPY nginx/conf.d/frontend.conf.template      /templates/frontend.conf.template
+COPY nginx/conf.d/frontend-http.conf.template  /templates/frontend-http.conf.template
+COPY nginx/conf.d/backend.conf.template        /templates/backend.conf.template
+COPY nginx/entrypoint.sh                       /docker-entrypoint-nginx-custom.sh
+
+RUN chmod +x /docker-entrypoint-nginx-custom.sh
+
+# Default role; overridden per-service in docker-compose.
+ENV NGINX_ROLE=frontend
+
+EXPOSE 80 443 8443
+
+ENTRYPOINT ["/docker-entrypoint-nginx-custom.sh"]

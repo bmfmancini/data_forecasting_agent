@@ -1,0 +1,10 @@
+# Prevent the local SQLite DB and sessions from being baked into the
+# Docker image.  The DB is created at runtime by init_db().
+instance/
+__pycache__/
+*.pyc
+.mypy_cache/
+.pytest_cache/
+.venv/
+venv/
+.env

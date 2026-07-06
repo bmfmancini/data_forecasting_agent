@@ -328,13 +328,14 @@ def api_config() -> str | Response:
     form = APIConfigForm()
 
     current_row = query_db(
-        "SELECT base_url, timeout FROM api_credentials WHERE label = 'default' LIMIT 1",
+        "SELECT base_url, timeout, verify_ssl FROM api_credentials WHERE label = 'default' LIMIT 1",
         one=True,
     )
 
     if request.method == "GET" and current_row and isinstance(current_row, dict):
         form.base_url.data = str(current_row.get("base_url", ""))
         form.timeout.data = int(current_row.get("timeout", 30))
+        form.verify_ssl.data = bool(current_row.get("verify_ssl", 0))
 
     # Query backend auth status for the template
     auth_status: dict[str, Any] = {"auth_enabled": False, "has_users": False}
@@ -353,6 +354,7 @@ def api_config() -> str | Response:
         api_username: str = str(form.api_username.data or "").strip()
         api_password: str = str(form.api_password.data or "").strip()
         timeout: int = int(form.timeout.data or 30)
+        verify_ssl: int = 1 if form.verify_ssl.data else 0
 
         # Only update credentials when the admin provides new values.
         # PasswordField doesn't pre-populate from stored data, so leaving
@@ -376,31 +378,36 @@ def api_config() -> str | Response:
             execute_db(
                 """
                 INSERT INTO api_credentials
-                    (label, base_url, encrypted_username, encrypted_password, timeout)
-                VALUES ('default', ?, ?, ?, ?)
+                    (label, base_url, encrypted_username, encrypted_password,
+                     timeout, verify_ssl)
+                VALUES ('default', ?, ?, ?, ?, ?)
                 ON CONFLICT(label) DO UPDATE SET
                     base_url           = excluded.base_url,
                     encrypted_username = excluded.encrypted_username,
                     encrypted_password = excluded.encrypted_password,
-                    timeout            = excluded.timeout
+                    timeout            = excluded.timeout,
+                    verify_ssl         = excluded.verify_ssl
                 """,
-                (base_url, enc_user, enc_pass, timeout),
+                (base_url, enc_user, enc_pass, timeout, verify_ssl),
             )
         else:
-            # No new credentials provided — update URL and timeout only,
-            # preserving the existing encrypted credentials.
+            # No new credentials provided — update URL, timeout, and
+            # verify_ssl only, preserving the existing encrypted credentials.
             execute_db(
                 """
                 INSERT INTO api_credentials
-                    (label, base_url, encrypted_username, encrypted_password, timeout)
-                VALUES ('default', ?, NULL, NULL, ?)
+                    (label, base_url, encrypted_username, encrypted_password,
+                     timeout, verify_ssl)
+                VALUES ('default', ?, NULL, NULL, ?, ?)
                 ON CONFLICT(label) DO UPDATE SET
-                    base_url = excluded.base_url,
-                    timeout  = excluded.timeout
+                    base_url   = excluded.base_url,
+                    timeout    = excluded.timeout,
+                    verify_ssl = excluded.verify_ssl
                 """,
-                (base_url, timeout),
+                (base_url, timeout, verify_ssl),
             )
         current_app.config["BACKEND_URL"] = base_url
+        current_app.config["API_VERIFY_SSL"] = bool(verify_ssl)
         flash("API configuration saved.", "success")
         return redirect(url_for("admin.api_config"))
 
