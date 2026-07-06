@@ -6,6 +6,8 @@ Provides ``/auth/login`` and ``/auth/logout``.
 
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 from flask import flash, redirect, render_template, request, session, url_for
 from flask_login import current_user, login_required, login_user, logout_user
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -70,8 +72,15 @@ def login() -> str | Response:
                 )
                 return redirect(url_for("auth.change_password"))
             next_page: str = request.args.get("next", "")
-            if next_page and next_page.startswith("/"):
-                return redirect(next_page)
+            normalized_next = next_page.replace("\\", "/")
+            parsed_next = urlparse(normalized_next)
+            if (
+                normalized_next
+                and normalized_next.startswith("/")
+                and not parsed_next.scheme
+                and not parsed_next.netloc
+            ):
+                return redirect(normalized_next)
             return redirect(url_for("main.index"))
 
         flash("Invalid username or password.", "danger")
