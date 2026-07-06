@@ -85,6 +85,7 @@ class APIConfigForm(FlaskForm):  # type: ignore[misc]
         api_username:      Optional HTTP Basic Auth username.
         api_password:      Optional HTTP Basic Auth password.
         timeout:           Request timeout in seconds.
+        verify_ssl:        Whether to verify the backend TLS certificate.
         submit:            Submission button.
     """
 
@@ -104,6 +105,10 @@ class APIConfigForm(FlaskForm):  # type: ignore[misc]
         "Timeout (seconds)",
         default=30,
         validators=[DataRequired(), NumberRange(min=1, max=300)],
+    )
+    verify_ssl = BooleanField(
+        "Verify backend SSL certificate",
+        default=False,
     )
     submit = SubmitField("Save Configuration")
 

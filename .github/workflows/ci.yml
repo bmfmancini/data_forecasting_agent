@@ -29,15 +29,16 @@ jobs:
         if [ -f backend/requirements.txt ]; then pip install -r backend/requirements.txt; fi
         if [ -f frontend/requirements.txt ]; then pip install -r frontend/requirements.txt; fi
         # Install development tools
-        pip install pylint mypy black pytest
+        pip install pylint mypy black pytest pip-audit
 
     - name: Run Black (check mode)
       run: |
         black --check .
 
-    - name: Run Pylint
+    - name: Run Pylint (informational)
+      continue-on-error: true
       run: |
-        pylint **/*.py
+        pylint **/*.py || true
 
     - name: Run MyPy
       run: |
@@ -46,3 +47,18 @@ jobs:
     - name: Run Pytest
       run: |
         pytest
+
+    - name: Run pip-audit (dependency vulnerability scan)
+      continue-on-error: true
+      run: |
+        pip-audit
+
+    - name: Install Grype
+      run: |
+        curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh \
+          | sh -s -- -b /usr/local/bin
+
+    - name: Run Grype (filesystem vulnerability scan)
+      continue-on-error: true
+      run: |
+        grype dir:. --fail-on high

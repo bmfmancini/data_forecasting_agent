@@ -58,9 +58,21 @@ ADMIN_API_KEY: str | None = os.getenv("ADMIN_API_KEY")
 # DB (if no credentials are stored yet).  This eliminates the need to
 # scrape bootstrap keys from container logs.
 #
+# Defaults to ``frontend``/``frontend`` so the stack works out-of-the-box
+# for demos and onboarding.  The admin MUST rotate this key for production
+# via the admin panel and update the stored frontend credentials.
+#
 # Generate with: python -c "import secrets; print(secrets.token_urlsafe(32))"
-FRONTEND_API_USERNAME: str | None = os.getenv("FRONTEND_API_USERNAME")
-FRONTEND_API_KEY: str | None = os.getenv("FRONTEND_API_KEY")
+FRONTEND_API_USERNAME: str = os.getenv("FRONTEND_API_USERNAME", "frontend")
+FRONTEND_API_KEY: str = os.getenv("FRONTEND_API_KEY", "frontend")
+
+# Comma-separated list of origins allowed by CORS.  Defaults cover the
+# local development and single-machine Docker deployments.  Add the
+# frontend's public HTTPS URL here for distributed deployments.
+CORS_ALLOWED_ORIGINS: list[str] = os.getenv(
+    "CORS_ALLOWED_ORIGINS",
+    "http://localhost:5000,http://frontend:5000,https://localhost,https://localhost:443",
+).split(",")
 
 
 def set_api_key_enabled(enabled: bool) -> None:

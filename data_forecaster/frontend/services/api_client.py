@@ -30,6 +30,9 @@ class BackendAPIClient:
         api_username:  Optional username for the ``X-API-Username`` header.
         api_key:       Optional API key for the ``X-API-Key`` header.
                        Pass ``None`` when the backend does not require authentication.
+        verify:        Whether to verify the backend's TLS certificate.
+                       Set to ``False`` when the backend uses a self-signed
+                       certificate.  Defaults to ``True``.
     """
 
     def __init__(
@@ -37,10 +40,12 @@ class BackendAPIClient:
         base_url: str,
         api_username: str | None = None,
         api_key: str | None = None,
+        verify: bool = True,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._api_username = api_username
         self._api_key = api_key
+        self._verify = verify
 
     def _auth_headers(self) -> dict[str, str]:
         """Return authentication headers when credentials are configured.
@@ -91,6 +96,7 @@ class BackendAPIClient:
             files={"file": (filename, content, content_type)},
             headers=self._headers(),
             timeout=UPLOAD_TIMEOUT,
+            verify=self._verify,
         )
 
     def get_preflight(
@@ -121,6 +127,7 @@ class BackendAPIClient:
             },
             headers=self._headers(),
             timeout=PREFLIGHT_TIMEOUT,
+            verify=self._verify,
         )
 
     def submit_analysis(self, payload: dict[str, Any]) -> requests.Response:
@@ -140,6 +147,7 @@ class BackendAPIClient:
             json=payload,
             headers=self._headers(),
             timeout=ANALYSIS_TIMEOUT,
+            verify=self._verify,
         )
 
     def get_job_status(self, job_id: str) -> requests.Response:
@@ -158,6 +166,7 @@ class BackendAPIClient:
             f"{self._base_url}/jobs/{job_id}",
             headers=self._headers(),
             timeout=JOB_STATUS_TIMEOUT,
+            verify=self._verify,
         )
 
     def get_job_status_lightweight(self, job_id: str) -> requests.Response:
@@ -179,6 +188,7 @@ class BackendAPIClient:
             f"{self._base_url}/jobs/{job_id}/status",
             headers=self._headers(),
             timeout=JOB_STATUS_TIMEOUT,
+            verify=self._verify,
         )
 
     def get_job_results(self, job_id: str) -> requests.Response:
@@ -197,6 +207,7 @@ class BackendAPIClient:
             f"{self._base_url}/jobs/{job_id}",
             headers=self._headers(),
             timeout=JOB_STATUS_TIMEOUT,
+            verify=self._verify,
         )
 
     def send_chat(
@@ -222,6 +233,7 @@ class BackendAPIClient:
             json=payload,
             headers=self._headers(),
             timeout=CHAT_TIMEOUT,
+            verify=self._verify,
         )
 
     def health_check(self) -> requests.Response:
@@ -234,6 +246,7 @@ class BackendAPIClient:
             f"{self._base_url}/health",
             headers=self._headers(),
             timeout=5,
+            verify=self._verify,
         )
 
     # ── API User Management ───────────────────────────────────────────────
@@ -248,6 +261,7 @@ class BackendAPIClient:
             f"{self._base_url}/api-users",
             headers=self._headers(),
             timeout=JOB_STATUS_TIMEOUT,
+            verify=self._verify,
         )
 
     def create_api_user(self, username: str, description: str) -> requests.Response:
@@ -265,6 +279,7 @@ class BackendAPIClient:
             json={"username": username, "description": description},
             headers=self._headers(),
             timeout=ANALYSIS_TIMEOUT,
+            verify=self._verify,
         )
 
     def rotate_api_key(self, user_id: int) -> requests.Response:
@@ -280,6 +295,7 @@ class BackendAPIClient:
             f"{self._base_url}/api-users/{user_id}/rotate",
             headers=self._headers(),
             timeout=ANALYSIS_TIMEOUT,
+            verify=self._verify,
         )
 
     def toggle_api_user(self, user_id: int, enabled: bool) -> requests.Response:
@@ -297,6 +313,7 @@ class BackendAPIClient:
             json={"enabled": enabled},
             headers=self._headers(),
             timeout=ANALYSIS_TIMEOUT,
+            verify=self._verify,
         )
 
     def delete_api_user(self, user_id: int) -> requests.Response:
@@ -312,6 +329,7 @@ class BackendAPIClient:
             f"{self._base_url}/api-users/{user_id}",
             headers=self._headers(),
             timeout=ANALYSIS_TIMEOUT,
+            verify=self._verify,
         )
 
     def bootstrap_status(self) -> requests.Response:
@@ -325,6 +343,7 @@ class BackendAPIClient:
             f"{self._base_url}/api-users/bootstrap-status",
             headers=self._headers(),
             timeout=JOB_STATUS_TIMEOUT,
+            verify=self._verify,
         )
 
     def get_auth_status(self) -> requests.Response:
@@ -339,6 +358,7 @@ class BackendAPIClient:
         return requests.get(
             f"{self._base_url}/auth-status",
             timeout=JOB_STATUS_TIMEOUT,
+            verify=self._verify,
         )
 
     def bootstrap_api_user(
@@ -363,6 +383,7 @@ class BackendAPIClient:
             json={"username": username, "api_key": api_key},
             headers={"X-Admin-Key": admin_key},
             timeout=ANALYSIS_TIMEOUT,
+            verify=self._verify,
         )
 
 
@@ -374,18 +395,24 @@ def get_api_client() -> BackendAPIClient:
     stored the client is returned without authentication headers, preserving
     backward compatibility with an unauthenticated backend (Phase 1).
 
+    SSL verification is controlled by the ``API_VERIFY_SSL`` config setting
+    (env var, default ``true``).  When the ``api_credentials`` row has a
+    ``verify_ssl`` column, its value overrides the env var — mirroring the
+    existing ``base_url`` precedence logic.
+
     Returns:
         A configured :class:`BackendAPIClient` instance.
     """
     from db.db import query_db
 
     base_url: str = current_app.config.get("BACKEND_URL", "http://localhost:8000")
+    verify_ssl: bool = current_app.config.get("API_VERIFY_SSL", False)
     api_username: str | None = None
     api_key: str | None = None
 
     row = query_db(
         """
-        SELECT base_url, encrypted_username, encrypted_password
+        SELECT base_url, encrypted_username, encrypted_password, verify_ssl
         FROM api_credentials
         WHERE label = 'default'
         LIMIT 1
@@ -399,6 +426,11 @@ def get_api_client() -> BackendAPIClient:
         stored_url = row.get("base_url", "")
         if stored_url and base_url == "http://localhost:8000":
             base_url = str(stored_url)
+
+        # DB verify_ssl overrides env var when the column is present.
+        db_verify = row.get("verify_ssl")
+        if db_verify is not None:
+            verify_ssl = bool(db_verify)
 
         enc_user = row.get("encrypted_username")
         enc_pass = row.get("encrypted_password")
@@ -416,4 +448,5 @@ def get_api_client() -> BackendAPIClient:
         base_url=base_url,
         api_username=api_username,
         api_key=api_key,
+        verify=verify_ssl,
     )

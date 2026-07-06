@@ -87,11 +87,18 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
                 "Frontend API user '%s' auto-created from env vars — auth enabled.",
                 settings.FRONTEND_API_USERNAME,
             )
-            logger.warning(
-                "The initial API key was sourced from the FRONTEND_API_KEY env "
-                "var.  For production security, rotate this key via the admin "
-                "panel and update the stored frontend credentials."
-            )
+            if settings.FRONTEND_API_KEY == "frontend":
+                logger.warning(
+                    "SECURITY: The frontend API key is the default 'frontend'. "
+                    "Rotate it via the admin panel and update the stored "
+                    "frontend credentials before production use."
+                )
+            else:
+                logger.warning(
+                    "The initial API key was sourced from the FRONTEND_API_KEY "
+                    "env var.  For production security, rotate this key via the "
+                    "admin panel and update the stored frontend credentials."
+                )
         except ValueError as exc:
             logger.warning("Failed to auto-create frontend API user: %s", exc)
             logger.info("No API users — auth disabled (open mode).")
@@ -101,14 +108,19 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     worker_task = asyncio.create_task(job_worker())
     yield
     worker_task.cancel()
-    await worker_task
+    try:
+        await worker_task
+    except asyncio.CancelledError:
+        # Expected during shutdown — the worker blocks on JOB_QUEUE.get()
+        # and is cancelled when the app is stopping.
+        pass
 
 
 app = FastAPI(title="Data Forecaster API", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5000", "http://frontend:5000"],
+    allow_origins=settings.CORS_ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "DELETE"],
     allow_headers=[

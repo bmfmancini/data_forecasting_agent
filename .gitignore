@@ -218,5 +218,6 @@ __marimo__/
 .streamlit/secrets.toml
 graphify-out/
 *.db
-*.md
 api_keys.db
+.vscode/settings.json
+review.md
