@@ -221,3 +221,5 @@ graphify-out/
 api_keys.db
 .vscode/settings.json
 review.md
+*.crt
+*.key
