@@ -77,17 +77,6 @@ class ProductionConfig(BaseConfig):
     DEBUG: bool = False
     TESTING: bool = False
 
-    def __init__(self) -> None:
-        super().__init__()
-        if (
-            self.FRONTEND_API_USERNAME == "frontend"
-            and self.FRONTEND_API_KEY == "frontend"
-        ):
-            raise ValueError(
-                "Default FRONTEND_API_USERNAME and FRONTEND_API_KEY values are not allowed in production. "
-                "Please set these values in the environment."
-            )
-
     SESSION_COOKIE_SECURE: bool = True
     SESSION_COOKIE_HTTPONLY: bool = True
     SESSION_COOKIE_SAMESITE: str = "Lax"
@@ -95,7 +84,11 @@ class ProductionConfig(BaseConfig):
     SECRET_KEY: str = os.environ.get("SECRET_KEY", "")
 
     def __init__(self) -> None:
-        """Raise when ``SECRET_KEY`` is absent in production."""
+        """Raise when ``SECRET_KEY`` is absent in production.
+
+        Raises:
+            RuntimeError: When ``SECRET_KEY`` is not set in the environment.
+        """
         if not self.SECRET_KEY:
             raise RuntimeError(
                 "SECRET_KEY environment variable must be set in production."

@@ -10,7 +10,8 @@ from __future__ import annotations
 import asyncio
 import threading
 import uuid
-from typing import Any, Callable, Dict, cast
+from collections.abc import Callable
+from typing import Any, cast
 
 import core.config as settings
 from core.logging_config import get_logger
@@ -24,7 +25,7 @@ logger = get_logger(__name__)
 MAX_JOBS: int = settings.MAX_INMEMORY_JOBS
 
 # { job_id: { status, progress, step, request, result, error } }
-_job_store: Dict[str, Dict[str, Any]] = {}
+_job_store: dict[str, dict[str, Any]] = {}
 
 # Guards compound read-modify-write operations on _job_store.
 _job_store_lock = threading.Lock()

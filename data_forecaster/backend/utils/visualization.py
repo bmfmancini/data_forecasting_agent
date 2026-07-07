@@ -29,7 +29,7 @@ def plot_historical(series: pd.Series) -> dict[str, Any]:
             y=series.values.tolist(),
             mode="lines",
             name="Historical",
-            line=dict(color="#2563EB", width=2),
+            line={"color": "#2563EB", "width": 2},
         )
     )
     fig.update_layout(
@@ -54,9 +54,9 @@ def plot_stl(
         vertical_spacing=0.06,
     )
 
-    def _trace(y: list, name: str, color: str) -> go.Scatter:
+    def _trace(y: list[float], name: str, color: str) -> go.Scatter:
         return go.Scatter(
-            x=dates, y=y, mode="lines", name=name, line=dict(color=color, width=1.5)
+            x=dates, y=y, mode="lines", name=name, line={"color": color, "width": 1.5}
         )
 
     fig.add_trace(_trace(series.values.tolist(), "Observed", "#2563EB"), row=1, col=1)
@@ -123,7 +123,7 @@ def plot_forecast(series: pd.Series, forecast_result: ForecastResult) -> dict[st
             y=series.values.tolist(),
             mode="lines",
             name="Historical",
-            line=dict(color="#2563EB", width=2),
+            line={"color": "#2563EB", "width": 2},
         )
     )
 
@@ -134,7 +134,7 @@ def plot_forecast(series: pd.Series, forecast_result: ForecastResult) -> dict[st
             y=forecast_result.upper_ci + forecast_result.lower_ci[::-1],
             fill="toself",
             fillcolor="rgba(220,38,38,0.15)",
-            line=dict(color="rgba(255,255,255,0)"),
+            line={"color": "rgba(255,255,255,0)"},
             name="95% CI",
             showlegend=True,
         )
@@ -147,7 +147,7 @@ def plot_forecast(series: pd.Series, forecast_result: ForecastResult) -> dict[st
             y=forecast_result.forecast,
             mode="lines",
             name=f"Forecast ({forecast_result.model_used})",
-            line=dict(color="#DC2626", width=2, dash="dash"),
+            line={"color": "#DC2626", "width": 2, "dash": "dash"},
         )
     )
 
@@ -157,7 +157,7 @@ def plot_forecast(series: pd.Series, forecast_result: ForecastResult) -> dict[st
         xaxis_title="Date",
         yaxis_title="Value",
         template="plotly_white",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "right", "x": 1},
     )
     return _fig_to_dict(fig)
 
@@ -182,7 +182,7 @@ def plot_model_comparison(all_metrics: dict[str, dict[str, float]]) -> dict[str,
         yaxis_title="Error",
         barmode="group",
         template="plotly_white",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "right", "x": 1},
     )
     return _fig_to_dict(fig)
 
@@ -191,6 +191,17 @@ def plot_model_comparison(all_metrics: dict[str, dict[str, float]]) -> dict[str,
 
 
 def _index_to_str(series: pd.Series) -> list[str]:
+    """Convert a series index to a list of string labels.
+
+    Attempts to format ``DatetimeIndex`` values as ``YYYY-MM-DD`` strings.
+    Falls back to ``str()`` representation for non-datetime indices.
+
+    Args:
+        series: The series whose index should be stringified.
+
+    Returns:
+        A list of string labels, one per index entry.
+    """
     try:
         return series.index.strftime("%Y-%m-%d").tolist()
     except Exception:
@@ -198,4 +209,12 @@ def _index_to_str(series: pd.Series) -> list[str]:
 
 
 def _fig_to_dict(fig: go.Figure) -> dict[str, Any]:
+    """Serialise a Plotly figure to a JSON-compatible dict.
+
+    Args:
+        fig: The Plotly figure to serialise.
+
+    Returns:
+        A dict representation of the figure suitable for JSON transport.
+    """
     return json.loads(fig.to_json())

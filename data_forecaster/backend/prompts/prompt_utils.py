@@ -13,7 +13,6 @@ library) without requiring changes to every prompt file.
 from __future__ import annotations
 
 import os
-from typing import Dict
 
 from langchain_core.prompts import ChatPromptTemplate
 
@@ -36,7 +35,7 @@ def _env_int(key: str, default: int) -> int:
         return default
 
 
-TOKEN_BUDGETS: Dict[str, int] = {
+TOKEN_BUDGETS: dict[str, int] = {
     "report_generation": _env_int("REPORT_GENERATION_TOKEN_BUDGET", 800),
     "forecasting": _env_int("FORECASTING_TOKEN_BUDGET", 400),
     "data_validation": _env_int("DATA_VALIDATION_TOKEN_BUDGET", 300),

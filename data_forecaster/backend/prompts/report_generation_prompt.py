@@ -1,7 +1,10 @@
 """Prompt for the report generation agent."""
 
+from __future__ import annotations
+
 from langchain_core.prompts import ChatPromptTemplate
-from .prompt_utils import apply_token_budget, TOKEN_BUDGETS
+
+from prompts.prompt_utils import apply_token_budget
 
 REPORT_GENERATION_PROMPT = ChatPromptTemplate.from_messages(
     [

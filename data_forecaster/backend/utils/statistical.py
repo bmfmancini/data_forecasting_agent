@@ -188,9 +188,17 @@ def detect_trend(series: pd.Series) -> dict[str, Any]:
 
 
 def run_white_noise_test(series: pd.Series) -> dict[str, Any]:
-    """
-    Ljung-Box test for white noise. If p-value > 0.05, the series is likely
-    random noise and forecasting will be ineffective.
+    """Run the Ljung-Box test for white noise.
+
+    If the p-value is greater than 0.05, the series is likely random noise
+    and forecasting will be ineffective.
+
+    Args:
+        series: The time series to test.
+
+    Returns:
+        A dict with keys ``p_value`` (float), ``is_white_noise`` (bool),
+        and ``interpretation`` (str).
     """
     # Test up to 10 lags or 1/5th of series length
     lags = min(10, len(series) // 5)
@@ -214,10 +222,17 @@ def run_white_noise_test(series: pd.Series) -> dict[str, Any]:
 
 
 def check_variance_stability(series: pd.Series) -> dict[str, Any]:
-    """
-    Checks if the variance changes with the level (heteroskedasticity).
-    If the correlation between mean and std of rolling windows is high,
-    a Box-Cox transform is recommended.
+    """Check whether variance changes with the level (heteroskedasticity).
+
+    Computes the correlation between the rolling mean and rolling standard
+    deviation.  A high correlation suggests a Box-Cox transform is warranted.
+
+    Args:
+        series: The time series to check.
+
+    Returns:
+        A dict with keys ``is_unstable`` (bool), ``correlation`` (float),
+        and ``interpretation`` (str).
     """
     if len(series) < 20:
         return {
@@ -246,7 +261,16 @@ def check_variance_stability(series: pd.Series) -> dict[str, Any]:
 
 
 def apply_boxcox(series: pd.Series) -> tuple[pd.Series, float]:
-    """Applies Box-Cox transformation. Returns (transformed_series, lambda_val)."""
+    """Apply a Box-Cox transformation to stabilise variance.
+
+    Shifts the series to be strictly positive before transforming.
+
+    Args:
+        series: The time series to transform.
+
+    Returns:
+        A tuple of ``(transformed_series, lambda_value)``.
+    """
     # Ensure strictly positive
     vals = series.values + (abs(series.min()) + 1 if series.min() <= 0 else 0)
     transformed, lam = boxcox(vals)
@@ -254,18 +278,20 @@ def apply_boxcox(series: pd.Series) -> tuple[pd.Series, float]:
 
 
 def detect_change_points(
-    series: pd.Series, method: str = "cusum", threshold: float = None
+    series: pd.Series, method: str = "cusum", threshold: float | None = None
 ) -> dict[str, Any]:
-    """
-    Detects change points in a time series using various methods.
+    """Detect change points in a time series using the specified method.
 
     Args:
-        series: The time series to analyze
-        method: Change point detection method ('cusum', 'rolling_mean', or 'fft')
-        threshold: Threshold for change detection (auto-calculated if None)
+        series: The time series to analyze.
+        method: Change point detection method — ``'cusum'``,
+            ``'rolling_mean'``, or ``'fft'``.
+        threshold: Threshold for change detection.  When ``None``, a
+            method-specific default is calculated from the series.
 
     Returns:
-        dict with keys: change_points, method_used, threshold, interpretation
+        A dict with keys ``change_points`` (list), ``method_used`` (str),
+        ``threshold`` (float | None), and ``interpretation`` (str).
     """
     series = series.dropna()
     change_points = []

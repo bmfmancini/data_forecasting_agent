@@ -1,7 +1,9 @@
 """Tests for LLM token usage tracking utilities."""
 
-import sys
+from __future__ import annotations
+
 import os
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -13,7 +15,7 @@ backend_dir = os.path.join(
 )
 sys.path.insert(0, backend_dir)
 
-from utils.token_tracking import extract_token_usage, estimate_input_text
+from utils.token_tracking import extract_token_usage, estimate_input_text  # noqa: E402
 
 
 class TestExtractTokenUsage:

@@ -1,3 +1,11 @@
+"""Pydantic request/response schemas for the Data Forecaster API.
+
+Defines the data contracts exchanged between the FastAPI backend and the
+Flask frontend (or any API client).  Schemas are grouped by pipeline stage:
+upload, preflight, analysis (validation, statistical, model selection,
+forecast), chat, jobs, and API key management.
+"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -5,6 +13,8 @@ from pydantic import BaseModel, Field
 
 
 class UploadResponse(BaseModel):
+    """Response returned after a successful file upload."""
+
     file_id: str
     filename: str
     rows: int
@@ -15,6 +25,8 @@ class UploadResponse(BaseModel):
 
 
 class PreflightDecision(BaseModel):
+    """A single preflight decision the user must resolve before forecasting."""
+
     key: str
     label: str
     message: str
@@ -25,6 +37,8 @@ class PreflightDecision(BaseModel):
 
 
 class PreflightResponse(BaseModel):
+    """Result of preflight quality checks on an uploaded series."""
+
     status: str  # "ready" | "warning" | "needs_input"
     detected_frequency: str | None = None
     row_count: int
@@ -40,6 +54,8 @@ class PreflightResponse(BaseModel):
 
 
 class AnalyzeRequest(BaseModel):
+    """Request body for submitting an asynchronous analysis job."""
+
     file_id: str
     forecast_horizon: int
     date_col: str | None = None
@@ -65,6 +81,8 @@ class ChatResponse(BaseModel):
 
 
 class ValidationResult(BaseModel):
+    """Output of the data validation agent."""
+
     is_valid: bool
     row_count: int
     missing_timestamps: int
@@ -80,6 +98,8 @@ class ValidationResult(BaseModel):
 
 
 class StatisticalResult(BaseModel):
+    """Output of the statistical analysis agent."""
+
     is_stationary_adf: bool
     adf_statistic: float
     adf_p_value: float
@@ -104,6 +124,8 @@ class StatisticalResult(BaseModel):
 
 
 class ModelSelectionResult(BaseModel):
+    """Output of the model selection agent."""
+
     selected_model: str
     explanation: str
     holt_winters_rejected_reason: str | None = None
@@ -115,6 +137,8 @@ class ModelSelectionResult(BaseModel):
 
 
 class ForecastResult(BaseModel):
+    """Output of the forecasting agent for the selected model."""
+
     model_used: str
     forecast: list[float]
     lower_ci: list[float]
@@ -128,6 +152,8 @@ class ForecastResult(BaseModel):
 
 
 class AnalysisResponse(BaseModel):
+    """Complete response returned by the full 5-agent analysis pipeline."""
+
     file_id: str
     validation: ValidationResult
     statistical: StatisticalResult
@@ -148,11 +174,15 @@ class AnalysisResponse(BaseModel):
 
 
 class JobSubmitResponse(BaseModel):
+    """Response returned when an analysis job is enqueued."""
+
     job_id: str
     status: str  # "pending"
 
 
 class JobStatusResponse(BaseModel):
+    """Current status of an asynchronous analysis job."""
+
     job_id: str
     status: str  # "pending" | "running" | "done" | "error"
     progress: int  # 0–100

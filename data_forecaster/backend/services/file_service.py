@@ -14,7 +14,7 @@ from __future__ import annotations
 import os
 import threading
 import uuid
-from typing import Any, Dict
+from typing import Any
 
 import pandas as pd
 
@@ -31,7 +31,7 @@ _STORAGE_DIR: str = settings.FILE_STORAGE_DIR
 
 # In-memory metadata index: { file_id: { date_col, value_col, freq, filename } }
 # The DataFrame is NOT held here — it lives on disk.
-_file_index: Dict[str, Dict[str, Any]] = {}
+_file_index: dict[str, dict[str, Any]] = {}
 
 # Guards compound read-modify-write operations (e.g. eviction) to prevent
 # race conditions between the async event loop and background threads.
