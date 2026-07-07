@@ -45,6 +45,7 @@ jobs:
         pylint **/*.py || true
 
     - name: Run MyPy (informational)
+      continue-on-error: true
       run: |
         mypy .
 
