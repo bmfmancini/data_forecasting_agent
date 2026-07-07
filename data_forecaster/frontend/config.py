@@ -31,6 +31,16 @@ class BaseConfig:
     # The admin MUST rotate the key for production via the admin panel.
     FRONTEND_API_USERNAME: str = os.environ.get("FRONTEND_API_USERNAME", "frontend")
     FRONTEND_API_KEY: str = os.environ.get("FRONTEND_API_KEY", "frontend")
+    # Default admin login credentials for the Flask frontend.
+    # Defaults to ``admin``/``admin`` so the stack works out-of-the-box.
+    # The admin MUST set a strong password in .env at setup time and
+    # will be forced to change it on first login.
+    FRONTEND_ADMIN_USERNAME: str = os.environ.get(
+        "FRONTEND_ADMIN_USERNAME", "admin"
+    )
+    FRONTEND_ADMIN_PASSWORD: str = os.environ.get(
+        "FRONTEND_ADMIN_PASSWORD", "admin"
+    )
     DEMO_DATA_PATH: str = os.environ.get(
         "DEMO_DATA_PATH",
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "demo_data.csv"),

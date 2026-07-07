@@ -86,6 +86,12 @@ def init_db() -> None:
     Reads ``db/schema.sql`` relative to the application root, executes the
     DDL, then inserts seed rows (roles, default admin user, default API
     credential entry) only when they do not already exist.
+
+    The default admin username and password are read from
+    ``FRONTEND_ADMIN_USERNAME`` and ``FRONTEND_ADMIN_PASSWORD`` env vars
+    (documented in ``.env.example``).  The seeded admin is created with
+    ``must_change_password = 1`` so the operator is forced to rotate the
+    password on first login.
     """
     db = get_db()
 
@@ -96,14 +102,15 @@ def init_db() -> None:
     db.execute("INSERT OR IGNORE INTO roles (id, name) VALUES (1, 'admin')")
     db.execute("INSERT OR IGNORE INTO roles (id, name) VALUES (2, 'user')")
 
-    admin_hash = generate_password_hash("admin")
+    admin_username = current_app.config["FRONTEND_ADMIN_USERNAME"]
+    admin_hash = generate_password_hash(current_app.config["FRONTEND_ADMIN_PASSWORD"])
     db.execute(
         """
         INSERT OR IGNORE INTO users
             (username, password_hash, role_id, active, must_change_password)
         VALUES (?, ?, 1, 1, 1)
         """,
-        ("admin", admin_hash),
+        (admin_username, admin_hash),
     )
 
     backend_url = current_app.config.get("BACKEND_URL", "http://localhost:8000")
