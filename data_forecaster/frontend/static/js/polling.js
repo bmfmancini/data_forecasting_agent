@@ -21,8 +21,21 @@
   function updateProgress(progress, stepText) {
     var bar = document.getElementById("progress-bar");
     var text = document.getElementById("progress-text");
-    if (bar) bar.style.width = progress + "%";
-    if (text) text.textContent = stepText + " (" + progress + "%)";
+    if (bar) {
+      bar.style.width = progress + "%";
+      bar.classList.add("active-polling");
+    }
+    if (text) text.innerHTML = '<span class="job-status-dot"></span>' + stepText + " (" + progress + "%)";
+
+    // Also update the main progress bar on the setup page
+    var mainBar = document.getElementById("progress-bar-main");
+    var mainStep = document.getElementById("progress-step");
+    if (mainBar) {
+      mainBar.style.width = progress + "%";
+      mainBar.textContent = progress + "%";
+      mainBar.classList.add("active-polling");
+    }
+    if (mainStep) mainStep.textContent = stepText;
   }
 
   /**
@@ -98,6 +111,9 @@
       clearInterval(_intervalId);
       _intervalId = null;
     }
+    // Remove animated stripes when done
+    var bars = document.querySelectorAll(".progress-bar.active-polling");
+    bars.forEach(function (b) { b.classList.remove("active-polling"); });
   }
 
   /** Auto-start polling when the page loads if a job is already running. */

@@ -144,20 +144,28 @@
       var chartType = el.dataset.chartType || "plotly";
       if (!rawChart) return;
 
+      // Show loading shimmer while parsing/plotting
+      el.classList.add("is-loading");
+
       var parsed;
       try {
         parsed = JSON.parse(rawChart);
       } catch (e) {
+        el.classList.remove("is-loading");
         return;
       }
 
-      if (chartType === "pie") {
-        renderPie(el, parsed);
-      } else if (chartType === "dynamic") {
-        renderDynamic(el, parsed);
-      } else {
-        renderPlotly(el, parsed);
-      }
+      // Use rAF so the shimmer paints before Plotly blocks
+      requestAnimationFrame(function () {
+        if (chartType === "pie") {
+          renderPie(el, parsed);
+        } else if (chartType === "dynamic") {
+          renderDynamic(el, parsed);
+        } else {
+          renderPlotly(el, parsed);
+        }
+        el.classList.remove("is-loading");
+      });
     });
   }
 

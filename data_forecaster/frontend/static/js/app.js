@@ -454,12 +454,61 @@
     }
   }
 
+  /**
+   * Advance the setup stepper to a given step number.
+   *
+   * Marks all steps before ``stepNum`` as completed and the current step
+   * as active.  Steps after ``stepNum`` are reset to their default state.
+   *
+   * @param {number} stepNum  The step to activate (1-based).
+   */
+  function advanceStepper(stepNum) {
+    var steps = document.querySelectorAll("#setup-stepper .stepper-step");
+    steps.forEach(function (step) {
+      var num = parseInt(step.dataset.step, 10);
+      step.classList.remove("active", "completed");
+      if (num < stepNum) {
+        step.classList.add("completed");
+      } else if (num === stepNum) {
+        step.classList.add("active");
+      }
+    });
+  }
+
+  /** Wire up stepper advancement based on upload/column/preflight events. */
+  function initStepper() {
+    var stepper = document.getElementById("setup-stepper");
+    if (!stepper) return;
+
+    // Step 1 → 2: when columns are populated (upload complete)
+    var origPopulate = populateColumnSelectors;
+    populateColumnSelectors = function (info) {
+      origPopulate(info);
+      advanceStepper(2);
+    };
+
+    // Step 2 → 3: when preflight runs
+    var origPreflight = triggerPreflight;
+    triggerPreflight = function () {
+      origPreflight();
+      advanceStepper(3);
+    };
+
+    // Step 3 → 4: when controls are enabled (after preflight)
+    var origEnable = enableControls;
+    enableControls = function () {
+      origEnable();
+      advanceStepper(4);
+    };
+  }
+
   function init() {
     // Only run initializers if the relevant elements are on the page
     if (document.getElementById('inp-horizon')) initHorizonSlider();
     if (document.getElementById('file-input')) initFileInput();
     if (document.getElementById('sel-date')) initColumnSelectors();
     if (document.getElementById('btn-run')) initRunButton();
+    if (document.getElementById('setup-stepper')) initStepper();
   }
 
   document.addEventListener("DOMContentLoaded", init);
