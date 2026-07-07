@@ -149,6 +149,19 @@ def sarima_model_selection() -> ModelSelectionResult:
 
 
 @pytest.fixture
+def holt_winters_model_selection() -> ModelSelectionResult:
+    """Model selection that chose Holt-Winters."""
+    return ModelSelectionResult(
+        selected_model="Holt-Winters",
+        explanation="Holt-Winters selected for seasonal trend data.",
+        holt_winters_rejected_reason=None,
+        arima_rejected_reason="Ignores seasonality.",
+        sarima_rejected_reason="Overkill.",
+        ewma_rejected_reason="Too simple.",
+    )
+
+
+@pytest.fixture
 def good_forecast_result() -> ForecastResult:
     """A forecast result with low error."""
     return ForecastResult(
@@ -244,10 +257,14 @@ class TestDeterministicPreCheck:
         seasonal_stat_result: StatisticalResult,
         arima_model_selection: ModelSelectionResult,
         good_forecast_result: ForecastResult,
+        all_metrics: dict[str, dict[str, float]],
     ) -> None:
         """Seasonal period > 1 + ARIMA selected should flag critical."""
         flags = _deterministic_pre_check(
-            seasonal_stat_result, arima_model_selection, good_forecast_result
+            seasonal_stat_result,
+            arima_model_selection,
+            good_forecast_result,
+            all_metrics,
         )
         critical_flags = [
             f for f in flags if f["severity"] == "critical"
@@ -262,10 +279,14 @@ class TestDeterministicPreCheck:
         seasonal_stat_result: StatisticalResult,
         sarima_model_selection: ModelSelectionResult,
         good_forecast_result: ForecastResult,
+        all_metrics: dict[str, dict[str, float]],
     ) -> None:
         """SARIMA with seasonality should not flag seasonality mismatch."""
         flags = _deterministic_pre_check(
-            seasonal_stat_result, sarima_model_selection, good_forecast_result
+            seasonal_stat_result,
+            sarima_model_selection,
+            good_forecast_result,
+            all_metrics,
         )
         assert not any("seasonal" in f["issue"].lower() for f in flags)
 
@@ -274,10 +295,14 @@ class TestDeterministicPreCheck:
         clean_stat_result: StatisticalResult,
         arima_model_selection: ModelSelectionResult,
         poor_forecast_result: ForecastResult,
+        all_metrics: dict[str, dict[str, float]],
     ) -> None:
         """MAPE > 20 should produce a warning flag."""
         flags = _deterministic_pre_check(
-            clean_stat_result, arima_model_selection, poor_forecast_result
+            clean_stat_result,
+            arima_model_selection,
+            poor_forecast_result,
+            all_metrics,
         )
         assert any(
             f["severity"] == "warning" and "MAPE" in f["issue"]
@@ -289,12 +314,96 @@ class TestDeterministicPreCheck:
         clean_stat_result: StatisticalResult,
         sarima_model_selection: ModelSelectionResult,
         good_forecast_result: ForecastResult,
+        all_metrics: dict[str, dict[str, float]],
     ) -> None:
         """Clean inputs with no issues should produce no flags."""
         flags = _deterministic_pre_check(
-            clean_stat_result, sarima_model_selection, good_forecast_result
+            clean_stat_result,
+            sarima_model_selection,
+            good_forecast_result,
+            all_metrics,
         )
         assert flags == []
+
+    def test_suboptimal_model_selection_flags_critical(
+        self,
+        seasonal_stat_result: StatisticalResult,
+        holt_winters_model_selection: ModelSelectionResult,
+        good_forecast_result: ForecastResult,
+        all_metrics: dict[str, dict[str, float]],
+    ) -> None:
+        """Selected model with much worse RMSE should flag critical."""
+        # all_metrics has Holt-Winters RMSE=5.0 vs SARIMA RMSE=2.0
+        # ratio = 5.0/2.0 = 2.5 > 1.5 threshold
+        flags = _deterministic_pre_check(
+            seasonal_stat_result,
+            holt_winters_model_selection,
+            good_forecast_result,
+            all_metrics,
+        )
+        suboptimal_flags = [
+            f
+            for f in flags
+            if f["severity"] == "critical"
+            and "suboptimal" in f["issue"].lower()
+        ]
+        assert len(suboptimal_flags) == 1
+        assert "SARIMA" in suboptimal_flags[0]["recommendation"]
+
+    def test_no_suboptimal_flag_when_best_model_selected(
+        self,
+        seasonal_stat_result: StatisticalResult,
+        sarima_model_selection: ModelSelectionResult,
+        good_forecast_result: ForecastResult,
+        all_metrics: dict[str, dict[str, float]],
+    ) -> None:
+        """No suboptimal flag when the best RMSE model is selected."""
+        # SARIMA has the best RMSE (2.0) in all_metrics
+        flags = _deterministic_pre_check(
+            seasonal_stat_result,
+            sarima_model_selection,
+            good_forecast_result,
+            all_metrics,
+        )
+        assert not any(
+            "suboptimal" in f["issue"].lower() for f in flags
+        )
+
+    def test_explanation_selected_model_mismatch_flags_critical(
+        self,
+        seasonal_stat_result: StatisticalResult,
+        good_forecast_result: ForecastResult,
+        all_metrics: dict[str, dict[str, float]],
+    ) -> None:
+        """Explanation mentioning a different model should flag critical."""
+        # Simulate the real-world bug: LLM said Holt-Winters but parser
+        # overrode to SARIMA. The explanation still says Holt-Winters.
+        mismatched_selection = ModelSelectionResult(
+            selected_model="SARIMA",
+            explanation=(
+                "**Selected model:** Holt\u2011Winters\n\n"
+                "## Why this model was chosen\n"
+                "Holt-Winters natively incorporates seasonality."
+            ),
+            holt_winters_rejected_reason=None,
+            arima_rejected_reason="Ignores seasonality.",
+            sarima_rejected_reason="Overkill.",
+            ewma_rejected_reason="Too simple.",
+        )
+        flags = _deterministic_pre_check(
+            seasonal_stat_result,
+            mismatched_selection,
+            good_forecast_result,
+            all_metrics,
+        )
+        mismatch_flags = [
+            f
+            for f in flags
+            if f["severity"] == "critical"
+            and "mismatch" in f["issue"].lower()
+        ]
+        assert len(mismatch_flags) == 1
+        assert "Holt-Winters" in mismatch_flags[0]["issue"]
 
 
 # ── Parsing Tests ─────────────────────────────────────────────────────────────

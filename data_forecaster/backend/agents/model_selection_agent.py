@@ -200,21 +200,39 @@ def run_model_selection_agent(stat_result: StatisticalResult) -> ModelSelectionR
         ]
 
         # Parse selected model from output
+        # Normalize: strip markdown bold/italic markers and unicode hyphens
+        # so that "**Selected model:** Holt‑Winters" matches correctly.
+        normalized = output.replace("**", "").replace("__", "")
+        normalized = normalized.replace("\u2010", "-").replace("\u2011", "-")
+        normalized = normalized.replace("\u2012", "-").replace("\u2013", "-")
+        normalized = normalized.replace("\u2014", "-").replace("\u2015", "-")
+
         selected_model = fallback_model
+        exact_match_found = False
         for m in _MODELS:
             if (
-                f"Selected model: {m}" in output
-                or f"selected model: {m}" in output.lower()
+                f"Selected model: {m}" in normalized
+                or f"selected model: {m}" in normalized.lower()
             ):
                 selected_model = m
+                exact_match_found = True
                 break
-        # Broader fallback scan
-        if selected_model == fallback_model:
-            upper = output.upper()
-            for m in _MODELS:
-                if m.upper() in upper[:100]:
-                    selected_model = m
-                    break
+        # Broader fallback: look for "Selected model" line specifically
+        # rather than scanning the first 100 chars blindly (which may contain
+        # suitability text mentioning other model names).
+        # Only run if the exact match did NOT find a model.
+        if not exact_match_found:
+            for line in normalized.splitlines():
+                if "selected model" in line.lower():
+                    upper_line = line.upper()
+                    # Check longest model names first to avoid substring
+                    # matches (e.g. "ARIMA" inside "SARIMA").
+                    for m in sorted(_MODELS, key=len, reverse=True):
+                        if m.upper() in upper_line:
+                            selected_model = m
+                            break
+                    if selected_model != fallback_model:
+                        break
 
         explanation = output
         hw_rej = (

@@ -40,6 +40,7 @@ def _deterministic_pre_check(
     stat_result: StatisticalResult,
     model_selection: ModelSelectionResult,
     forecast_result: ForecastResult,
+    all_metrics: dict[str, dict[str, float]],
 ) -> list[dict[str, Any]]:
     """Run deterministic consistency checks on agent outputs.
 
@@ -47,6 +48,8 @@ def _deterministic_pre_check(
         stat_result:       Output of the statistical analysis agent.
         model_selection:   Output of the model selection agent.
         forecast_result:   Output of the forecasting agent.
+        all_metrics:       Dict of all model metrics, e.g.
+                           ``{"ARIMA": {"RMSE": x, "MAE": y, "MAPE": z}, ...}``.
 
     Returns:
         A list of flag dicts with keys ``agent``, ``severity``, ``issue``,
@@ -141,6 +144,69 @@ def _deterministic_pre_check(
                 ),
             }
         )
+
+    # ── Explanation / selected_model mismatch ─────────────────────────────────
+    # The model selection agent's explanation text may mention a different
+    # model than the parsed selected_model field (e.g. due to markdown bold
+    # or unicode hyphens confusing the parser).  This creates narrative
+    # contradictions in the report.
+    explanation_lower = model_selection.explanation.lower()
+    other_models = [m for m in ("ARIMA", "SARIMA", "Holt-Winters", "EWMA") if m != selected]
+    mentioned_models = [
+        m for m in other_models
+        if m.lower() in explanation_lower[:200]
+    ]
+    # Only flag if another model is mentioned prominently in the first 200
+    # chars of the explanation (where "Selected model:" text appears)
+    # and the selected model itself is NOT mentioned there.
+    if mentioned_models and selected.lower() not in explanation_lower[:200]:
+        flags.append(
+            {
+                "agent": "model_selection",
+                "severity": "critical",
+                "issue": (
+                    f"Model selection explanation mentions '{mentioned_models[0]}' "
+                    f"but the parsed selected_model is '{selected}'. This "
+                    f"indicates a parsing mismatch that will cause narrative "
+                    f"contradictions in the report."
+                ),
+                "recommendation": (
+                    "Re-run model selection to resolve the explanation/"
+                    "selected_model mismatch."
+                ),
+            }
+        )
+
+    # ── Suboptimal model selection ────────────────────────────────────────────
+    # If the selected model has significantly worse RMSE than the best
+    # available model, flag it as a critical model selection issue.
+    if all_metrics and selected in all_metrics:
+        selected_rmse = all_metrics[selected].get("RMSE", float("inf"))
+        best_model = min(
+            all_metrics,
+            key=lambda m: all_metrics[m].get("RMSE", float("inf")),
+        )
+        best_rmse = all_metrics[best_model].get("RMSE", float("inf"))
+        if best_model != selected and best_rmse > 0:
+            ratio = selected_rmse / best_rmse
+            if ratio > 1.5:
+                flags.append(
+                    {
+                        "agent": "model_selection",
+                        "severity": "critical",
+                        "issue": (
+                            f"Selected model '{selected}' has RMSE="
+                            f"{selected_rmse:.4f} which is {ratio:.1f}x worse "
+                            f"than the best model '{best_model}' (RMSE="
+                            f"{best_rmse:.4f}). The selected model may be "
+                            f"suboptimal."
+                        ),
+                        "recommendation": (
+                            f"Re-evaluate model selection. '{best_model}' "
+                            "achieved significantly better validation metrics."
+                        ),
+                    }
+                )
 
     return flags
 
@@ -368,7 +434,7 @@ def run_statistical_review_agent(
 
     # ── Deterministic pre-check ───────────────────────────────────────────────
     pre_check_flags = _deterministic_pre_check(
-        stat_result, model_selection, forecast_result
+        stat_result, model_selection, forecast_result, all_metrics
     )
     if pre_check_flags:
         logger.info(

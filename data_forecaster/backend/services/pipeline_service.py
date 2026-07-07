@@ -205,7 +205,7 @@ def run_pipeline(
     has_critical = any(
         f.get("severity") == "critical" for f in statistical_review.flags
     )
-    if retry_enabled and has_critical:
+    if retry_enabled and (has_critical or statistical_review.verdict == "fail"):
         logger.info(
             "Statistical review flagged critical issues — re-running model "
             "selection with review feedback."
