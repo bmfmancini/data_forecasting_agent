@@ -11,6 +11,7 @@ from core.logging_config import get_logger
 from prompts.statistical_analysis_prompt import STATISTICAL_ANALYSIS_PROMPT
 from schemas import StatisticalResult
 from utils.data_cleaning import detect_outliers_iqr, detect_outliers_zscore
+from utils.token_tracking import estimate_input_text, extract_token_usage
 from utils.statistical import (
     compute_acf_pacf,
     detect_trend,
@@ -145,10 +146,15 @@ def run_statistical_agent(
 
     recommended_remediation = []
     domain_guess = user_domain if not is_inferred else "General / Unknown"
+    token_usage: dict[str, int] = {}
     try:
         chain = prompt | llm
-        response = chain.invoke({"profile": profile})
+        inputs = {"profile": profile}
+        response = chain.invoke(inputs)
         summary = response.content
+        token_usage = extract_token_usage(
+            response, input_text=estimate_input_text(prompt, inputs)
+        )
 
         if match := re.search(r"DOMAIN:\s*([^\n\.]+)", summary, re.IGNORECASE):
             domain_guess = match.group(1).strip()
@@ -211,4 +217,5 @@ def run_statistical_agent(
         dominant_period=periodogram["dominant_period"],
         summary=summary,
         reasoning_steps=reasoning_steps,
+        token_usage=token_usage,
     )
