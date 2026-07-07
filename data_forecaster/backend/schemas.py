@@ -76,6 +76,7 @@ class ValidationResult(BaseModel):
     issues: list[str]
     summary: str
     reasoning_steps: list[dict[str, Any]] = Field(default_factory=list)
+    token_usage: dict[str, Any] = Field(default_factory=dict)
 
 
 class StatisticalResult(BaseModel):
@@ -99,6 +100,7 @@ class StatisticalResult(BaseModel):
     dominant_period: float | None = None
     summary: str
     reasoning_steps: list[dict[str, Any]] = Field(default_factory=list)
+    token_usage: dict[str, Any] = Field(default_factory=dict)
 
 
 class ModelSelectionResult(BaseModel):
@@ -109,6 +111,7 @@ class ModelSelectionResult(BaseModel):
     sarima_rejected_reason: str | None = None
     ewma_rejected_reason: str | None = None
     reasoning_steps: list[dict[str, Any]] = Field(default_factory=list)
+    token_usage: dict[str, Any] = Field(default_factory=dict)
 
 
 class ForecastResult(BaseModel):
@@ -121,6 +124,7 @@ class ForecastResult(BaseModel):
     mae: float
     mape: float
     reasoning_steps: list[dict[str, Any]] = Field(default_factory=list)
+    token_usage: dict[str, Any] = Field(default_factory=dict)
 
 
 class AnalysisResponse(BaseModel):
@@ -140,6 +144,7 @@ class AnalysisResponse(BaseModel):
     chart_acf_pacf: str  # base64 PNG
     chart_forecast: dict
     chart_model_comparison: dict
+    pipeline_token_usage: dict[str, Any] = Field(default_factory=dict)
 
 
 class JobSubmitResponse(BaseModel):

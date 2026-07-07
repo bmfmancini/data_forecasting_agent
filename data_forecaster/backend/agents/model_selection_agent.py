@@ -4,6 +4,7 @@ from core.llm_factory import get_llm
 from core.logging_config import get_logger
 from prompts.model_selection_prompt import MODEL_SELECTION_PROMPT
 from schemas import ModelSelectionResult, StatisticalResult
+from utils.token_tracking import estimate_input_text, extract_token_usage
 
 logger = get_logger(__name__)
 
@@ -176,11 +177,16 @@ def run_model_selection_agent(stat_result: StatisticalResult) -> ModelSelectionR
     llm = get_llm(temperature=0)
 
     prompt = MODEL_SELECTION_PROMPT
+    token_usage: dict[str, int] = {}
 
     try:
         chain = prompt | llm
-        response = chain.invoke({"suitability": suitability_summary})
+        inputs = {"suitability": suitability_summary}
+        response = chain.invoke(inputs)
         output = response.content
+        token_usage = extract_token_usage(
+            response, input_text=estimate_input_text(prompt, inputs)
+        )
         logger.info("Model selection agent output: %s", output[:200])
         reasoning_steps = [
             {
@@ -258,4 +264,5 @@ def run_model_selection_agent(stat_result: StatisticalResult) -> ModelSelectionR
         sarima_rejected_reason=sarima_rej,
         ewma_rejected_reason=ewma_rej,
         reasoning_steps=reasoning_steps,
+        token_usage=token_usage,
     )

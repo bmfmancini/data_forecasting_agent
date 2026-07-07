@@ -192,7 +192,7 @@ def run_pipeline(
     logger.info("Agent 5: Report Generation")
     _progress(80, "Generating report…")
     rag_kb = get_rag_kb(chroma_persist_dir)
-    report, report_reasoning, visual_strategy = run_report_agent(
+    report, report_reasoning, visual_strategy, report_token_usage = run_report_agent(
         validation_result,
         stat_result,
         model_selection,
@@ -229,6 +229,33 @@ def run_pipeline(
     chart_forecast = plot_forecast(series, forecast_result)
     chart_model_comparison = plot_model_comparison(all_metrics)
 
+    # ── Token Usage Aggregation ─────────────────────────────────────────────
+    agent_usage = {
+        "validation": validation_result.token_usage,
+        "statistical": stat_result.token_usage,
+        "model_selection": model_selection.token_usage,
+        "forecast": forecast_result.token_usage,
+        "report": report_token_usage,
+    }
+    grand_total = {
+        "input_tokens": sum(u.get("input_tokens", 0) for u in agent_usage.values()),
+        "output_tokens": sum(u.get("output_tokens", 0) for u in agent_usage.values()),
+        "total_tokens": sum(u.get("total_tokens", 0) for u in agent_usage.values()),
+    }
+    estimated = any(u.get("estimated", False) for u in agent_usage.values())
+    pipeline_token_usage = {
+        "agents": agent_usage,
+        "grand_total": grand_total,
+        "estimated": estimated,
+    }
+    logger.info(
+        "Pipeline token usage: input=%d output=%d total=%d (estimated=%s)",
+        grand_total["input_tokens"],
+        grand_total["output_tokens"],
+        grand_total["total_tokens"],
+        estimated,
+    )
+
     logger.info("Pipeline complete: file_id=%s", file_id)
     _progress(100, "Analysis complete")
 
@@ -250,6 +277,7 @@ def run_pipeline(
         chart_acf_pacf=chart_acf_pacf,
         chart_forecast=chart_forecast,
         chart_model_comparison=chart_model_comparison,
+        pipeline_token_usage=pipeline_token_usage,
     )
 
 

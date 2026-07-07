@@ -12,6 +12,7 @@ from forecasting.holt_winters import fit_holt_winters
 from forecasting.sarima_model import fit_sarima
 from prompts.forecasting_prompt import FORECASTING_PROMPT
 from schemas import ForecastResult, ModelSelectionResult, StatisticalResult
+from utils.token_tracking import estimate_input_text, extract_token_usage
 
 logger = get_logger(__name__)
 
@@ -53,11 +54,17 @@ def run_forecasting_agent(
     llm = get_llm(temperature=0)
 
     prompt = FORECASTING_PROMPT
+    token_usage: dict[str, int] = {}
 
     try:
         chain = prompt | llm
-        response = chain.invoke(
-            {"selected": model_selection.selected_model, "summary": comparison_summary}
+        inputs = {
+            "selected": model_selection.selected_model,
+            "summary": comparison_summary,
+        }
+        response = chain.invoke(inputs)
+        token_usage = extract_token_usage(
+            response, input_text=estimate_input_text(prompt, inputs)
         )
         reasoning_steps = [
             {
@@ -134,5 +141,6 @@ def run_forecasting_agent(
         mae=res["mae"],
         mape=res["mape"],
         reasoning_steps=reasoning_steps,
+        token_usage=token_usage,
     )
     return forecast_result, all_metrics

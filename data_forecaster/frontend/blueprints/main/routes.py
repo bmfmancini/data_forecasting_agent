@@ -418,7 +418,10 @@ def trace() -> str:
             "steps": result.get("report_reasoning", []),
         },
     ]
-    return render_template("main/trace.html", agents=agents)
+    token_usage: dict[str, Any] = result.get("pipeline_token_usage") or {}
+    return render_template(
+        "main/trace.html", agents=agents, token_usage=token_usage
+    )
 
 
 @main_bp.route("/report")

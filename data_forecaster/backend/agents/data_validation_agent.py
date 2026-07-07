@@ -9,6 +9,7 @@ from core.logging_config import get_logger
 from prompts.data_validation_prompt import DATA_VALIDATION_PROMPT
 from schemas import ValidationResult
 from utils.data_cleaning import audit_series, validate_schema
+from utils.token_tracking import estimate_input_text, extract_token_usage
 
 logger = get_logger(__name__)
 
@@ -121,13 +122,16 @@ def run_validation_agent(
     )
 
     prompt = DATA_VALIDATION_PROMPT
+    token_usage: dict[str, int] = {}
 
     try:
         chain = prompt | llm
-        response = chain.invoke(
-            {"report": quality_report, "ai_instruction": ai_instruction}
-        )
+        inputs = {"report": quality_report, "ai_instruction": ai_instruction}
+        response = chain.invoke(inputs)
         summary = response.content
+        token_usage = extract_token_usage(
+            response, input_text=estimate_input_text(prompt, inputs)
+        )
         reasoning_steps = [
             {
                 "thought": "Computing quality metrics in Python...",
@@ -162,4 +166,5 @@ def run_validation_agent(
         issues=issues,
         summary=summary,
         reasoning_steps=reasoning_steps,
+        token_usage=token_usage,
     )

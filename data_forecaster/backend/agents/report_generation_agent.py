@@ -13,6 +13,7 @@ from schemas import (
     StatisticalResult,
     ValidationResult,
 )
+from utils.token_tracking import estimate_input_text, extract_token_usage
 
 logger = get_logger(__name__)
 
@@ -32,7 +33,7 @@ def run_report_agent(
     rag_kb: RAGKnowledgeBase,
     user_prompt: str | None = None,
     preflight_options: dict[str, Any] | None = None,
-) -> tuple[str, list[dict[str, Any]], list[dict[str, str]]]:
+) -> tuple[str, list[dict[str, Any]], list[dict[str, str]], dict[str, int]]:
     """Use the LLM with RAG context to write a 6-section analyst report."""
 
     # ── Build analysis context string ─────────────────────────────────────────
@@ -212,20 +213,23 @@ Visual Strategy Recommendations: {visual_strategy}
     )
 
     prompt_template = REPORT_GENERATION_PROMPT
+    token_usage: dict[str, int] = {}
 
     try:
         # Invoke the LLM once with all the context needed
         chain = prompt_template | llm
-        response = chain.invoke(
-            {
-                "data_context": analysis_context,
-                "rag_context": methodology_context,
-                "ai_logic_instruction": ai_logic_instruction,
-                "extra_instructions": extra_instructions,
-                "visual_strategy": str(visual_strategy),
-            }
-        )
+        inputs = {
+            "data_context": analysis_context,
+            "rag_context": methodology_context,
+            "ai_logic_instruction": ai_logic_instruction,
+            "extra_instructions": extra_instructions,
+            "visual_strategy": str(visual_strategy),
+        }
+        response = chain.invoke(inputs)
         report = response.content
+        token_usage = extract_token_usage(
+            response, input_text=estimate_input_text(prompt_template, inputs)
+        )
         reasoning_steps.append(
             {
                 "thought": "Generating final report in a single pass...",
@@ -250,7 +254,7 @@ Visual Strategy Recommendations: {visual_strategy}
         report = _fallback_report(validation, statistical, model_selection, forecast)
 
     logger.info("Report generation complete. Length: %d chars", len(report))
-    return report, reasoning_steps, visual_strategy
+    return report, reasoning_steps, visual_strategy, token_usage
 
 
 def _fallback_report(
