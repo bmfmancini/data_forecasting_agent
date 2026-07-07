@@ -41,6 +41,7 @@ TOKEN_BUDGETS: dict[str, int] = {
     "data_validation": _env_int("DATA_VALIDATION_TOKEN_BUDGET", 300),
     "model_selection": _env_int("MODEL_SELECTION_TOKEN_BUDGET", 300),
     "statistical_analysis": _env_int("STATISTICAL_ANALYSIS_TOKEN_BUDGET", 300),
+    "statistical_review": _env_int("STATISTICAL_REVIEW_TOKEN_BUDGET", 400),
 }
 
 

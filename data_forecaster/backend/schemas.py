@@ -151,14 +151,30 @@ class ForecastResult(BaseModel):
     token_usage: dict[str, Any] = Field(default_factory=dict)
 
 
+class StatisticalReviewResult(BaseModel):
+    """Output of the statistical review (QA) agent.
+
+    A critic agent that reviews the outputs of the statistical analysis,
+    model selection, and forecasting agents for consistency and correctness.
+    """
+
+    verdict: str  # "pass" | "warn" | "fail"
+    flags: list[dict[str, Any]] = Field(default_factory=list)
+    endorsements: list[str] = Field(default_factory=list)
+    summary: str
+    reasoning_steps: list[dict[str, Any]] = Field(default_factory=list)
+    token_usage: dict[str, Any] = Field(default_factory=dict)
+
+
 class AnalysisResponse(BaseModel):
-    """Complete response returned by the full 5-agent analysis pipeline."""
+    """Complete response returned by the full analysis pipeline."""
 
     file_id: str
     validation: ValidationResult
     statistical: StatisticalResult
     model_selection: ModelSelectionResult
     forecast: ForecastResult
+    statistical_review: StatisticalReviewResult | None = None
     report: str
     report_reasoning: list[dict[str, Any]] = Field(default_factory=list)
     strategic_visual_recommendations: list[dict[str, str]] = Field(default_factory=list)
