@@ -47,7 +47,7 @@ def _reconcile_partial_usage(
         input_tokens = total_tokens - output_tokens
     elif not output_tokens and total_tokens and input_tokens:
         output_tokens = total_tokens - input_tokens
-    return input_tokens, output_tokens, total_tokens
+    return max(0, input_tokens), max(0, output_tokens), max(0, total_tokens)
 
 
 def extract_token_usage(
