@@ -19,10 +19,41 @@ logger = get_logger(__name__)
 _CHARS_PER_TOKEN: int = 4
 
 
+def _reconcile_partial_usage(
+    input_tokens: int,
+    output_tokens: int,
+    total_tokens: int,
+) -> tuple[int, int, int]:
+    """Derive a missing/zero token component from the other two values.
+
+    When at least two of the three values are present and non-zero, the
+    missing one is computed: ``total = input + output``,
+    ``input = total - output``, ``output = total - input``.
+
+    Args:
+        input_tokens: Native input token count (may be 0).
+        output_tokens: Native output token count (may be 0).
+        total_tokens: Native total token count (may be 0).
+
+    Returns:
+        A 3-tuple ``(input_tokens, output_tokens, total_tokens)`` with the
+        missing component derived when possible.
+    """
+    # If exactly one of the three values is zero/missing, derive it from
+    # the other two. If two or more are zero, nothing can be derived.
+    if not total_tokens and input_tokens and output_tokens:
+        total_tokens = input_tokens + output_tokens
+    elif not input_tokens and total_tokens and output_tokens:
+        input_tokens = total_tokens - output_tokens
+    elif not output_tokens and total_tokens and input_tokens:
+        output_tokens = total_tokens - input_tokens
+    return input_tokens, output_tokens, total_tokens
+
+
 def extract_token_usage(
     response: Any,
     input_text: str | None = None,
-) -> dict[str, int]:
+) -> dict[str, Any]:
     """Extract token usage from an LLM response, with heuristic fallback.
 
     Attempts to read native ``usage_metadata`` from the LangChain response
@@ -36,17 +67,29 @@ def extract_token_usage(
             input tokens when native metadata is unavailable.
 
     Returns:
-        A dict with integer keys ``input_tokens``, ``output_tokens``,
-        and ``total_tokens``. Values are never negative and the dict is
-        always returned (never raises).
+        A dict with keys ``input_tokens``, ``output_tokens``,
+        ``total_tokens`` (all non-negative ints), and ``estimated`` (bool).
+        ``estimated`` is ``False`` when native ``usage_metadata`` was used
+        (including zero-token native responses) and ``True`` only when the
+        heuristic fallback was used. The dict is always returned (never
+        raises).
     """
     try:
         usage = getattr(response, "usage_metadata", None)
-        if isinstance(usage, dict) and usage.get("total_tokens"):
+        if isinstance(usage, dict):
+            input_tokens = int(usage.get("input_tokens", 0) or 0)
+            output_tokens = int(usage.get("output_tokens", 0) or 0)
+            total_tokens = int(usage.get("total_tokens", 0) or 0)
+            input_tokens, output_tokens, total_tokens = (
+                _reconcile_partial_usage(
+                    input_tokens, output_tokens, total_tokens
+                )
+            )
             return {
-                "input_tokens": int(usage.get("input_tokens", 0)),
-                "output_tokens": int(usage.get("output_tokens", 0)),
-                "total_tokens": int(usage.get("total_tokens", 0)),
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "total_tokens": total_tokens,
+                "estimated": False,
             }
     except Exception as exc:  # pragma: no cover - defensive
         logger.debug("Failed to read usage_metadata: %s", exc)
@@ -71,6 +114,7 @@ def extract_token_usage(
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "total_tokens": total,
+        "estimated": True,
     }
 
 

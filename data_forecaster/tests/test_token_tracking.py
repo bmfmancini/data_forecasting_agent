@@ -34,6 +34,7 @@ class TestExtractTokenUsage:
             "input_tokens": 100,
             "output_tokens": 50,
             "total_tokens": 150,
+            "estimated": False,
         }
 
     def test_heuristic_fallback_no_metadata(self):
@@ -44,6 +45,7 @@ class TestExtractTokenUsage:
         assert result["output_tokens"] == 100
         assert result["input_tokens"] == 50
         assert result["total_tokens"] == 150
+        assert result["estimated"] is True
 
     def test_heuristic_fallback_no_input_text(self):
         """Test heuristic fallback without input_text."""
@@ -53,6 +55,7 @@ class TestExtractTokenUsage:
         assert result["output_tokens"] == 20
         assert result["input_tokens"] == 0
         assert result["total_tokens"] == 20
+        assert result["estimated"] is True
 
     def test_empty_content_no_metadata(self):
         """Test that empty content with no metadata returns zeros."""
@@ -61,6 +64,7 @@ class TestExtractTokenUsage:
         assert result["output_tokens"] == 0
         assert result["input_tokens"] == 0
         assert result["total_tokens"] == 0
+        assert result["estimated"] is True
 
     def test_none_response_does_not_raise(self):
         """Test that None response does not raise an exception."""
@@ -68,12 +72,14 @@ class TestExtractTokenUsage:
         assert "input_tokens" in result
         assert "output_tokens" in result
         assert "total_tokens" in result
+        assert result["estimated"] is True
 
     def test_response_without_content_attr(self):
         """Test that a response without content attribute does not raise."""
         response = SimpleNamespace(usage_metadata=None)
         result = extract_token_usage(response)
         assert result["output_tokens"] == 0
+        assert result["estimated"] is True
 
     def test_non_string_content(self):
         """Test that non-string content is handled gracefully."""
@@ -81,6 +87,7 @@ class TestExtractTokenUsage:
         result = extract_token_usage(response)
         # Should convert to string and estimate
         assert result["output_tokens"] >= 0
+        assert result["estimated"] is True
 
     def test_partial_usage_metadata(self):
         """Test partial usage_metadata with only total_tokens."""
@@ -91,7 +98,8 @@ class TestExtractTokenUsage:
         result = extract_token_usage(response)
         assert result["total_tokens"] == 200
         assert result["input_tokens"] == 150
-        assert result["output_tokens"] == 0
+        assert result["output_tokens"] == 50
+        assert result["estimated"] is False
 
     def test_returns_three_keys(self):
         """Test that the result always has the three required keys."""
@@ -101,6 +109,7 @@ class TestExtractTokenUsage:
             "input_tokens",
             "output_tokens",
             "total_tokens",
+            "estimated",
         }
 
 

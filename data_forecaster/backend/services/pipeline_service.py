@@ -242,10 +242,7 @@ def run_pipeline(
         "output_tokens": sum(u.get("output_tokens", 0) for u in agent_usage.values()),
         "total_tokens": sum(u.get("total_tokens", 0) for u in agent_usage.values()),
     }
-    estimated = any(
-        not u.get("total_tokens") or u.get("estimated", False)
-        for u in agent_usage.values()
-    )
+    estimated = any(u.get("estimated", False) for u in agent_usage.values())
     pipeline_token_usage = {
         "agents": agent_usage,
         "grand_total": grand_total,
