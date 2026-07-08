@@ -70,6 +70,11 @@
         </div>
     </div>
 </div>
+
+{# Modals — rendered outside .app-shell so they are direct children of  #}
+{# body and not trapped inside the .tab-content-area stacking context.   #}
+{% block modal %}{% endblock %}
+
     <script src="{{ url_for('static', filename='libs/bootstrap@5.3.3_dist_js_bootstrap.bundle.min.js') }}"></script>
     <script src="{{ url_for('static', filename='libs/marked@12.0.2_min.js') }}"></script>
     <script src="{{ url_for('static', filename='libs/dompurify@3.1.6_dist_purify.min.js') }}"></script>

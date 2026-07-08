@@ -140,8 +140,12 @@
         </div>
     </div>
 </div>
+{% endblock %}
 
+{% block modal %}
 {# ── Preflight Modal ───────────────────────────────────────── #}
+{# Rendered outside the content block so it is a direct child of  #}
+{# body, avoiding the .tab-content-area stacking context trap.    #}
 <div class="modal fade" id="preflightModal" tabindex="-1">
     <div class="modal-dialog modal-lg">
         <div class="modal-content">
