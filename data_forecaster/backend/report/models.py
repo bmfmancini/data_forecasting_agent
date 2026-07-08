@@ -50,7 +50,7 @@ class DashboardItem(BaseModel):
 class Dashboard(BaseModel):
     """Collection of dashboard widgets iterated by renderers."""
 
-    items: list[DashboardItem] = Field(default_factory=list)
+    widgets: list[DashboardItem] = Field(default_factory=list)
 
 
 # ── Executive Summary ────────────────────────────────────────────────────────
@@ -103,11 +103,11 @@ class DataQualitySection(BaseModel):
     duplicate_timestamps: int
     missing_timestamps: int
     outlier_count: int
-    outlier_ratio: float
+    outlier_ratio: float = Field(ge=0.0, le=1.0)
     is_regular: bool
     frequency: str
     issues: list[str] = Field(default_factory=list)
-    completeness_pct: float
+    completeness_pct: float = Field(ge=0.0, le=100.0)
     narrative: str = ""
 
 
@@ -214,7 +214,7 @@ class ConfidenceAssessment(BaseModel):
         contributing_factors: List of factors that influenced the score.
     """
 
-    score: int
+    score: int = Field(ge=0, le=100)
     label: str
     explanation: str
     contributing_factors: list[str] = Field(default_factory=list)
@@ -351,11 +351,11 @@ class Explainability(BaseModel):
     """Section 8 — why the AI reached its conclusions.
 
     Attributes:
-        items:     List of explainability findings.
+        findings:     List of explainability findings.
         narrative: LLM-generated prose (Stage 2).
     """
 
-    items: list[ExplainabilityItem] = Field(default_factory=list)
+    findings: list[ExplainabilityItem] = Field(default_factory=list)
     narrative: str = ""
 
 

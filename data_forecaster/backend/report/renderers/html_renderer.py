@@ -45,7 +45,7 @@ class HTMLRenderer:
     def _render_dashboard(self, report: ExecutiveReport) -> str:
         """Render dashboard items as Bootstrap-style cards."""
         cards: list[str] = []
-        for item in report.dashboard.items:
+        for item in report.dashboard.widgets:
             color = DASHBOARD_STATUS_COLORS.get(item.status, "primary")
             cards.append(
                 f'<div class="card dashboard-card border-{color} mb-2">'
@@ -73,7 +73,7 @@ class HTMLRenderer:
         return (
             f'<section class="report-confidence mb-3">'
             f'<span class="badge bg-{color} fs-6">'
-            f"Forecast Confidence: {c.score}/100 — {c.label}"
+            f"Forecast Confidence: {c.score}/100 — {escape(c.label)}"
             f"</span>"
             f"<p class=\"mt-2 text-muted\">{escape(c.explanation)}</p>"
             f"</section>"
@@ -85,14 +85,16 @@ class HTMLRenderer:
         """Render health indicators as an HTML table."""
         rows = "".join(
             f"<tr><td>{escape(hi.indicator)}</td>"
-            f"<td>{escape(hi.status)}</td></tr>"
+            f"<td>{escape(hi.status)}</td>"
+            f"<td>{escape(hi.detail)}</td></tr>"
             for hi in report.health_indicators
         )
         return (
             '<section class="report-health mb-3">'
             "<h5>Forecast Health Indicators</h5>"
             '<table class="table table-sm table-striped">'
-            "<thead><tr><th>Indicator</th><th>Status</th></tr></thead>"
+            "<thead><tr><th>Indicator</th><th>Status</th>"
+            "<th>Detail</th></tr></thead>"
             f"<tbody>{rows}</tbody></table>"
             "</section>"
         )
@@ -131,7 +133,7 @@ class HTMLRenderer:
         return (
             '<section class="report-data-quality mb-3">'
             "<h5>Data Quality Summary</h5>"
-            f'<span class="badge bg-{color}">{dq.rating}</span>'
+            f'<span class="badge bg-{color}">{escape(dq.rating)}</span>'
             f"<p class='mt-2'>{escape(dq.rating_explanation)}</p>"
             f"{narrative}"
             f"<p>Completeness: {dq.completeness_pct:.1f}% | "
@@ -186,7 +188,7 @@ class HTMLRenderer:
             text = rec.narrative if rec.narrative else rec.recommendation
             blocks.append(
                 f'<div class="recommendation-block mb-2">'
-                f'<span class="badge bg-{color}">{rec.priority}</span> '
+                f'<span class="badge bg-{color}">{escape(rec.priority)}</span> '
                 f"<strong>{escape(text)}</strong>"
                 f"<p class='small'>{escape(rec.rationale)}</p>"
                 f"<p class='small'><em>Expected outcome: "

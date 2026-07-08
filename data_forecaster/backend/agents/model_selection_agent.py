@@ -204,59 +204,117 @@ def _heuristic_fallback(
         A tuple of (fallback_model, reasoning_dict) where reasoning_dict maps
         each model name to a rejection reason (or ``None`` for the selected model).
     """
-    sp = stat_result.seasonal_period or 1
+    preference = _heuristic_preference(stat_result)
+    fallback_model = preference[0]
     reasoning: dict[str, str | None] = {
         "Holt-Winters": None,
         "ARIMA": None,
         "SARIMA": None,
         "EWMA": None,
     }
-
-    if sp > 1:
-        fallback_model = "SARIMA"
-        reasoning["Holt-Winters"] = (
-            "Strong seasonality makes SARIMA/Holt-Winters preferable."
-        )
-        reasoning["ARIMA"] = "Seasonal pattern detected; plain ARIMA ignores seasonality."
-        reasoning["EWMA"] = "Seasonal patterns present; EWMA does not capture seasonality."
-    elif stat_result.has_trend and abs(stat_result.trend_slope) > 0.1:
-        fallback_model = "Holt-Winters"
-        reasoning["ARIMA"] = "Trend present but Holt-Winters handles it more naturally."
-        reasoning["SARIMA"] = "No strong seasonality confirmed; SARIMA may overfit."
-        reasoning["EWMA"] = "Strong trend present; EWMA will lag behind trend changes."
-    elif stat_result.is_white_noise:
-        fallback_model = "EWMA"
-        reasoning["Holt-Winters"] = "Series appears random; simple EWMA may suffice."
-        reasoning["ARIMA"] = "Series is random noise; complex models may overfit."
-        reasoning["SARIMA"] = "No patterns detected; SARIMA would overfit."
-    else:
-        fallback_model = "ARIMA"
-        reasoning["Holt-Winters"] = "No clear seasonal pattern or strong trend detected."
-        reasoning["SARIMA"] = "No seasonal period confirmed; SARIMA would overfit."
-        reasoning["EWMA"] = "Series has patterns that ARIMA can better capture."
-
+    for m in preference[1:]:
+        reasoning[m] = _heuristic_rejection_reason(stat_result, m)
     return fallback_model, reasoning
 
 
+def _heuristic_preference(stat_result: StatisticalResult) -> list[str]:
+    """Return models ordered by heuristic suitability for the statistics.
+
+    The first element is the most suitable fallback; subsequent entries are
+    next-best alternatives in descending preference order.  Used to select a
+    statistically sound fallback when the primary choice is excluded.
+
+    Args:
+        stat_result: Output of the statistical analysis agent.
+
+    Returns:
+        A list of model names ordered by heuristic preference.
+    """
+    sp = stat_result.seasonal_period or 1
+    if sp > 1:
+        return ["SARIMA", "Holt-Winters", "ARIMA", "EWMA"]
+    if stat_result.has_trend and abs(stat_result.trend_slope) > 0.1:
+        return ["Holt-Winters", "ARIMA", "SARIMA", "EWMA"]
+    if stat_result.is_white_noise:
+        return ["EWMA", "ARIMA", "Holt-Winters", "SARIMA"]
+    return ["ARIMA", "Holt-Winters", "SARIMA", "EWMA"]
+
+
+def _heuristic_rejection_reason(
+    stat_result: StatisticalResult, model: str,
+) -> str:
+    """Return the heuristic rejection reason for a non-preferred model.
+
+    Args:
+        stat_result: Output of the statistical analysis agent.
+        model:       Model name to explain.
+
+    Returns:
+        A short rejection reason string.
+    """
+    sp = stat_result.seasonal_period or 1
+    if sp > 1:
+        reasons = {
+            "Holt-Winters": (
+                "Strong seasonality makes SARIMA/Holt-Winters preferable."
+            ),
+            "ARIMA": "Seasonal pattern detected; plain ARIMA ignores seasonality.",
+            "EWMA": "Seasonal patterns present; EWMA does not capture seasonality.",
+        }
+    elif stat_result.has_trend and abs(stat_result.trend_slope) > 0.1:
+        reasons = {
+            "ARIMA": "Trend present but Holt-Winters handles it more naturally.",
+            "SARIMA": "No strong seasonality confirmed; SARIMA may overfit.",
+            "EWMA": "Strong trend present; EWMA will lag behind trend changes.",
+        }
+    elif stat_result.is_white_noise:
+        reasons = {
+            "Holt-Winters": "Series appears random; simple EWMA may suffice.",
+            "ARIMA": "Series is random noise; complex models may overfit.",
+            "SARIMA": "No patterns detected; SARIMA would overfit.",
+        }
+    else:
+        reasons = {
+            "Holt-Winters": "No clear seasonal pattern or strong trend detected.",
+            "SARIMA": "No seasonal period confirmed; SARIMA would overfit.",
+            "EWMA": "Series has patterns that ARIMA can better capture.",
+        }
+    return reasons.get(model, "Not selected based on heuristic reasoning.")
+
+
 def _adjust_excluded_fallback(
+    stat_result: StatisticalResult,
     fallback_model: str,
     exclude_model: str | None,
 ) -> str:
     """Adjust the fallback model if it matches the excluded model.
 
+    When the heuristic fallback matches the excluded model, re-evaluates the
+    candidate fallback using the same statistical suitability ordering used
+    by :func:`_heuristic_fallback`, preserving the exclude filter and
+    choosing the next-best model rather than relying on tuple order.
+
     Args:
-        fallback_model: The heuristic fallback model.
-        exclude_model: Optional model name to exclude from consideration.
+        stat_result:     Output of the statistical analysis agent.
+        fallback_model:   The heuristic fallback model.
+        exclude_model:    Optional model name to exclude from consideration.
 
     Returns:
         The (possibly adjusted) fallback model name.
     """
     if not exclude_model or fallback_model != exclude_model:
         return fallback_model
-    remaining = [m for m in _MODELS if m != exclude_model]
-    if remaining:
-        logger.info("Fallback adjusted to exclude rejected model: %s", exclude_model)
-        return remaining[0]
+    preference = [
+        m for m in _heuristic_preference(stat_result) if m != exclude_model
+    ]
+    if preference:
+        adjusted = preference[0]
+        logger.info(
+            "Fallback adjusted to exclude rejected model: %s -> %s",
+            exclude_model,
+            adjusted,
+        )
+        return adjusted
     return fallback_model
 
 
@@ -332,11 +390,16 @@ def _parse_selected_model(output: str, fallback_model: str) -> str:
     return selected if selected is not None else fallback_model
 
 
-def _rejection_reasons(selected_model: str) -> dict[str, str | None]:
+def _rejection_reasons(
+    selected_model: str, reason: str = "Not selected based on LLM reasoning.",
+) -> dict[str, str | None]:
     """Build rejection reasons for non-selected models.
 
     Args:
         selected_model: The model that was selected.
+        reason:         Rejection reason text applied to all non-selected
+            models.  Defaults to the LLM-selection wording; deterministic
+            override paths should pass a metric/override-specific message.
 
     Returns:
         A dict mapping each model name to a rejection reason (or ``None`` for
@@ -347,7 +410,7 @@ def _rejection_reasons(selected_model: str) -> dict[str, str | None]:
         if m == selected_model:
             reasons[m] = None
         else:
-            reasons[m] = "Not selected based on LLM reasoning."
+            reasons[m] = reason
     return reasons
 
 
@@ -524,7 +587,9 @@ def run_model_selection_agent(
     """
     suitability_summary = _build_suitability_summary(stat_result)
     fallback_model, fallback_reasoning = _heuristic_fallback(stat_result)
-    fallback_model = _adjust_excluded_fallback(fallback_model, exclude_model)
+    fallback_model = _adjust_excluded_fallback(
+        stat_result, fallback_model, exclude_model
+    )
 
     # ── Deterministic override when empirical metrics are available ────────
     # During a review-triggered retry, if actual error metrics are available,
@@ -546,7 +611,13 @@ def run_model_selection_agent(
                 f"the lowest error scores:\n{metrics_text}\n\n"
                 f"[Statistical Review Feedback]: {review_feedback or 'N/A'}"
             )
-            reasons = _rejection_reasons(best_model)
+            reasons = _rejection_reasons(
+                best_model,
+                reason=(
+                    "Not selected — deterministic override chose the model "
+                    "with the lowest empirical validation error."
+                ),
+            )
             return ModelSelectionResult(
                 selected_model=best_model,
                 explanation=explanation,

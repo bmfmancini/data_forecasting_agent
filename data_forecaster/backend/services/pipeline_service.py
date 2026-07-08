@@ -19,6 +19,7 @@ from agents.report_generation_agent import run_report_agent
 from agents.statistical_analysis_agent import run_statistical_agent
 from agents.statistical_review_agent import run_statistical_review_agent
 from core.logging_config import get_logger
+from report.renderers import HTMLRenderer, MarkdownRenderer
 from schemas import AnalysisResponse, ModelSelectionResult
 from services.rag_service import get_rag_kb
 from utils.data_cleaning import apply_iqr_clipping, apply_zscore_clipping
@@ -314,12 +315,20 @@ def run_pipeline(
         )
     )
     # ── Render report to Markdown and HTML ────────────────────────────────
-    from report.renderers import HTMLRenderer, MarkdownRenderer
-
-    md_renderer = MarkdownRenderer()
-    html_renderer = HTMLRenderer()
-    report_md = md_renderer.render(executive_report)
-    report_html = html_renderer.render(executive_report)
+    # Renderers are best-effort: a renderer bug must not fail the entire
+    # successful pipeline.  On failure, fall back to empty strings and log
+    # a warning so the frontend can still display the structured report.
+    report_md = ""
+    report_html = ""
+    try:
+        md_renderer = MarkdownRenderer()
+        html_renderer = HTMLRenderer()
+        report_md = md_renderer.render(executive_report)
+        report_html = html_renderer.render(executive_report)
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.warning(
+            "Report rendering failed: %s — using empty render output.", exc
+        )
     _progress(92, "Report complete")
 
     # ── Visualizations ────────────────────────────────────────────────────────

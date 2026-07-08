@@ -20,6 +20,21 @@ from report.models import (
 )
 
 
+def _sanitize_cell(value: str) -> str:
+    """Escape characters that would break a Markdown table cell.
+
+    Replaces pipe characters and newlines so free-text values (e.g. LLM-
+    derived rejection reasons) render safely inside pipe-delimited tables.
+
+    Args:
+        value: Raw cell text.
+
+    Returns:
+        Sanitised cell text safe for Markdown table insertion.
+    """
+    return value.replace("|", "\\|").replace("\n", " ").replace("\r", " ")
+
+
 class MarkdownRenderer:
     """Render an :class:`ExecutiveReport` to Markdown text."""
 
@@ -55,7 +70,7 @@ class MarkdownRenderer:
         lines = ["## 1. Executive Dashboard", ""]
         lines.append("| Metric | Value | Status |")
         lines.append("|--------|-------|--------|")
-        for item in report.dashboard.items:
+        for item in report.dashboard.widgets:
             lines.append(
                 f"| {item.icon} {item.title} | {item.value} | {item.status} |"
             )
@@ -178,7 +193,7 @@ class MarkdownRenderer:
         lines.append("|-------|------|-----|------|----------|-----------------|")
         for entry in mc.entries:
             selected = "✓" if entry.selected else ""
-            rejected = entry.rejected_reason or ""
+            rejected = _sanitize_cell(entry.rejected_reason or "")
             lines.append(
                 f"| {entry.model} | {entry.rmse} | {entry.mae} | "
                 f"{entry.mape}% | {selected} | {rejected} |"
@@ -202,10 +217,13 @@ class MarkdownRenderer:
         lines.append("")
         lines.append("### Forecast Health Indicators")
         lines.append("")
-        lines.append("| Indicator | Status |")
-        lines.append("|-----------|--------|")
+        lines.append("| Indicator | Status | Detail |")
+        lines.append("|-----------|--------|--------|")
         for hi in report.health_indicators:
-            lines.append(f"| {hi.indicator} | {hi.status} |")
+            detail = _sanitize_cell(hi.detail)
+            lines.append(
+                f"| {hi.indicator} | {hi.status} | {detail} |"
+            )
         lines.append("")
         lines.append("**Contributing Factors:**")
         for factor in c.contributing_factors:
@@ -223,7 +241,7 @@ class MarkdownRenderer:
         if e.narrative:
             lines.append(e.narrative)
             lines.append("")
-        for item in e.items:
+        for item in e.findings:
             lines.append(f"- **{item.finding}** — {item.interpretation}")
             lines.append(f"  *Evidence: {item.evidence}*")
         return "\n".join(lines)

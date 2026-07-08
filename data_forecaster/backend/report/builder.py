@@ -92,22 +92,29 @@ class ExecutiveReportBuilder:
         Returns:
             A populated :class:`ExecutiveReport` with empty narrative fields.
         """
+        has_structural_breaks = (
+            "change_point_analysis" in statistical.recommended_remediation
+        )
         confidence = self._compute_confidence(
-            forecast, statistical, validation, statistical_review
+            forecast, statistical, validation, statistical_review,
+            has_structural_breaks,
         )
         data_quality = self._compute_data_quality(validation, statistical)
         health_indicators = self._compute_health_indicators(
-            statistical, validation, forecast, statistical_review, confidence
+            statistical, validation, forecast, statistical_review, confidence,
+            data_quality, has_structural_breaks,
         )
         forecast_metrics = self._build_forecast_metrics(forecast)
         model_comparison = self._build_model_comparison(
             all_metrics, model_selection
         )
         recommendations = self._build_recommendations(
-            statistical, forecast, statistical_review, confidence, data_quality
+            statistical, forecast, statistical_review, confidence, data_quality,
+            has_structural_breaks,
         )
         risks = self._build_risks(
-            statistical, forecast, statistical_review, data_quality
+            statistical, forecast, statistical_review, data_quality,
+            has_structural_breaks,
         )
         assumptions = self._build_assumptions(statistical, validation)
         explainability = self._build_explainability(
@@ -118,11 +125,11 @@ class ExecutiveReportBuilder:
         forecast_outlook = ForecastOutlook(metrics=forecast_metrics)
         dashboard = self._build_dashboard(
             forecast, statistical, model_selection, confidence, data_quality,
-            statistical_review,
+            statistical_review, has_structural_breaks,
         )
         executive_summary = self._build_executive_summary(
             forecast, statistical, confidence, data_quality,
-            statistical_review,
+            statistical_review, has_structural_breaks,
         )
         metadata = self._build_metadata(
             validation, forecast, model_selection, all_metrics, data_quality,
@@ -155,6 +162,7 @@ class ExecutiveReportBuilder:
         statistical: StatisticalResult,
         validation: ValidationResult,
         review: StatisticalReviewResult | None,
+        has_structural_breaks: bool = False,
     ) -> ConfidenceAssessment:
         """Compute the deterministic confidence score (0–100).
 
@@ -162,10 +170,13 @@ class ExecutiveReportBuilder:
         validation quality, and review verdict.
 
         Args:
-            forecast:    Forecast result.
-            statistical: Statistical analysis result.
-            validation:  Validation result.
-            review:      Statistical review result (optional).
+            forecast:             Forecast result.
+            statistical:          Statistical analysis result.
+            validation:           Validation result.
+            review:               Statistical review result (optional).
+            has_structural_breaks: Precomputed flag indicating structural
+                breaks were detected (avoids recomputing the remediation
+                membership test).
 
         Returns:
             :class:`ConfidenceAssessment` with score, label, and explanation.
@@ -209,7 +220,7 @@ class ExecutiveReportBuilder:
                 score -= CONFIDENCE_DEDUCTIONS["review_fail"]
                 factors.append(_REVIEW_CRITICAL_MSG)
 
-        if "change_point_analysis" in statistical.recommended_remediation:
+        if has_structural_breaks:
             score -= CONFIDENCE_DEDUCTIONS["structural_breaks"]
             factors.append("Structural breaks detected in the series")
 
@@ -303,23 +314,28 @@ class ExecutiveReportBuilder:
         forecast: ForecastResult,
         review: StatisticalReviewResult | None,
         confidence: ConfidenceAssessment,
+        data_quality: DataQualitySection,
+        has_structural_breaks: bool = False,
     ) -> list[HealthIndicator]:
         """Compute the forecast health indicator table rows.
 
         Args:
-            statistical: Statistical result.
-            validation:  Validation result.
-            forecast:    Forecast result.
-            review:      Statistical review result (optional).
-            confidence:  Computed confidence assessment.
+            statistical:          Statistical result.
+            validation:           Validation result (retained for signature
+                symmetry; data quality is provided via ``data_quality``).
+            forecast:             Forecast result.
+            review:               Statistical review result (optional).
+            confidence:           Computed confidence assessment.
+            data_quality:         Precomputed data quality section.
+            has_structural_breaks: Precomputed flag indicating structural
+                breaks were detected.
 
         Returns:
             List of 6 :class:`HealthIndicator` rows.
         """
-        # Data Quality
-        dq = self._compute_data_quality(validation, statistical)
-        data_quality_status = dq.rating
-        data_quality_detail = dq.rating_explanation
+        del validation  # Data quality is passed in; no recomputation needed.
+        data_quality_status = data_quality.rating
+        data_quality_detail = data_quality.rating_explanation
 
         # Trend Stability
         if statistical.has_trend and not statistical.is_stationary_adf:
@@ -343,7 +359,7 @@ class ExecutiveReportBuilder:
         conf_detail = confidence.explanation
 
         # Structural Breaks
-        if "change_point_analysis" in statistical.recommended_remediation:
+        if has_structural_breaks:
             breaks_status = HEALTH_STATUS["structural_breaks"]["monitor"]
             breaks_detail = "Change points detected — monitor for regime shifts."
         else:
@@ -396,6 +412,29 @@ class ExecutiveReportBuilder:
 
     # ── Forecast Metrics & Prediction Intervals ───────────────────────────
 
+    @staticmethod
+    def _forecast_pct_change(
+        forecast: ForecastResult,
+    ) -> tuple[float, float, float]:
+        """Return (first_value, last_value, pct_change) for a forecast.
+
+        The percentage change is guarded against a zero first value.
+
+        Args:
+            forecast: Forecast result.
+
+        Returns:
+            A tuple of (first_value, last_value, percentage_change).
+        """
+        first_val = forecast.forecast[0] if forecast.forecast else 0.0
+        last_val = forecast.forecast[-1] if forecast.forecast else 0.0
+        pct_change = (
+            ((last_val - first_val) / abs(first_val)) * 100
+            if first_val != 0
+            else 0.0
+        )
+        return first_val, last_val, pct_change
+
     def _build_forecast_metrics(
         self,
         forecast: ForecastResult,
@@ -408,13 +447,7 @@ class ExecutiveReportBuilder:
         Returns:
             :class:`ForecastMetrics` with per-period prediction intervals.
         """
-        first_val = forecast.forecast[0] if forecast.forecast else 0.0
-        last_val = forecast.forecast[-1] if forecast.forecast else 0.0
-        pct_change = (
-            ((last_val - first_val) / abs(first_val)) * 100
-            if first_val != 0
-            else 0.0
-        )
+        first_val, last_val, pct_change = self._forecast_pct_change(forecast)
         first_date = (
             forecast.forecast_dates[0] if forecast.forecast_dates else "N/A"
         )
@@ -426,10 +459,13 @@ class ExecutiveReportBuilder:
         for i, date in enumerate(forecast.forecast_dates):
             lower = forecast.lower_ci[i] if i < len(forecast.lower_ci) else 0.0
             upper = forecast.upper_ci[i] if i < len(forecast.upper_ci) else 0.0
+            point = (
+                forecast.forecast[i] if i < len(forecast.forecast) else 0.0
+            )
             intervals.append(
                 PredictionInterval(
                     date=date,
-                    forecast=round(forecast.forecast[i], 4),
+                    forecast=round(point, 4),
                     lower_ci=round(lower, 4),
                     upper_ci=round(upper, 4),
                     confidence_level=_CONFIDENCE_LEVEL,
@@ -502,6 +538,7 @@ class ExecutiveReportBuilder:
         review: StatisticalReviewResult | None,
         confidence: ConfidenceAssessment,
         data_quality: DataQualitySection,
+        has_structural_breaks: bool = False,
     ) -> list[Recommendation]:
         """Build deterministic, evidence-backed recommendations.
 
@@ -510,11 +547,13 @@ class ExecutiveReportBuilder:
         traceable :class:`EvidenceRef` objects.
 
         Args:
-            statistical:  Statistical result.
-            forecast:      Forecast result.
-            review:        Statistical review result (optional).
-            confidence:    Computed confidence assessment.
-            data_quality:  Computed data quality section.
+            statistical:          Statistical result.
+            forecast:             Forecast result.
+            review:               Statistical review result (optional).
+            confidence:           Computed confidence assessment.
+            data_quality:         Computed data quality section.
+            has_structural_breaks: Precomputed flag indicating structural
+                breaks were detected.
 
         Returns:
             List of :class:`Recommendation` objects.
@@ -559,7 +598,7 @@ class ExecutiveReportBuilder:
         )
 
         # Recommendation 2: Monitor structural breaks if detected
-        if "change_point_analysis" in statistical.recommended_remediation:
+        if has_structural_breaks:
             recs.append(
                 Recommendation(
                     priority="High",
@@ -685,14 +724,17 @@ class ExecutiveReportBuilder:
         forecast: ForecastResult,
         review: StatisticalReviewResult | None,
         data_quality: DataQualitySection,
+        has_structural_breaks: bool = False,
     ) -> list[Risk]:
         """Build strategic risks from statistical signals and review flags.
 
         Args:
-            statistical:  Statistical result.
-            forecast:      Forecast result.
-            review:        Statistical review result (optional).
-            data_quality:  Data quality section.
+            statistical:          Statistical result.
+            forecast:             Forecast result.
+            review:               Statistical review result (optional).
+            data_quality:         Data quality section.
+            has_structural_breaks: Precomputed flag indicating structural
+                breaks were detected.
 
         Returns:
             List of :class:`Risk` objects.
@@ -727,7 +769,7 @@ class ExecutiveReportBuilder:
             )
 
         # Risk: Structural breaks
-        if "change_point_analysis" in statistical.recommended_remediation:
+        if has_structural_breaks:
             risks.append(
                 Risk(
                     category="Data",
@@ -775,11 +817,7 @@ class ExecutiveReportBuilder:
 
         # Risk: Review concerns
         if review and review.verdict in ("warn", "fail"):
-            concerns = [
-                f.get("issue", "")
-                for f in review.flags
-                if f.get("severity") in ("critical", "warning")
-            ]
+            concerns = self._review_concerns(review)
             risks.append(
                 Risk(
                     category="Model",
@@ -928,6 +966,30 @@ class ExecutiveReportBuilder:
 
     # ── Statistical Audit ─────────────────────────────────────────────────
 
+    @staticmethod
+    def _review_concerns(
+        review: StatisticalReviewResult | None,
+    ) -> list[str]:
+        """Extract concern issue strings from a statistical review.
+
+        Filters review flags to those with critical or warning severity and
+        returns their ``issue`` text.  Returns an empty list when the
+        review is ``None``.
+
+        Args:
+            review: Statistical review result (optional).
+
+        Returns:
+            A list of concern issue strings.
+        """
+        if not review:
+            return []
+        return [
+            f.get("issue", "")
+            for f in review.flags
+            if f.get("severity") in ("critical", "warning")
+        ]
+
     def _build_statistical_audit(
         self,
         review: StatisticalReviewResult | None,
@@ -951,11 +1013,7 @@ class ExecutiveReportBuilder:
             )
 
         strongest = list(review.endorsements)
-        concerns = [
-            f.get("issue", "")
-            for f in review.flags
-            if f.get("severity") in ("critical", "warning")
-        ]
+        concerns = self._review_concerns(review)
         follow_up = [
             f.get("recommendation", "")
             for f in review.flags
@@ -1096,27 +1154,24 @@ class ExecutiveReportBuilder:
         confidence: ConfidenceAssessment,
         data_quality: DataQualitySection,
         review: StatisticalReviewResult | None,
+        has_structural_breaks: bool = False,
     ) -> Dashboard:
         """Build the dynamic dashboard as a list of reusable widgets.
 
         Args:
-            forecast:        Forecast result.
-            statistical:     Statistical result.
-            model_selection: Model selection result.
-            confidence:      Confidence assessment.
-            data_quality:    Data quality section.
-            review:          Statistical review result (optional).
+            forecast:             Forecast result.
+            statistical:          Statistical result.
+            model_selection:      Model selection result.
+            confidence:           Confidence assessment.
+            data_quality:         Data quality section.
+            review:               Statistical review result (optional).
+            has_structural_breaks: Precomputed flag indicating structural
+                breaks were detected.
 
         Returns:
             :class:`Dashboard` with 7 :class:`DashboardItem` widgets.
         """
-        first_val = forecast.forecast[0] if forecast.forecast else 0.0
-        last_val = forecast.forecast[-1] if forecast.forecast else 0.0
-        pct_change = (
-            ((last_val - first_val) / abs(first_val)) * 100
-            if first_val != 0
-            else 0.0
-        )
+        first_val, last_val, pct_change = self._forecast_pct_change(forecast)
         direction, dir_status = self._direction_status(statistical.trend_slope)
         growth_str = f"{pct_change:+.1f}%"
         growth_status = self._growth_status(pct_change)
@@ -1124,7 +1179,7 @@ class ExecutiveReportBuilder:
         conf_status = self._confidence_status(confidence.label)
         dq_status = self._quality_status(data_quality.rating)
         primary_risk, risk_status = self._primary_risk(
-            review, data_quality, forecast, statistical
+            review, data_quality, forecast, statistical, has_structural_breaks
         )
         action, action_status = self._recommended_action(review, data_quality)
 
@@ -1199,7 +1254,7 @@ class ExecutiveReportBuilder:
                 priority=7,
             ),
         ]
-        return Dashboard(items=items)
+        return Dashboard(widgets=items)
 
     @staticmethod
     def _direction_status(slope: float) -> tuple[str, str]:
@@ -1243,6 +1298,7 @@ class ExecutiveReportBuilder:
         data_quality: DataQualitySection,
         forecast: ForecastResult,
         statistical: StatisticalResult,
+        has_structural_breaks: bool = False,
     ) -> tuple[str, str]:
         """Return (risk description, status token) for the dashboard."""
         if review and review.verdict == "fail":
@@ -1251,7 +1307,7 @@ class ExecutiveReportBuilder:
             return "Poor data quality may compromise reliability", "negative"
         if forecast.mape > 20:
             return "High forecast uncertainty (MAPE > 20%)", "warning"
-        if "change_point_analysis" in statistical.recommended_remediation:
+        if has_structural_breaks:
             return (
                 "Structural breaks detected — monitor for regime shifts",
                 "warning",
@@ -1285,26 +1341,24 @@ class ExecutiveReportBuilder:
         confidence: ConfidenceAssessment,
         data_quality: DataQualitySection,
         review: StatisticalReviewResult | None,
+        has_structural_breaks: bool = False,
     ) -> ExecutiveSummary:
         """Build the executive summary structured fields (narrative left empty).
 
         Args:
-            forecast:     Forecast result.
-            statistical:  Statistical result.
-            confidence:   Confidence assessment.
-            data_quality: Data quality section.
-            review:       Statistical review result (optional).
+            forecast:             Forecast result.
+            statistical:          Statistical result.
+            confidence:           Confidence assessment.
+            data_quality:         Data quality section.
+            review:               Statistical review result (optional).
+            has_structural_breaks: Precomputed flag indicating structural
+                breaks were detected.
 
         Returns:
             :class:`ExecutiveSummary` with empty narrative.
         """
-        first_val = forecast.forecast[0] if forecast.forecast else 0.0
-        last_val = forecast.forecast[-1] if forecast.forecast else 0.0
-        pct_change = (
-            ((last_val - first_val) / abs(first_val)) * 100
-            if first_val != 0
-            else 0.0
-        )
+        del has_structural_breaks  # Not used in this summary's risk wording.
+        first_val, last_val, pct_change = self._forecast_pct_change(forecast)
         if statistical.trend_slope > 0:
             direction = "upward"
         elif statistical.trend_slope < 0:

@@ -17,39 +17,7 @@ Rules are organised into the following groups:
 
 from __future__ import annotations
 
-import os
-
-
-def _env_int(key: str, default: int) -> int:
-    """Read an integer environment variable with a fallback.
-
-    Args:
-        key:     Environment variable name.
-        default: Fallback value if unset or unparseable.
-
-    Returns:
-        The integer value from the environment or the default.
-    """
-    try:
-        return int(os.getenv(key, default))
-    except (ValueError, TypeError):
-        return default
-
-
-def _env_float(key: str, default: float) -> float:
-    """Read a float environment variable with a fallback.
-
-    Args:
-        key:     Environment variable name.
-        default: Fallback value if unset or unparseable.
-
-    Returns:
-        The float value from the environment or the default.
-    """
-    try:
-        return float(os.getenv(key, default))
-    except (ValueError, TypeError):
-        return default
+from utils.env_helpers import env_float, env_int
 
 
 # ── Confidence Score Deductions ──────────────────────────────────────────────
@@ -57,25 +25,24 @@ def _env_float(key: str, default: float) -> float:
 # of 100.  The builder checks conditions in order and applies deductions.
 
 CONFIDENCE_DEDUCTIONS: dict[str, int] = {
-    "mape_above_20": _env_int("CONF_DEDUCT_MAPE_ABOVE_20", 20),
-    "mape_above_10": _env_int("CONF_DEDUCT_MAPE_ABOVE_10", 10),
-    "mape_above_5": _env_int("CONF_DEDUCT_MAPE_ABOVE_5", 5),
-    "non_stationary_adf": _env_int("CONF_DEDUCT_NON_STATIONARY", 10),
-    "white_noise": _env_int("CONF_DEDUCT_WHITE_NOISE", 15),
-    "outlier_ratio_high": _env_int("CONF_DEDUCT_OUTLIERS", 5),
-    "missing_data": _env_int("CONF_DEDUCT_MISSING_DATA", 5),
-    "review_warn": _env_int("CONF_DEDUCT_REVIEW_WARN", 10),
-    "review_fail": _env_int("CONF_DEDUCT_REVIEW_FAIL", 20),
-    "structural_breaks": _env_int("CONF_DEDUCT_STRUCTURAL_BREAKS", 5),
-    "variance_instability": _env_int("CONF_DEDUCT_VARIANCE_INSTABILITY", 5),
+    "mape_above_20": env_int("CONF_DEDUCT_MAPE_ABOVE_20", 20),
+    "mape_above_10": env_int("CONF_DEDUCT_MAPE_ABOVE_10", 10),
+    "mape_above_5": env_int("CONF_DEDUCT_MAPE_ABOVE_5", 5),
+    "non_stationary_adf": env_int("CONF_DEDUCT_NON_STATIONARY", 10),
+    "white_noise": env_int("CONF_DEDUCT_WHITE_NOISE", 15),
+    "outlier_ratio_high": env_int("CONF_DEDUCT_OUTLIERS", 5),
+    "missing_data": env_int("CONF_DEDUCT_MISSING_DATA", 5),
+    "review_warn": env_int("CONF_DEDUCT_REVIEW_WARN", 10),
+    "review_fail": env_int("CONF_DEDUCT_REVIEW_FAIL", 20),
+    "structural_breaks": env_int("CONF_DEDUCT_STRUCTURAL_BREAKS", 5),
 }
 
 # ── Confidence Labels ────────────────────────────────────────────────────────
 # Score boundaries for High / Medium / Low labels.
 
 CONFIDENCE_LABELS: dict[str, int] = {
-    "high_min": _env_int("CONF_LABEL_HIGH_MIN", 75),
-    "medium_min": _env_int("CONF_LABEL_MEDIUM_MIN", 50),
+    "high_min": env_int("CONF_LABEL_HIGH_MIN", 75),
+    "medium_min": env_int("CONF_LABEL_MEDIUM_MIN", 50),
 }
 
 # ── Data Quality Thresholds ──────────────────────────────────────────────────
@@ -84,16 +51,16 @@ CONFIDENCE_LABELS: dict[str, int] = {
 
 DATA_QUALITY_THRESHOLDS: dict[str, dict[str, int]] = {
     "good": {
-        "max_missing": _env_int("DQ_GOOD_MAX_MISSING", 0),
-        "max_duplicates": _env_int("DQ_GOOD_MAX_DUPLICATES", 0),
-        "max_gaps": _env_int("DQ_GOOD_MAX_GAPS", 0),
-        "max_issues": _env_int("DQ_GOOD_MAX_ISSUES", 0),
+        "max_missing": env_int("DQ_GOOD_MAX_MISSING", 0),
+        "max_duplicates": env_int("DQ_GOOD_MAX_DUPLICATES", 0),
+        "max_gaps": env_int("DQ_GOOD_MAX_GAPS", 0),
+        "max_issues": env_int("DQ_GOOD_MAX_ISSUES", 0),
     },
     "fair": {
-        "max_missing": _env_int("DQ_FAIR_MAX_MISSING", 5),
-        "max_duplicates": _env_int("DQ_FAIR_MAX_DUPLICATES", 2),
-        "max_gaps": _env_int("DQ_FAIR_MAX_GAPS", 3),
-        "max_issues": _env_int("DQ_FAIR_MAX_ISSUES", 3),
+        "max_missing": env_int("DQ_FAIR_MAX_MISSING", 5),
+        "max_duplicates": env_int("DQ_FAIR_MAX_DUPLICATES", 2),
+        "max_gaps": env_int("DQ_FAIR_MAX_GAPS", 3),
+        "max_issues": env_int("DQ_FAIR_MAX_ISSUES", 3),
     },
     # "poor" is the fallback when fair thresholds are exceeded.
 }
@@ -122,6 +89,19 @@ def mape_quality(mape: float) -> str:
         if mape < threshold:
             return label
     return MAPE_QUALITY_BANDS[-1][1]
+
+
+# ── Visual Strategy Thresholds ────────────────────────────────────────────────
+# Thresholds used by the report-generation agent's visual strategy recommender.
+# Centralised here so the visual strategy stays aligned with the confidence
+# and health-indicator bands defined elsewhere in this module.
+
+VISUAL_STRATEGY_THRESHOLDS: dict[str, float] = {
+    "mape_high": env_float("VISUAL_MAPE_HIGH", 15.0),
+    "mape_moderate": env_float("VISUAL_MAPE_MODERATE", 10.0),
+    "outlier_ratio_high": env_float("VISUAL_OUTLIER_RATIO_HIGH", 0.05),
+    "trend_slope_min": env_float("VISUAL_TREND_SLOPE_MIN", 0.01),
+}
 
 
 # ── Health Indicator Status Rules ────────────────────────────────────────────

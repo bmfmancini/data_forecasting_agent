@@ -6,6 +6,7 @@ from core.logging_config import get_logger
 from rag.knowledge_base import RAGKnowledgeBase
 from report import ExecutiveReportBuilder, generate_narratives
 from report.models import ExecutiveReport
+from report.rules import VISUAL_STRATEGY_THRESHOLDS
 from schemas import (
     ForecastResult,
     ModelSelectionResult,
@@ -81,7 +82,7 @@ def run_report_agent(
             "observation": (
                 f"Confidence: {report.confidence.score}/100 "
                 f"({report.confidence.label}), "
-                f"Dashboard items: {len(report.dashboard.items)}, "
+                f"Dashboard widgets: {len(report.dashboard.widgets)}, "
                 f"Recommendations: {len(report.recommendations)}"
             ),
         }
@@ -160,7 +161,7 @@ def _compute_visual_strategy(
                 ),
             }
         )
-    if forecast.mape > 15:
+    if forecast.mape > VISUAL_STRATEGY_THRESHOLDS["mape_high"]:
         strategy.append(
             {
                 "chart": "Forecast Confidence Intervals",
@@ -181,7 +182,7 @@ def _compute_visual_strategy(
                 ),
             }
         )
-    if statistical.outlier_ratio > 0.05:
+    if statistical.outlier_ratio > VISUAL_STRATEGY_THRESHOLDS["outlier_ratio_high"]:
         strategy.append(
             {
                 "chart": "Box Plot",
@@ -192,7 +193,7 @@ def _compute_visual_strategy(
                 ),
             }
         )
-    if statistical.has_trend and abs(statistical.trend_slope) > 0.01:
+    if statistical.has_trend and abs(statistical.trend_slope) > VISUAL_STRATEGY_THRESHOLDS["trend_slope_min"]:
         strategy.append(
             {
                 "chart": "Trend Analysis",
@@ -203,7 +204,7 @@ def _compute_visual_strategy(
                 ),
             }
         )
-    if forecast.mape > 10:
+    if forecast.mape > VISUAL_STRATEGY_THRESHOLDS["mape_moderate"]:
         strategy.append(
             {
                 "chart": "Forecast Error Plot",

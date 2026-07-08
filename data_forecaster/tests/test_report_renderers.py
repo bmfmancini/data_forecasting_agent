@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 
 import pytest
@@ -186,7 +187,15 @@ class TestMarkdownRenderer:
         """Fallback narratives should not contain fabricated financials."""
         renderer = MarkdownRenderer()
         md = renderer.render(sample_report)
-        assert "$" not in md or "million" not in md.lower()
+        # Detect explicit currency amounts followed by scale words like
+        # "million" or "billion" — a reliable signal of fabricated figures.
+        financial_pattern = re.compile(
+            r"\$\s?\d[\d,]*\.?\d*\s*(?:million|billion|trillion)",
+            re.IGNORECASE,
+        )
+        assert not financial_pattern.search(md), (
+            "Rendered markdown contains fabricated financial figures."
+        )
 
 
 # ── HTML Renderer Tests ──────────────────────────────────────────────────────

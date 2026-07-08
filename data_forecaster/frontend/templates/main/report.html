@@ -21,7 +21,7 @@
 <section class="report-dashboard mb-4">
     <h5 class="mb-3">Executive Dashboard</h5>
     <div class="row row-cols-1 row-cols-md-3 g-3">
-        {% for item in er.dashboard['items'] %}
+        {% for item in er.dashboard.widgets %}
         <div class="col">
             <div class="card h-100 border-{% if item.status == 'positive' %}success{% elif item.status == 'negative' %}danger{% elif item.status == 'warning' %}warning{% else %}primary{% endif %}">
                 <div class="card-body">

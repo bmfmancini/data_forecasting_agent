@@ -186,7 +186,7 @@ def _generate_section(
         )
         for key in total_usage:
             total_usage[key] += usage.get(key, 0)
-        narrative = response.content.strip()
+        narrative = str(response.content).strip()
         logger.debug("Narrative generated for %s", section_name)
         return narrative
     except Exception as exc:
@@ -196,6 +196,39 @@ def _generate_section(
             exc,
         )
         return _fallback_narrative(section, section_name)
+
+
+def _fallback_forecast_outlook(data: dict[str, Any]) -> str:
+    """Build a deterministic fallback narrative for the forecast outlook.
+
+    Reads metrics defensively with ``.get()`` defaults so the last-resort
+    path cannot raise ``KeyError`` or ``IndexError``.
+
+    Args:
+        data: The model-dumped dict for the forecast outlook section.
+
+    Returns:
+        Fallback narrative string.
+    """
+    m = data.get("metrics", {})
+    first_value = m.get("first_value", "N/A")
+    last_value = m.get("last_value", "N/A")
+    pct_change = m.get("pct_change", 0.0)
+    horizon = m.get("horizon", 0)
+    intervals = m.get("prediction_intervals") or []
+    if intervals and isinstance(intervals, list) and len(intervals) > 1:
+        conf_level = intervals[0].get("confidence_level", "95%")
+        return (
+            f"The forecast projects a change from {first_value} to "
+            f"{last_value} ({pct_change:+.1f}%) over "
+            f"{horizon} periods. Forecasts carry uncertainty — "
+            f"the {conf_level} "
+            f"prediction range should be used for planning."
+        )
+    return (
+        f"The forecast projects {pct_change:+.1f}% change "
+        f"over {horizon} periods."
+    )
 
 
 def _fallback_narrative(section: Any, section_name: str) -> str:
@@ -237,17 +270,7 @@ def _fallback_narrative(section: Any, section_name: str) -> str:
             + "The historical pattern provides the basis for the forecast."
         )
     if section_name == "forecast_outlook":
-        m = data["metrics"]
-        return (
-            f"The forecast projects a change from {m['first_value']} to "
-            f"{m['last_value']} ({m['pct_change']:+.1f}%) over "
-            f"{m['horizon']} periods. Forecasts carry uncertainty — "
-            f"the {m['prediction_intervals'][0]['confidence_level']} "
-            f"prediction range should be used for planning."
-            if m.get("prediction_intervals")
-            else f"The forecast projects {m['pct_change']:+.1f}% change "
-            f"over {m['horizon']} periods."
-        )
+        return _fallback_forecast_outlook(data)
     if section_name == "model_comparison":
         return (
             f"The forecasting model was selected based on validation "
@@ -267,7 +290,7 @@ def _fallback_narrative(section: Any, section_name: str) -> str:
         )
     if section_name == "explainability":
         findings = "; ".join(
-            item["finding"] for item in data.get("items", [])
+            item["finding"] for item in data.get("findings", [])
         )
         return (
             f"The forecast is based on the following findings: {findings}. "

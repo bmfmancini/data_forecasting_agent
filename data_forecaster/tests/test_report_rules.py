@@ -104,7 +104,6 @@ class TestConfidenceDeductions:
             "review_warn",
             "review_fail",
             "structural_breaks",
-            "variance_instability",
         ]
         for key in expected_keys:
             assert key in CONFIDENCE_DEDUCTIONS

@@ -196,8 +196,8 @@ class TestExecutiveReportBuilder:
     def test_dashboard_has_seven_items(
         self, built_report: ExecutiveReport
     ) -> None:
-        assert len(built_report.dashboard.items) == 7
-        for item in built_report.dashboard.items:
+        assert len(built_report.dashboard.widgets) == 7
+        for item in built_report.dashboard.widgets:
             assert isinstance(item, DashboardItem)
             assert item.title
             assert item.value
@@ -209,7 +209,7 @@ class TestExecutiveReportBuilder:
     def test_dashboard_items_sorted_by_priority(
         self, built_report: ExecutiveReport
     ) -> None:
-        priorities = [item.priority for item in built_report.dashboard.items]
+        priorities = [item.priority for item in built_report.dashboard.widgets]
         assert priorities == sorted(priorities)
 
     def test_confidence_score_in_range(
@@ -310,8 +310,8 @@ class TestExecutiveReportBuilder:
     def test_explainability_items(
         self, built_report: ExecutiveReport
     ) -> None:
-        assert len(built_report.explainability.items) >= 1
-        for item in built_report.explainability.items:
+        assert len(built_report.explainability.findings) >= 1
+        for item in built_report.explainability.findings:
             assert item.finding
             assert item.evidence
             assert item.interpretation
