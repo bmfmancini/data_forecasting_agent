@@ -11,6 +11,7 @@ from schemas import (
     ForecastResult,
     ModelSelectionResult,
     StatisticalResult,
+    StatisticalReviewResult,
     ValidationResult,
 )
 from utils.token_tracking import estimate_input_text, extract_token_usage
@@ -33,6 +34,7 @@ def run_report_agent(
     rag_kb: RAGKnowledgeBase,
     user_prompt: str | None = None,
     preflight_options: dict[str, Any] | None = None,
+    statistical_review: StatisticalReviewResult | None = None,
 ) -> tuple[str, list[dict[str, Any]], list[dict[str, str]], dict[str, int]]:
     """Use the LLM with RAG context to write a 6-section analyst report."""
 
@@ -212,6 +214,30 @@ Visual Strategy Recommendations: {visual_strategy}
         else ""
     )
 
+    review_context = ""
+    if statistical_review:
+        flags_text = "\n".join(
+            f"  - [{f.get('severity', 'info').upper()}] "
+            f"[agent: {f.get('agent', 'unknown')}] "
+            f"{f.get('issue', '')} | "
+            f"Recommendation: {f.get('recommendation', '')}"
+            for f in statistical_review.flags
+        ) or "  None"
+        endorsements_text = "\n".join(
+            f"  - {e}" for e in statistical_review.endorsements
+        ) or "  None"
+        review_context = (
+            f"\n\nSTATISTICAL REVIEW FINDINGS:\n"
+            f"  Verdict: {statistical_review.verdict.upper()}\n"
+            f"  Summary: {statistical_review.summary}\n"
+            f"  Flags:\n{flags_text}\n"
+            f"  Endorsements:\n{endorsements_text}\n"
+            "\nInclude a 'Statistical Review Findings' section in the report "
+            "summarizing the QA verdict, any flags raised, and endorsements. "
+            "If the verdict is WARN or FAIL, discuss the implications and "
+            "recommended actions for the reader."
+        )
+
     prompt_template = REPORT_GENERATION_PROMPT
     token_usage: dict[str, int] = {}
 
@@ -222,7 +248,7 @@ Visual Strategy Recommendations: {visual_strategy}
             "data_context": analysis_context,
             "rag_context": methodology_context,
             "ai_logic_instruction": ai_logic_instruction,
-            "extra_instructions": extra_instructions,
+            "extra_instructions": extra_instructions + review_context,
             "visual_strategy": str(visual_strategy),
         }
         response = chain.invoke(inputs)

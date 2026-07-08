@@ -1,11 +1,14 @@
 """Unit tests for data_cleaning.py module."""
 
+from __future__ import annotations
+
+import os
+import sys
+
 import numpy as np
 import pandas as pd
 import pytest
 from pandas.tseries.frequencies import to_offset
-import sys
-import os
 
 # Add the backend directory to the path so that backend-internal imports
 # (e.g. ``from core.logging_config import ...``) resolve correctly.
@@ -16,7 +19,7 @@ sys.path.insert(
     ),
 )
 
-from data_forecaster.backend.utils.data_cleaning import (
+from data_forecaster.backend.utils.data_cleaning import (  # noqa: E402
     apply_iqr_clipping,
     apply_zscore_clipping,
     audit_series,
@@ -33,7 +36,7 @@ from data_forecaster.backend.utils.data_cleaning import (
 
 
 @pytest.fixture
-def sample_series():
+def sample_series() -> pd.Series:
     """Fixture for a sample time series."""
     rng = np.random.default_rng(seed=42)
     dates = pd.date_range(start="2023-01-01", periods=100, freq="D")
@@ -42,7 +45,7 @@ def sample_series():
 
 
 @pytest.fixture
-def series_with_missing():
+def series_with_missing() -> pd.Series:
     """Fixture for a time series with missing values."""
     rng = np.random.default_rng(seed=42)
     dates = pd.date_range(start="2023-01-01", periods=100, freq="D")
@@ -54,7 +57,7 @@ def series_with_missing():
 
 
 @pytest.fixture
-def series_with_duplicates():
+def series_with_duplicates() -> pd.Series:
     """Fixture for a time series with duplicate timestamps."""
     rng = np.random.default_rng(seed=42)
     dates = pd.date_range(start="2023-01-01", periods=100, freq="D")
@@ -68,7 +71,7 @@ def series_with_duplicates():
 
 
 @pytest.fixture
-def series_with_outliers():
+def series_with_outliers() -> pd.Series:
     """Fixture for a time series with outliers."""
     rng = np.random.default_rng(seed=42)
     dates = pd.date_range(start="2023-01-01", periods=100, freq="D")
@@ -81,7 +84,7 @@ def series_with_outliers():
 
 
 @pytest.fixture
-def irregular_series():
+def irregular_series() -> pd.Series:
     """Fixture for an irregular time series."""
     rng = np.random.default_rng(seed=42)
     dates = pd.to_datetime(

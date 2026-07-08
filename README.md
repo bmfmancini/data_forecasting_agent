@@ -4,13 +4,16 @@ A multi-agent system that takes time series data, runs it through statistical fo
 
 ## What it does
 
-You upload a CSV or Excel file with time series data. Five AI agents then work through the pipeline:
+You upload a CSV or Excel file with time series data. Six AI agents then work through the pipeline:
 
 1. **Data Validation** — cleans and validates the data
 2. **Statistical Analysis** — runs ACF/PACF, trend/seasonality checks, recommends transformations
 3. **Model Selection** — picks the best model based on the data characteristics
 4. **Forecasting** — runs ARIMA, SARIMA, Holt-Winters, or EWMA and generates predictions with confidence intervals
-5. **Report Generation** — puts together a report with charts and plain-English insights
+5. **Statistical Review** — QA agent that reviews the outputs of the previous stages for consistency and correctness
+6. **Report Generation** — puts together a report with charts and plain-English insights
+
+Python computes all statistical metrics; the LLM interprets the pre-computed results — it never computes numbers itself.
 
 You interact with all of this through a Flask web UI with auth, an admin panel, and role-based access.
 

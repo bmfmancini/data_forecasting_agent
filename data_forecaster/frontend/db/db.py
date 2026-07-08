@@ -103,15 +103,20 @@ def init_db() -> None:
     db.execute("INSERT OR IGNORE INTO roles (id, name) VALUES (2, 'user')")
 
     admin_username = current_app.config["FRONTEND_ADMIN_USERNAME"]
-    admin_hash = generate_password_hash(current_app.config["FRONTEND_ADMIN_PASSWORD"])
-    db.execute(
-        """
-        INSERT OR IGNORE INTO users
-            (username, password_hash, role_id, active, must_change_password)
-        VALUES (?, ?, 1, 1, 1)
-        """,
-        (admin_username, admin_hash),
-    )
+    admin_password = current_app.config["FRONTEND_ADMIN_PASSWORD"]
+    # Only seed the default admin when credentials are explicitly provided
+    # (development/testing).  In production, the admin must set credentials
+    # via environment variables or the admin panel.
+    if admin_username and admin_password:
+        admin_hash = generate_password_hash(admin_password)
+        db.execute(
+            """
+            INSERT OR IGNORE INTO users
+                (username, password_hash, role_id, active, must_change_password)
+            VALUES (?, ?, 1, 1, 1)
+            """,
+            (admin_username, admin_hash),
+        )
 
     backend_url = current_app.config.get("BACKEND_URL", "http://localhost:8000")
     verify_ssl = 1 if current_app.config.get("API_VERIFY_SSL", True) else 0

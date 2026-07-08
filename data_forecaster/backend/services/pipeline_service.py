@@ -1,13 +1,14 @@
 """Pipeline orchestration service for the Data Forecaster backend.
 
 Contains the :func:`run_pipeline` function that executes the full
-5-agent forecasting pipeline.  Extracted from ``orchestrator.py`` to
+6-agent forecasting pipeline.  Extracted from ``orchestrator.py`` to
 separate concerns (pipeline, chat, RAG).
 """
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import pandas as pd
 
@@ -16,6 +17,7 @@ from agents.forecasting_agent import run_forecasting_agent
 from agents.model_selection_agent import run_model_selection_agent
 from agents.report_generation_agent import run_report_agent
 from agents.statistical_analysis_agent import run_statistical_agent
+from agents.statistical_review_agent import run_statistical_review_agent
 from core.logging_config import get_logger
 from schemas import AnalysisResponse, ModelSelectionResult
 from services.rag_service import get_rag_kb
@@ -46,7 +48,7 @@ def run_pipeline(
     chroma_persist_dir: str = "./chroma_db",
     progress_callback: Callable[[int, str], None] | None = None,
 ) -> AnalysisResponse:
-    """Execute the full 5-agent pipeline and return the complete AnalysisResponse.
+    """Execute the full 6-agent pipeline and return the complete AnalysisResponse.
 
     Args:
         df:                Input DataFrame.
@@ -188,9 +190,110 @@ def run_pipeline(
     )
     _progress(75, "Forecast complete")
 
+    # ── Agent 4.5: Statistical Review (QA) ────────────────────────────────────
+    logger.info("Agent 4.5: Statistical Review")
+    _progress(77, "Statistical review…")
+    statistical_review = run_statistical_review_agent(
+        stat_result, model_selection, forecast_result, all_metrics
+    )
+    _progress(80, "Statistical review complete")
+
+    # ── Review-Triggered Re-run (one-shot) ────────────────────────────────────
+    retry_enabled = (preflight_options or {}).get(
+        "statistical_review_retry_enabled", True
+    )
+    has_critical = any(
+        f.get("severity") == "critical" for f in statistical_review.flags
+    )
+    if retry_enabled and (has_critical or statistical_review.verdict == "fail"):
+        logger.info(
+            "Statistical review flagged critical issues — re-running model "
+            "selection with review feedback."
+        )
+        _progress(82, "Re-running model selection with review feedback…")
+
+        # Preserve token usage from the first attempt so the pipeline
+        # totals include both executions.
+        prev_model_selection_usage = dict(model_selection.token_usage)
+        prev_forecast_usage = dict(forecast_result.token_usage)
+        prev_review_usage = dict(statistical_review.token_usage)
+
+        review_feedback = statistical_review.summary
+
+        if forced_model:
+            # When the user forced a model, do not rerun model selection.
+            # Only append review feedback to the existing explanation.
+            logger.info(
+                "Forced model '%s' — skipping model reselection, "
+                "appending review feedback only.",
+                forced_model,
+            )
+            model_selection = model_selection.model_copy(
+                update={
+                    "explanation": (
+                        f"{model_selection.explanation}\n\n"
+                        f"[Statistical Review Feedback]: {review_feedback}"
+                    )
+                }
+            )
+        else:
+            # Re-run model selection with review feedback and exclude the
+            # previously selected model so the LLM picks a different one.
+            prev_selected = model_selection.selected_model
+            model_selection = run_model_selection_agent(
+                stat_result,
+                review_feedback=review_feedback,
+                exclude_model=prev_selected,
+            )
+            # Append review feedback to the model selection explanation
+            model_selection = model_selection.model_copy(
+                update={
+                    "explanation": (
+                        f"{model_selection.explanation}\n\n"
+                        f"[Statistical Review Feedback]: {review_feedback}"
+                    )
+                }
+            )
+
+        # Re-run forecasting with the new model selection
+        _progress(85, "Re-running forecast with revised model…")
+        forecast_result, all_metrics = run_forecasting_agent(
+            series, model_selection, stat_result, forecast_horizon, freq
+        )
+        # Re-run statistical review on the new outputs
+        _progress(87, "Re-running statistical review…")
+        statistical_review = run_statistical_review_agent(
+            stat_result, model_selection, forecast_result, all_metrics
+        )
+        _progress(88, "Statistical review re-run complete")
+
+        # Merge token usage from the first attempt into the retry results
+        # so the pipeline totals include both executions.
+        model_selection = model_selection.model_copy(
+            update={
+                "token_usage": _merge_token_usage(
+                    prev_model_selection_usage, model_selection.token_usage
+                )
+            }
+        )
+        forecast_result = forecast_result.model_copy(
+            update={
+                "token_usage": _merge_token_usage(
+                    prev_forecast_usage, forecast_result.token_usage
+                )
+            }
+        )
+        statistical_review = statistical_review.model_copy(
+            update={
+                "token_usage": _merge_token_usage(
+                    prev_review_usage, statistical_review.token_usage
+                )
+            }
+        )
+
     # ── Agent 5: Report Generation ────────────────────────────────────────────
     logger.info("Agent 5: Report Generation")
-    _progress(80, "Generating report…")
+    _progress(90, "Generating report…")
     rag_kb = get_rag_kb(chroma_persist_dir)
     report, report_reasoning, visual_strategy, report_token_usage = run_report_agent(
         validation_result,
@@ -200,6 +303,7 @@ def run_pipeline(
         rag_kb,
         user_prompt=user_prompt,
         preflight_options=preflight_options,
+        statistical_review=statistical_review,
     )
     _progress(92, "Report complete")
 
@@ -235,6 +339,7 @@ def run_pipeline(
         "statistical": stat_result.token_usage,
         "model_selection": model_selection.token_usage,
         "forecast": forecast_result.token_usage,
+        "statistical_review": statistical_review.token_usage,
         "report": report_token_usage,
     }
     grand_total = {
@@ -268,6 +373,7 @@ def run_pipeline(
         statistical=stat_result,
         model_selection=model_selection,
         forecast=forecast_result,
+        statistical_review=statistical_review,
         report=report,
         report_reasoning=report_reasoning,
         strategic_visual_recommendations=visual_strategy,
@@ -279,6 +385,30 @@ def run_pipeline(
         chart_model_comparison=chart_model_comparison,
         pipeline_token_usage=pipeline_token_usage,
     )
+
+
+def _merge_token_usage(
+    first: dict[str, int],
+    second: dict[str, int],
+) -> dict[str, int]:
+    """Merge two token-usage dicts by summing their numeric values.
+
+    Args:
+        first:  Token usage from the first attempt.
+        second: Token usage from the retry attempt.
+
+    Returns:
+        A new dict with summed values for ``input_tokens``,
+        ``output_tokens``, and ``total_tokens``.  The ``estimated`` flag is
+        set to ``True`` if either input was estimated.
+    """
+    merged: dict[str, int] = {}
+    for key in ("input_tokens", "output_tokens", "total_tokens"):
+        merged[key] = first.get(key, 0) + second.get(key, 0)
+    merged["estimated"] = bool(
+        first.get("estimated", False) or second.get("estimated", False)
+    )
+    return merged
 
 
 def _freq_to_period(freq: str) -> int:

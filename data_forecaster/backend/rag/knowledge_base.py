@@ -21,6 +21,20 @@ CHUNK_OVERLAP = 80  # characters overlapping between consecutive chunks
 
 
 class RAGKnowledgeBase:
+    """ChromaDB-backed knowledge base for forecasting methodology retrieval.
+
+    Wraps a persistent ChromaDB collection and a sentence-transformers
+    embedding model.  Documents are chunked into overlapping character
+    windows, embedded, and upserted into the collection for semantic
+    retrieval by the report-generation and chat agents.
+
+    Attributes:
+        _persist_directory: Filesystem path where ChromaDB data is stored.
+        _client: The ChromaDB client (initialised by ``load_documents``).
+        _collection: The named ChromaDB collection for methodology chunks.
+        _embedder: The sentence-transformers model used for embeddings.
+    """
+
     def __init__(self, persist_directory: str = "./chroma_db") -> None:
         self._persist_directory = persist_directory
         self._client: chromadb.ClientAPI | None = None

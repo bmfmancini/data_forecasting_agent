@@ -11,8 +11,24 @@ logger = get_logger(__name__)
 _MODELS = ("ARIMA", "SARIMA", "Holt-Winters", "EWMA")
 
 
-def run_model_selection_agent(stat_result: StatisticalResult) -> ModelSelectionResult:
-    """Use the LLM to reason over statistical findings and select the best model."""
+def run_model_selection_agent(
+    stat_result: StatisticalResult,
+    review_feedback: str | None = None,
+    exclude_model: str | None = None,
+) -> ModelSelectionResult:
+    """Use the LLM to reason over statistical findings and select the best model.
+
+    Args:
+        stat_result:      Output of the statistical analysis agent.
+        review_feedback:  Optional feedback from a prior statistical review,
+                          injected into the LLM prompt to influence reselection.
+        exclude_model:    Optional model name to exclude from consideration
+                          (e.g., the previously selected model that was rejected
+                          by the statistical review).
+
+    Returns:
+        The :class:`ModelSelectionResult` with the selected model and reasoning.
+    """
 
     # ── Logic to build suitability assessment in Python ──────────────────────
     def get_hw_suitability():
@@ -173,6 +189,18 @@ def run_model_selection_agent(stat_result: StatisticalResult) -> ModelSelectionR
 
     fallback_model, fallback_reasoning = _get_heuristic_fallback()
 
+    # If a model is excluded (e.g., rejected by statistical review), adjust
+    # the fallback so the heuristic does not pick it again.
+    if exclude_model and fallback_model == exclude_model:
+        # Pick the next best fallback from the remaining models.
+        remaining = [m for m in _MODELS if m != exclude_model]
+        if remaining:
+            fallback_model = remaining[0]
+            logger.info(
+                "Fallback adjusted to exclude rejected model: %s",
+                exclude_model,
+            )
+
     # ── LLM Setup ────────────────────────────────────────────────────────────
     llm = get_llm(temperature=0)
 
@@ -181,7 +209,25 @@ def run_model_selection_agent(stat_result: StatisticalResult) -> ModelSelectionR
 
     try:
         chain = prompt | llm
-        inputs = {"suitability": suitability_summary}
+        # Build the suitability summary with optional review feedback and
+        # model exclusion context so the LLM can make a different choice.
+        suitability_input = suitability_summary
+        if review_feedback:
+            suitability_input += (
+                f"\n\n## Statistical Review Feedback (from prior run)\n"
+                f"{review_feedback}\n\n"
+                f"The previous model selection was reviewed and found to have "
+                f"issues. Please select a DIFFERENT model that addresses the "
+                f"reviewer's concerns."
+            )
+        if exclude_model:
+            suitability_input += (
+                f"\n\n## Model Exclusion\n"
+                f"The model '{exclude_model}' was previously selected and "
+                f"rejected by the statistical review. Do NOT select "
+                f"'{exclude_model}' again."
+            )
+        inputs = {"suitability": suitability_input}
         response = chain.invoke(inputs)
         output = response.content
         token_usage = extract_token_usage(
@@ -199,21 +245,41 @@ def run_model_selection_agent(stat_result: StatisticalResult) -> ModelSelectionR
             },
         ]
 
-        # Parse selected model from output
+        # Parse selected model from output.
+        # Normalize: strip markdown bold/italic markers and unicode hyphens
+        # so that "**Selected model:** Holt-Winters" matches correctly.
+        normalized = output.replace("**", "").replace("__", "")
+        normalized = normalized.replace("\u2010", "-").replace("\u2011", "-")
+        normalized = normalized.replace("\u2012", "-").replace("\u2013", "-")
+        normalized = normalized.replace("\u2014", "-").replace("\u2015", "-")
+
         selected_model = fallback_model
+        exact_match_found = False
+        normalized_lower = normalized.lower()
         for m in _MODELS:
-            if (
-                f"Selected model: {m}" in output
-                or f"selected model: {m}" in output.lower()
-            ):
+            # Case-insensitive exact match: lower-case both sides so that
+            # "selected model: arima" is reachable for all model names.
+            if f"selected model: {m.lower()}" in normalized_lower:
                 selected_model = m
+                exact_match_found = True
                 break
-        # Broader fallback scan
-        if selected_model == fallback_model:
-            upper = output.upper()
-            for m in _MODELS:
-                if m.upper() in upper[:100]:
-                    selected_model = m
+        # Broader fallback: look for "Selected model" line specifically
+        # rather than scanning the first 100 chars blindly (which may contain
+        # suitability text mentioning other model names).
+        # Only run if the exact match did NOT find a model.
+        if not exact_match_found:
+            model_found = False
+            for line in normalized.splitlines():
+                if "selected model" in line.lower():
+                    upper_line = line.upper()
+                    # Check longest model names first to avoid substring
+                    # matches (e.g. "ARIMA" inside "SARIMA").
+                    for m in sorted(_MODELS, key=len, reverse=True):
+                        if m.upper() in upper_line:
+                            selected_model = m
+                            model_found = True
+                            break
+                if model_found:
                     break
 
         explanation = output

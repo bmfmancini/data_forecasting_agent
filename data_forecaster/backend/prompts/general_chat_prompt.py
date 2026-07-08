@@ -8,6 +8,8 @@ or engage in out-of-domain conversation regardless of which chat path is
 taken.
 """
 
+from __future__ import annotations
+
 from langchain_core.prompts import ChatPromptTemplate
 
 GENERAL_CHAT_PROMPT = ChatPromptTemplate.from_messages(
