@@ -25,6 +25,7 @@ from utils.data_cleaning import apply_iqr_clipping, apply_zscore_clipping
 from utils.preflight import prepare_series_frame
 from utils.statistical import apply_boxcox, compute_acf_pacf, run_stl_decomposition
 from utils.visualization import (
+    chart_dict_to_png_b64,
     plot_acf_pacf,
     plot_forecast,
     plot_historical,
@@ -347,6 +348,28 @@ def run_pipeline(
     chart_forecast = plot_forecast(series, forecast_result)
     chart_model_comparison = plot_model_comparison(all_metrics)
 
+    # ── Generate PNG versions for PDF export ────────────────────────────────
+    chart_historical_png = ""
+    chart_stl_png = ""
+    chart_forecast_png = ""
+    chart_model_comparison_png = ""
+    try:
+        chart_historical_png = chart_dict_to_png_b64(chart_historical)
+    except Exception as exc:
+        logger.warning("Historical chart PNG failed: %s", exc)
+    try:
+        chart_stl_png = chart_dict_to_png_b64(chart_stl)
+    except Exception as exc:
+        logger.warning("STL chart PNG failed: %s", exc)
+    try:
+        chart_forecast_png = chart_dict_to_png_b64(chart_forecast)
+    except Exception as exc:
+        logger.warning("Forecast chart PNG failed: %s", exc)
+    try:
+        chart_model_comparison_png = chart_dict_to_png_b64(chart_model_comparison)
+    except Exception as exc:
+        logger.warning("Model comparison chart PNG failed: %s", exc)
+
     # ── Token Usage Aggregation ─────────────────────────────────────────────
     agent_usage = {
         "validation": validation_result.token_usage,
@@ -399,6 +422,10 @@ def run_pipeline(
         chart_acf_pacf=chart_acf_pacf,
         chart_forecast=chart_forecast,
         chart_model_comparison=chart_model_comparison,
+        chart_historical_png=chart_historical_png,
+        chart_stl_png=chart_stl_png,
+        chart_forecast_png=chart_forecast_png,
+        chart_model_comparison_png=chart_model_comparison_png,
         pipeline_token_usage=pipeline_token_usage,
     )
 

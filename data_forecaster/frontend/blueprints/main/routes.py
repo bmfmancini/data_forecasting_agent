@@ -474,7 +474,9 @@ def report_export() -> Response:
     pdf_filename = f"forecast_report_{base_name}.pdf"
 
     pdf_bytes = report_to_pdf(
-        report_text, title=pdf_filename.replace("_", " ").replace(".pdf", "")
+        report_text,
+        title=pdf_filename.replace("_", " ").replace(".pdf", ""),
+        result=result,
     )
     return send_file(
         io.BytesIO(pdf_bytes),
