@@ -354,22 +354,99 @@ def _rejection_reasons(selected_model: str) -> dict[str, str | None]:
 # ── LLM invocation ───────────────────────────────────────────────────────────
 
 
+def _format_metrics_text(
+    all_metrics: dict[str, dict[str, float]],
+) -> str:
+    """Format all model error metrics into a readable text block.
+
+    Args:
+        all_metrics: Dict of model metrics, e.g.
+            ``{"ARIMA": {"RMSE": x, "MAE": y, "MAPE": z}, ...}``.
+
+    Returns:
+        A formatted string listing each model's metrics, or empty string.
+    """
+    if not all_metrics:
+        return ""
+    lines = []
+    for name, metrics in all_metrics.items():
+        rmse = metrics.get("RMSE", float("nan"))
+        mae = metrics.get("MAE", float("nan"))
+        mape = metrics.get("MAPE", float("nan"))
+        lines.append(
+            f"- {name}: RMSE={rmse:.4f}, MAE={mae:.4f}, MAPE={mape:.2f}%"
+        )
+    return "\n".join(lines)
+
+
+def _select_best_metric_model(
+    all_metrics: dict[str, dict[str, float]],
+    exclude_model: str | None = None,
+) -> str | None:
+    """Deterministically select the model with the lowest RMSE.
+
+    Used during review-triggered retries when actual error metrics are
+    available.  Falls back to MAE then MAPE if RMSE is unavailable.
+
+    Args:
+        all_metrics: Dict of model metrics.
+        exclude_model: Optional model to exclude from consideration.
+
+    Returns:
+        The name of the best model, or ``None`` if no metrics are available.
+    """
+    candidates = {
+        k: v for k, v in all_metrics.items() if k != exclude_model
+    }
+    if not candidates:
+        return None
+    # Select by RMSE (primary), then MAE, then MAPE as tie-breakers
+    def _metric_key(item: tuple[str, dict[str, float]]) -> tuple[float, float, float]:
+        m = item[1]
+        return (
+            m.get("RMSE", float("inf")),
+            m.get("MAE", float("inf")),
+            m.get("MAPE", float("inf")),
+        )
+    return min(candidates.items(), key=_metric_key)[0]
+
+
 def _build_suitability_input(
     suitability_summary: str,
     review_feedback: str | None,
     exclude_model: str | None,
+    all_metrics: dict[str, dict[str, float]] | None = None,
 ) -> str:
     """Augment the suitability summary with review feedback and exclusion context.
+
+    When ``all_metrics`` is provided (during a review-triggered retry), the
+    actual error metrics from the forecasting run are included so the LLM
+    can make an evidence-based selection rather than relying solely on
+    statistical properties.
 
     Args:
         suitability_summary: Base suitability summary for all models.
         review_feedback: Optional feedback from a prior statistical review.
         exclude_model: Optional model name to exclude from consideration.
+        all_metrics: Optional dict of actual model error metrics from the
+            prior forecasting run.
 
     Returns:
         The augmented suitability input string for the LLM prompt.
     """
     suitability_input = suitability_summary
+    if all_metrics:
+        metrics_text = _format_metrics_text(all_metrics)
+        suitability_input += (
+            "\n\n## ACTUAL ERROR METRICS (from prior forecasting run)\n"
+            f"{metrics_text}\n\n"
+            "These are real validation metrics (lower is better) from fitting "
+            "all candidate models on the same train-test split. You MUST "
+            "weight these empirical results heavily in your selection — "
+            "a model with substantially lower RMSE/MAE/MAPE is objectively "
+            "more accurate and should be preferred unless there is a strong "
+            "methodological reason not to."
+        )
     if review_feedback:
         suitability_input += (
             "\n\n## Statistical Review Feedback (from prior run)\n"
@@ -421,8 +498,15 @@ def run_model_selection_agent(
     stat_result: StatisticalResult,
     review_feedback: str | None = None,
     exclude_model: str | None = None,
+    all_metrics: dict[str, dict[str, float]] | None = None,
 ) -> ModelSelectionResult:
     """Use the LLM to reason over statistical findings and select the best model.
+
+    When ``all_metrics`` is provided (during a review-triggered retry), the
+    actual error metrics from the prior forecasting run are included in the
+    LLM prompt.  Additionally, if the metrics clearly indicate a superior
+    model, a deterministic override selects the best-performing model
+    directly — this prevents the LLM from ignoring empirical evidence.
 
     Args:
         stat_result:     Output of the statistical analysis agent.
@@ -431,6 +515,9 @@ def run_model_selection_agent(
         exclude_model:   Optional model name to exclude from consideration
                          (e.g., the previously selected model that was rejected
                          by the statistical review).
+        all_metrics:     Optional dict of actual model error metrics from the
+                         prior forecasting run, used to make an evidence-based
+                         reselection during retry.
 
     Returns:
         The :class:`ModelSelectionResult` with the selected model and reasoning.
@@ -439,8 +526,48 @@ def run_model_selection_agent(
     fallback_model, fallback_reasoning = _heuristic_fallback(stat_result)
     fallback_model = _adjust_excluded_fallback(fallback_model, exclude_model)
 
+    # ── Deterministic override when empirical metrics are available ────────
+    # During a review-triggered retry, if actual error metrics are available,
+    # deterministically select the best-performing model rather than relying
+    # on the LLM.  This prevents the LLM from re-selecting a suboptimal model
+    # based on statistical properties alone.
+    if all_metrics:
+        best_model = _select_best_metric_model(all_metrics, exclude_model)
+        if best_model:
+            logger.info(
+                "Deterministic override: selecting best-metric model '%s' "
+                "based on empirical error metrics.",
+                best_model,
+            )
+            metrics_text = _format_metrics_text(all_metrics)
+            explanation = (
+                f"Model re-selected based on empirical validation metrics "
+                f"from the prior forecasting run. '{best_model}' achieved "
+                f"the lowest error scores:\n{metrics_text}\n\n"
+                f"[Statistical Review Feedback]: {review_feedback or 'N/A'}"
+            )
+            reasons = _rejection_reasons(best_model)
+            return ModelSelectionResult(
+                selected_model=best_model,
+                explanation=explanation,
+                holt_winters_rejected_reason=reasons["Holt-Winters"],
+                arima_rejected_reason=reasons["ARIMA"],
+                sarima_rejected_reason=reasons["SARIMA"],
+                ewma_rejected_reason=reasons["EWMA"],
+                reasoning_steps=[
+                    {
+                        "thought": (
+                            "Review-triggered retry with empirical metrics "
+                            "available — selecting best-performing model."
+                        ),
+                        "observation": metrics_text,
+                    },
+                ],
+                token_usage={},
+            )
+
     suitability_input = _build_suitability_input(
-        suitability_summary, review_feedback, exclude_model
+        suitability_summary, review_feedback, exclude_model, all_metrics
     )
     llm_result = _invoke_llm(suitability_input)
 

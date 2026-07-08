@@ -237,13 +237,17 @@ def run_pipeline(
                 }
             )
         else:
-            # Re-run model selection with review feedback and exclude the
-            # previously selected model so the LLM picks a different one.
+            # Re-run model selection with review feedback, exclude the
+            # previously selected model, and pass the actual error metrics
+            # from the prior forecasting run so the reselection is
+            # evidence-based rather than relying on statistical properties
+            # alone.
             prev_selected = model_selection.selected_model
             model_selection = run_model_selection_agent(
                 stat_result,
                 review_feedback=review_feedback,
                 exclude_model=prev_selected,
+                all_metrics=all_metrics,
             )
             # Append review feedback to the model selection explanation
             model_selection = model_selection.model_copy(
@@ -295,16 +299,26 @@ def run_pipeline(
     logger.info("Agent 5: Report Generation")
     _progress(90, "Generating report…")
     rag_kb = get_rag_kb(chroma_persist_dir)
-    report, report_reasoning, visual_strategy, report_token_usage = run_report_agent(
-        validation_result,
-        stat_result,
-        model_selection,
-        forecast_result,
-        rag_kb,
-        user_prompt=user_prompt,
-        preflight_options=preflight_options,
-        statistical_review=statistical_review,
+    executive_report, report_reasoning, visual_strategy, report_token_usage = (
+        run_report_agent(
+            validation_result,
+            stat_result,
+            model_selection,
+            forecast_result,
+            rag_kb,
+            user_prompt=user_prompt,
+            preflight_options=preflight_options,
+            statistical_review=statistical_review,
+            all_metrics=all_metrics,
+        )
     )
+    # ── Render report to Markdown and HTML ────────────────────────────────
+    from report.renderers import HTMLRenderer, MarkdownRenderer
+
+    md_renderer = MarkdownRenderer()
+    html_renderer = HTMLRenderer()
+    report_md = md_renderer.render(executive_report)
+    report_html = html_renderer.render(executive_report)
     _progress(92, "Report complete")
 
     # ── Visualizations ────────────────────────────────────────────────────────
@@ -374,7 +388,9 @@ def run_pipeline(
         model_selection=model_selection,
         forecast=forecast_result,
         statistical_review=statistical_review,
-        report=report,
+        report=report_md,
+        executive_report=executive_report.model_dump(),
+        report_html=report_html,
         report_reasoning=report_reasoning,
         strategic_visual_recommendations=visual_strategy,
         llm_fallback=llm_fallback,

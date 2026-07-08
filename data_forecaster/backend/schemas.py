@@ -176,6 +176,8 @@ class AnalysisResponse(BaseModel):
     forecast: ForecastResult
     statistical_review: StatisticalReviewResult | None = None
     report: str
+    executive_report: dict[str, Any] | None = None
+    report_html: str | None = None
     report_reasoning: list[dict[str, Any]] = Field(default_factory=list)
     strategic_visual_recommendations: list[dict[str, str]] = Field(default_factory=list)
     llm_fallback: bool = (

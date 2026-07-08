@@ -38,6 +38,30 @@ def _env_int(key: str, default: int) -> int:
 
 TOKEN_BUDGETS: dict[str, int] = {
     "report_generation": _env_int("REPORT_GENERATION_TOKEN_BUDGET", 800),
+    "narrative_executive_summary": _env_int(
+        "NARRATIVE_EXECUTIVE_SUMMARY_TOKEN_BUDGET", 300
+    ),
+    "narrative_data_quality": _env_int(
+        "NARRATIVE_DATA_QUALITY_TOKEN_BUDGET", 200
+    ),
+    "narrative_historical_analysis": _env_int(
+        "NARRATIVE_HISTORICAL_ANALYSIS_TOKEN_BUDGET", 250
+    ),
+    "narrative_forecast_outlook": _env_int(
+        "NARRATIVE_FORECAST_OUTLOOK_TOKEN_BUDGET", 250
+    ),
+    "narrative_model_comparison": _env_int(
+        "NARRATIVE_MODEL_COMPARISON_TOKEN_BUDGET", 250
+    ),
+    "narrative_statistical_audit": _env_int(
+        "NARRATIVE_STATISTICAL_AUDIT_TOKEN_BUDGET", 200
+    ),
+    "narrative_explainability": _env_int(
+        "NARRATIVE_EXPLAINABILITY_TOKEN_BUDGET", 200
+    ),
+    "narrative_recommendation": _env_int(
+        "NARRATIVE_RECOMMENDATION_TOKEN_BUDGET", 150
+    ),
     "forecasting": _env_int("FORECASTING_TOKEN_BUDGET", 400),
     "data_validation": _env_int("DATA_VALIDATION_TOKEN_BUDGET", 300),
     "model_selection": _env_int("MODEL_SELECTION_TOKEN_BUDGET", 300),
