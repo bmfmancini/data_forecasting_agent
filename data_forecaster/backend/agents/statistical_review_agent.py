@@ -36,6 +36,235 @@ _FLAG_PATTERN = re.compile(
 )
 
 
+def _check_seasonality_mismatch(
+    stat_result: StatisticalResult,
+    selected: str,
+) -> dict[str, Any] | None:
+    """Flag when ARIMA is selected despite a detected seasonal period.
+
+    Args:
+        stat_result: Output of the statistical analysis agent.
+        selected:    The model selected by the model selection agent.
+
+    Returns:
+        A flag dict if the mismatch is detected, otherwise ``None``.
+    """
+    sp = stat_result.seasonal_period
+    if sp and sp > 1 and selected == "ARIMA":
+        return {
+            "agent": "model_selection",
+            "severity": "critical",
+            "issue": (
+                f"Seasonal period {sp} detected but ARIMA was selected. "
+                "ARIMA does not model seasonality natively."
+            ),
+            "recommendation": (
+                "Consider SARIMA or Holt-Winters which handle seasonality."
+            ),
+        }
+    return None
+
+
+def _check_nonstationary_ewma(
+    stat_result: StatisticalResult,
+    selected: str,
+) -> dict[str, Any] | None:
+    """Flag when EWMA is selected for a non-stationary series.
+
+    Args:
+        stat_result: Output of the statistical analysis agent.
+        selected:    The model selected by the model selection agent.
+
+    Returns:
+        A flag dict if the mismatch is detected, otherwise ``None``.
+    """
+    if not stat_result.is_stationary_adf and selected == "EWMA":
+        return {
+            "agent": "model_selection",
+            "severity": "critical",
+            "issue": (
+                "Series is non-stationary (ADF) but EWMA was selected. "
+                "EWMA performs poorly on non-stationary data."
+            ),
+            "recommendation": (
+                "Consider ARIMA/SARIMA with differencing for non-stationary series."
+            ),
+        }
+    return None
+
+
+def _check_high_mape(
+    forecast_result: ForecastResult,
+) -> dict[str, Any] | None:
+    """Flag when the forecast MAPE exceeds 20%.
+
+    Args:
+        forecast_result: Output of the forecasting agent.
+
+    Returns:
+        A flag dict if MAPE is high, otherwise ``None``.
+    """
+    if forecast_result.mape > 20:
+        return {
+            "agent": "forecasting",
+            "severity": "warning",
+            "issue": (
+                f"Forecast MAPE is {forecast_result.mape:.2f}%, indicating "
+                "high prediction error."
+            ),
+            "recommendation": (
+                "Review model adequacy, data transformations, or feature "
+                "engineering to reduce error."
+            ),
+        }
+    return None
+
+
+def _check_outliers(
+    stat_result: StatisticalResult,
+) -> dict[str, Any] | None:
+    """Flag when outliers are present but no remediation was recommended.
+
+    Args:
+        stat_result: Output of the statistical analysis agent.
+
+    Returns:
+        A flag dict if unaddressed outliers are detected, otherwise ``None``.
+    """
+    if stat_result.outlier_ratio > 0.05 and not stat_result.recommended_remediation:
+        return {
+            "agent": "statistical",
+            "severity": "warning",
+            "issue": (
+                f"Outlier ratio is {stat_result.outlier_ratio:.1%} but no "
+                "remediation was recommended."
+            ),
+            "recommendation": (
+                "Consider IQR clipping, Z-score clipping, or robust "
+                "transformations to mitigate outlier influence."
+            ),
+        }
+    return None
+
+
+def _check_trend_ewma_lag(
+    stat_result: StatisticalResult,
+    selected: str,
+) -> dict[str, Any] | None:
+    """Flag when EWMA is selected for a series with a detected trend.
+
+    Args:
+        stat_result: Output of the statistical analysis agent.
+        selected:    The model selected by the model selection agent.
+
+    Returns:
+        A flag dict if EWMA is selected on a trending series, otherwise ``None``.
+    """
+    if stat_result.has_trend and selected == "EWMA":
+        return {
+            "agent": "model_selection",
+            "severity": "warning",
+            "issue": (
+                f"Trend detected (slope={stat_result.trend_slope:.4f}) but "
+                "EWMA was selected. EWMA lags behind trend changes."
+            ),
+            "recommendation": (
+                "Consider Holt-Winters (trend component) or ARIMA with "
+                "differencing for trending series."
+            ),
+        }
+    return None
+
+
+def _check_explanation_mismatch(
+    model_selection: ModelSelectionResult,
+    selected: str,
+) -> dict[str, Any] | None:
+    """Flag when the explanation mentions a different model than selected.
+
+    The model selection agent's explanation text may mention a different
+    model than the parsed selected_model field (e.g. due to markdown bold
+    or unicode hyphens confusing the parser).  This creates narrative
+    contradictions in the report.
+
+    Args:
+        model_selection: Output of the model selection agent.
+        selected:         The model selected by the model selection agent.
+
+    Returns:
+        A flag dict if a mismatch is detected, otherwise ``None``.
+    """
+    explanation_lower = model_selection.explanation.lower()
+    other_models = [
+        m for m in ("ARIMA", "SARIMA", "Holt-Winters", "EWMA") if m != selected
+    ]
+    mentioned_models = [m for m in other_models if m.lower() in explanation_lower[:200]]
+    # Only flag if another model is mentioned prominently in the first 200
+    # chars of the explanation (where "Selected model:" text appears)
+    # and the selected model itself is NOT mentioned there.
+    if mentioned_models and selected.lower() not in explanation_lower[:200]:
+        return {
+            "agent": "model_selection",
+            "severity": "critical",
+            "issue": (
+                f"Model selection explanation mentions '{mentioned_models[0]}' "
+                f"but the parsed selected_model is '{selected}'. This "
+                f"indicates a parsing mismatch that will cause narrative "
+                f"contradictions in the report."
+            ),
+            "recommendation": (
+                "Re-run model selection to resolve the explanation/"
+                "selected_model mismatch."
+            ),
+        }
+    return None
+
+
+def _check_suboptimal_rmse(
+    selected: str,
+    all_metrics: dict[str, dict[str, float]],
+) -> dict[str, Any] | None:
+    """Flag when the selected model has significantly worse RMSE than the best.
+
+    If the selected model has significantly worse RMSE than the best
+    available model, flag it as a critical model selection issue.
+
+    Args:
+        selected:    The model selected by the model selection agent.
+        all_metrics: Dict of all model metrics.
+
+    Returns:
+        A flag dict if the selected model is suboptimal, otherwise ``None``.
+    """
+    if not all_metrics or selected not in all_metrics:
+        return None
+    selected_rmse = all_metrics[selected].get("RMSE", float("inf"))
+    best_model = min(
+        all_metrics,
+        key=lambda m: all_metrics[m].get("RMSE", float("inf")),
+    )
+    best_rmse = all_metrics[best_model].get("RMSE", float("inf"))
+    if best_model != selected and best_rmse > 0:
+        ratio = selected_rmse / best_rmse
+        if ratio > 1.5:
+            return {
+                "agent": "model_selection",
+                "severity": "critical",
+                "issue": (
+                    f"Selected model '{selected}' has RMSE="
+                    f"{selected_rmse:.4f} which is {ratio:.1f}x worse "
+                    f"than the best model '{best_model}' (RMSE="
+                    f"{best_rmse:.4f}). The selected model may be "
+                    f"suboptimal."
+                ),
+                "recommendation": (
+                    f"Re-evaluate model selection. '{best_model}' "
+                    "achieved significantly better validation metrics."
+                ),
+            }
+    return None
+
+
 def _deterministic_pre_check(
     stat_result: StatisticalResult,
     model_selection: ModelSelectionResult,
@@ -55,160 +284,19 @@ def _deterministic_pre_check(
         A list of flag dicts with keys ``agent``, ``severity``, ``issue``,
         and ``recommendation``.
     """
-    flags: list[dict[str, Any]] = []
     selected = model_selection.selected_model
-    sp = stat_result.seasonal_period
 
-    # ── Seasonality / model mismatch ──────────────────────────────────────────
-    if sp and sp > 1 and selected == "ARIMA":
-        flags.append(
-            {
-                "agent": "model_selection",
-                "severity": "critical",
-                "issue": (
-                    f"Seasonal period {sp} detected but ARIMA was selected. "
-                    "ARIMA does not model seasonality natively."
-                ),
-                "recommendation": (
-                    "Consider SARIMA or Holt-Winters which handle seasonality."
-                ),
-            }
-        )
-
-    # ── Non-stationary + EWMA ─────────────────────────────────────────────────
-    if not stat_result.is_stationary_adf and selected == "EWMA":
-        flags.append(
-            {
-                "agent": "model_selection",
-                "severity": "critical",
-                "issue": (
-                    "Series is non-stationary (ADF) but EWMA was selected. "
-                    "EWMA performs poorly on non-stationary data."
-                ),
-                "recommendation": (
-                    "Consider ARIMA/SARIMA with differencing for non-stationary series."
-                ),
-            }
-        )
-
-    # ── High forecast error ───────────────────────────────────────────────────
-    if forecast_result.mape > 20:
-        flags.append(
-            {
-                "agent": "forecasting",
-                "severity": "warning",
-                "issue": (
-                    f"Forecast MAPE is {forecast_result.mape:.2f}%, indicating "
-                    "high prediction error."
-                ),
-                "recommendation": (
-                    "Review model adequacy, data transformations, or feature "
-                    "engineering to reduce error."
-                ),
-            }
-        )
-
-    # ── Unaddressed outliers ──────────────────────────────────────────────────
-    if (
-        stat_result.outlier_ratio > 0.05
-        and not stat_result.recommended_remediation
-    ):
-        flags.append(
-            {
-                "agent": "statistical",
-                "severity": "warning",
-                "issue": (
-                    f"Outlier ratio is {stat_result.outlier_ratio:.1%} but no "
-                    "remediation was recommended."
-                ),
-                "recommendation": (
-                    "Consider IQR clipping, Z-score clipping, or robust "
-                    "transformations to mitigate outlier influence."
-                ),
-            }
-        )
-
-    # ── Trend + EWMA lag ──────────────────────────────────────────────────────
-    if stat_result.has_trend and selected == "EWMA":
-        flags.append(
-            {
-                "agent": "model_selection",
-                "severity": "warning",
-                "issue": (
-                    f"Trend detected (slope={stat_result.trend_slope:.4f}) but "
-                    "EWMA was selected. EWMA lags behind trend changes."
-                ),
-                "recommendation": (
-                    "Consider Holt-Winters (trend component) or ARIMA with "
-                    "differencing for trending series."
-                ),
-            }
-        )
-
-    # ── Explanation / selected_model mismatch ─────────────────────────────────
-    # The model selection agent's explanation text may mention a different
-    # model than the parsed selected_model field (e.g. due to markdown bold
-    # or unicode hyphens confusing the parser).  This creates narrative
-    # contradictions in the report.
-    explanation_lower = model_selection.explanation.lower()
-    other_models = [m for m in ("ARIMA", "SARIMA", "Holt-Winters", "EWMA") if m != selected]
-    mentioned_models = [
-        m for m in other_models
-        if m.lower() in explanation_lower[:200]
+    checks: list[dict[str, Any] | None] = [
+        _check_seasonality_mismatch(stat_result, selected),
+        _check_nonstationary_ewma(stat_result, selected),
+        _check_high_mape(forecast_result),
+        _check_outliers(stat_result),
+        _check_trend_ewma_lag(stat_result, selected),
+        _check_explanation_mismatch(model_selection, selected),
+        _check_suboptimal_rmse(selected, all_metrics),
     ]
-    # Only flag if another model is mentioned prominently in the first 200
-    # chars of the explanation (where "Selected model:" text appears)
-    # and the selected model itself is NOT mentioned there.
-    if mentioned_models and selected.lower() not in explanation_lower[:200]:
-        flags.append(
-            {
-                "agent": "model_selection",
-                "severity": "critical",
-                "issue": (
-                    f"Model selection explanation mentions '{mentioned_models[0]}' "
-                    f"but the parsed selected_model is '{selected}'. This "
-                    f"indicates a parsing mismatch that will cause narrative "
-                    f"contradictions in the report."
-                ),
-                "recommendation": (
-                    "Re-run model selection to resolve the explanation/"
-                    "selected_model mismatch."
-                ),
-            }
-        )
 
-    # ── Suboptimal model selection ────────────────────────────────────────────
-    # If the selected model has significantly worse RMSE than the best
-    # available model, flag it as a critical model selection issue.
-    if all_metrics and selected in all_metrics:
-        selected_rmse = all_metrics[selected].get("RMSE", float("inf"))
-        best_model = min(
-            all_metrics,
-            key=lambda m: all_metrics[m].get("RMSE", float("inf")),
-        )
-        best_rmse = all_metrics[best_model].get("RMSE", float("inf"))
-        if best_model != selected and best_rmse > 0:
-            ratio = selected_rmse / best_rmse
-            if ratio > 1.5:
-                flags.append(
-                    {
-                        "agent": "model_selection",
-                        "severity": "critical",
-                        "issue": (
-                            f"Selected model '{selected}' has RMSE="
-                            f"{selected_rmse:.4f} which is {ratio:.1f}x worse "
-                            f"than the best model '{best_model}' (RMSE="
-                            f"{best_rmse:.4f}). The selected model may be "
-                            f"suboptimal."
-                        ),
-                        "recommendation": (
-                            f"Re-evaluate model selection. '{best_model}' "
-                            "achieved significantly better validation metrics."
-                        ),
-                    }
-                )
-
-    return flags
+    return [flag for flag in checks if flag is not None]
 
 
 def _build_statistical_profile(stat_result: StatisticalResult) -> str:
@@ -400,9 +488,7 @@ def _compute_verdict(
     Returns:
         The final verdict string.
     """
-    has_critical = any(
-        f["severity"] == "critical" for f in deterministic_flags
-    )
+    has_critical = any(f["severity"] == "critical" for f in deterministic_flags)
     if has_critical and base_verdict == "pass":
         return "warn"
     return base_verdict
@@ -437,9 +523,7 @@ def run_statistical_review_agent(
         stat_result, model_selection, forecast_result, all_metrics
     )
     if pre_check_flags:
-        logger.info(
-            "Deterministic pre-check found %d flags.", len(pre_check_flags)
-        )
+        logger.info("Deterministic pre-check found %d flags.", len(pre_check_flags))
 
     # ── Build prompt inputs ───────────────────────────────────────────────────
     statistical_profile = _build_statistical_profile(stat_result)
@@ -494,10 +578,11 @@ def run_statistical_review_agent(
             },
         ]
 
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         logger.warning(
             "Statistical review agent LLM call failed: %s — using pre-check only.",
             exc,
+            exc_info=True,
         )
         verdict = "warn" if pre_check_flags else "pass"
         all_flags = list(pre_check_flags)

@@ -17,14 +17,11 @@ import pytest
 # (e.g. ``from core.logging_config import ...``) resolve correctly.
 sys.path.insert(
     0,
-    os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "backend")
-    ),
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "backend")),
 )
 
 from agents.model_selection_agent import run_model_selection_agent  # noqa: E402
 from schemas import StatisticalResult  # noqa: E402
-
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -210,6 +207,29 @@ class TestModelSelectionParser:
                 "The selected model is ARIMA for this series.\n\n"
                 "## Why this model was chosen\n"
                 "SARIMA Assessment: good for seasonality."
+            ),
+            usage_metadata={
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "total_tokens": 150,
+            },
+        )
+        _patch_llm(monkeypatch, response)
+
+        result = run_model_selection_agent(seasonal_stat_result)
+        assert result.selected_model == "ARIMA"
+
+    def test_parses_lowercase_selected_model(
+        self,
+        seasonal_stat_result: StatisticalResult,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Lowercase 'selected model: arima' should parse via case-insensitive match."""
+        response = SimpleNamespace(
+            content=(
+                "selected model: arima\n\n"
+                "## Why this model was chosen\n"
+                "ARIMA handles autocorrelation well."
             ),
             usage_metadata={
                 "input_tokens": 100,

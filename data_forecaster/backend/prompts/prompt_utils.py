@@ -1,12 +1,12 @@
 """Utility functions and constants for prompt management.
 
-This module centralises token‑budget definitions and provides a thin helper
+This module centralises token-budget definitions and provides a thin helper
 ``apply_token_budget`` that can be used by prompt modules to annotate a prompt
-with its intended token limit.  The function currently returns the original
-``ChatPromptTemplate`` unchanged – the budget is retained for documentation
-purposes and can be consulted by developers or tests.
+with its intended token limit.  The function stores the budget as metadata on
+the ``ChatPromptTemplate`` — it does **not** inject any additional messages,
+so the prompt content and the LLM message list remain unchanged.
 
-The design allows future extensions (e.g., integration with a token‑estimation
+The design allows future extensions (e.g., integration with a token-estimation
 library) without requiring changes to every prompt file.
 """
 
@@ -16,9 +16,10 @@ import os
 
 from langchain_core.prompts import ChatPromptTemplate
 
+
 # Token budgets (approximate maximum number of tokens for the full prompt).
 # Values are read from environment variables to allow easy tuning without code changes.
-# Fallback defaults match the previously hard‑coded values.
+# Fallback defaults match the previously hard-coded values.
 def _env_int(key: str, default: int) -> int:
     """Helper to read an integer environment variable with a fallback.
 
@@ -46,29 +47,26 @@ TOKEN_BUDGETS: dict[str, int] = {
 
 
 def apply_token_budget(prompt: ChatPromptTemplate, name: str) -> ChatPromptTemplate:
-    """Annotate a prompt with a token‑budget comment.
+    """Annotate a prompt with a token-budget value stored as metadata.
 
     The function looks up ``name`` in :data:`TOKEN_BUDGETS`.  If a budget is
-    defined, a comment is attached to the ``ChatPromptTemplate``'s ``messages``
-    list as a ``system`` message that does not affect LLM behaviour but serves as
-    documentation.  The original prompt is otherwise returned unchanged.
+    defined, it is stored in the prompt's ``metadata`` dict under the key
+    ``"token_budget"``.  No additional messages are injected — the prompt
+    content and the LLM message list remain unchanged.
 
     Args:
         prompt: The original ``ChatPromptTemplate`` instance.
         name: Key identifying the prompt in ``TOKEN_BUDGETS``.
 
     Returns:
-        The (potentially modified) ``ChatPromptTemplate``.
+        The ``ChatPromptTemplate`` with token-budget metadata attached.
+        If ``name`` is not found in ``TOKEN_BUDGETS``, the original prompt is
+        returned unchanged.
     """
     budget = TOKEN_BUDGETS.get(name)
     if budget is None:
         return prompt
 
-    # Insert a non‑intrusive system message describing the budget.  This keeps the
-    # prompt contract intact while providing visibility for developers and tests.
-    budget_message = (
-        f"[TOKEN_BUDGET: {budget} tokens] – this is a documentation comment."
-    )
-    # Prepend the budget message to the existing messages.
-    new_messages = [("system", budget_message)] + list(prompt.messages)
-    return ChatPromptTemplate.from_messages(new_messages)
+    existing_metadata = dict(prompt.metadata or {})
+    existing_metadata["token_budget"] = budget
+    return prompt.model_copy(update={"metadata": existing_metadata})

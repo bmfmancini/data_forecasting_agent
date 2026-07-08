@@ -12,9 +12,7 @@ import pytest
 # (e.g. ``from core.logging_config import ...``) resolve correctly.
 sys.path.insert(
     0,
-    os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "backend")
-    ),
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "backend")),
 )
 
 from agents.statistical_review_agent import (  # noqa: E402
@@ -31,7 +29,6 @@ from schemas import (  # noqa: E402
     ModelSelectionResult,
     StatisticalResult,
 )
-
 
 # ── Mock helpers ──────────────────────────────────────────────────────────────
 
@@ -266,9 +263,7 @@ class TestDeterministicPreCheck:
             good_forecast_result,
             all_metrics,
         )
-        critical_flags = [
-            f for f in flags if f["severity"] == "critical"
-        ]
+        critical_flags = [f for f in flags if f["severity"] == "critical"]
         assert any(
             "ARIMA" in f["issue"] and "seasonal" in f["issue"].lower()
             for f in critical_flags
@@ -304,10 +299,7 @@ class TestDeterministicPreCheck:
             poor_forecast_result,
             all_metrics,
         )
-        assert any(
-            f["severity"] == "warning" and "MAPE" in f["issue"]
-            for f in flags
-        )
+        assert any(f["severity"] == "warning" and "MAPE" in f["issue"] for f in flags)
 
     def test_no_flags_for_clean_inputs(
         self,
@@ -344,8 +336,7 @@ class TestDeterministicPreCheck:
         suboptimal_flags = [
             f
             for f in flags
-            if f["severity"] == "critical"
-            and "suboptimal" in f["issue"].lower()
+            if f["severity"] == "critical" and "suboptimal" in f["issue"].lower()
         ]
         assert len(suboptimal_flags) == 1
         assert "SARIMA" in suboptimal_flags[0]["recommendation"]
@@ -365,9 +356,7 @@ class TestDeterministicPreCheck:
             good_forecast_result,
             all_metrics,
         )
-        assert not any(
-            "suboptimal" in f["issue"].lower() for f in flags
-        )
+        assert not any("suboptimal" in f["issue"].lower() for f in flags)
 
     def test_explanation_selected_model_mismatch_flags_critical(
         self,
@@ -399,8 +388,7 @@ class TestDeterministicPreCheck:
         mismatch_flags = [
             f
             for f in flags
-            if f["severity"] == "critical"
-            and "mismatch" in f["issue"].lower()
+            if f["severity"] == "critical" and "mismatch" in f["issue"].lower()
         ]
         assert len(mismatch_flags) == 1
         assert "Holt-Winters" in mismatch_flags[0]["issue"]
@@ -469,11 +457,7 @@ class TestParsing:
 
     def test_parse_summary_extracts_text(self) -> None:
         """Test that summary is parsed correctly."""
-        text = (
-            "## Summary\n"
-            "The pipeline is consistent.\n\n"
-            "## Flags\n"
-        )
+        text = "## Summary\n" "The pipeline is consistent.\n\n" "## Flags\n"
         summary = _parse_summary(text)
         assert "consistent" in summary
 
@@ -552,12 +536,11 @@ class TestRunStatisticalReviewAgent:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """LLM failure should fall back to pre-check with verdict warn."""
+
         def raising_llm(temperature: float = 0):
             raise RuntimeError("LLM unavailable")
 
-        monkeypatch.setattr(
-            "agents.statistical_review_agent.get_llm", raising_llm
-        )
+        monkeypatch.setattr("agents.statistical_review_agent.get_llm", raising_llm)
 
         result = run_statistical_review_agent(
             seasonal_stat_result,
@@ -569,9 +552,7 @@ class TestRunStatisticalReviewAgent:
         # Should have flags from deterministic pre-check (seasonality mismatch)
         assert len(result.flags) > 0
         assert result.verdict == "warn"
-        assert any(
-            f["severity"] == "critical" for f in result.flags
-        )
+        assert any(f["severity"] == "critical" for f in result.flags)
         # Summary should mention pre-check fallback
         assert "pre-check" in result.summary.lower()
 
