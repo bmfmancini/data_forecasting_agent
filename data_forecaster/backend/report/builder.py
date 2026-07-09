@@ -508,6 +508,12 @@ class ExecutiveReportBuilder:
             "ARIMA": model_selection.arima_rejected_reason,
             "SARIMA": model_selection.sarima_rejected_reason,
             "EWMA": model_selection.ewma_rejected_reason,
+            # Baseline models do not have rejection reasons from the selection
+            # agent, as they are not candidates for the primary forecast.
+            "Naive": "Baseline model for comparison.",
+            "Seasonal Naive": "Baseline model for comparison.",
+            "Mean Forecast": "Baseline model for comparison.",
+            "Drift": "Baseline model for comparison.",
         }
         entries: list[ModelComparisonEntry] = []
         for name, metrics in all_metrics.items():
