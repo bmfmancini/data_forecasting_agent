@@ -440,16 +440,14 @@ def report() -> str:
     upload_info: dict[str, Any] = session.get("upload_info") or {}
     executive_report: dict[str, Any] | None = result.get("executive_report")
     report_html: str = result.get("report_html", "Report not available.")
-    segments = _parse_report_segments(report_html, result)
     filename: str = upload_info.get("filename", "data")
     base_name = filename.rsplit(".", 1)[0] if "." in filename else filename
     pdf_filename = f"forecast_report_{base_name}.pdf"
     return render_template(
         "main/report.html",
-        segments=segments,
+        segments=_parse_report_segments(report_html, result),
         pdf_filename=pdf_filename,
         er=executive_report,
-        report_html=report_html,
     )
 
 

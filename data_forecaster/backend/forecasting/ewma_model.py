@@ -21,27 +21,23 @@ def fit_ewma(series: pd.Series, forecast_horizon: int, alpha: float = 0.3) -> di
     """
     series = series.dropna().astype(float)
 
-    # ── Metrics via train/test split ─────────────────────────────────────────
-    split = max(int(len(series) * 0.8), len(series) - forecast_horizon)
-    train, test = series.iloc[:split], series.iloc[split:]
+    # ── Metrics via rolling-origin validation ────────────────────────────────
+    def _ewma_fit_forecast(train_series: pd.Series, horizon: int) -> pd.Series:
+        """Fit EWMA and produce a forecast for one validation split."""
+        train_ewma = train_series.ewm(alpha=alpha).mean()
+        last_train_value = train_ewma.iloc[-1]
+        return pd.Series([last_train_value] * horizon)
 
-    # Calculate EWMA for training set
-    train_ewma = train.ewm(alpha=alpha).mean()
-
-    # Forecast for test set (use last training value for all forecasts)
-    last_train_value = train_ewma.iloc[-1]
-    test_forecast = pd.Series([last_train_value] * len(test), index=test.index)
-
-    try:
-        rmse = float(np.sqrt(np.mean((test.values - test_forecast.values) ** 2)))
-        mae = float(np.mean(np.abs(test.values - test_forecast.values)))
-        mape = float(
-            np.mean(np.abs((test.values - test_forecast.values) / (test.values + 1e-8)))
-            * 100
-        )
-    except Exception as exc:
-        logger.warning("EWMA metrics failed: %s", exc)
-        rmse = mae = mape = 0.0
+    # This now correctly uses the validation function from utils
+    from utils.validation import perform_rolling_origin_validation
+    metrics = perform_rolling_origin_validation(
+        series, forecast_horizon, _ewma_fit_forecast
+    )
+    rmse = metrics.get("rmse", 0.0)
+    mae = metrics.get("mae", 0.0)
+    mape = metrics.get("mape", 0.0)
+    if not metrics:
+        logger.warning("EWMA rolling validation failed; returning zero metrics.")
 
     # ── Full-series fit for forecast ─────────────────────────────────────────
     # Calculate EWMA for entire series

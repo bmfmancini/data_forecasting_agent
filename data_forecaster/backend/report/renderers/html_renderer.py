@@ -29,23 +29,19 @@ class HTMLRenderer:
         Returns:
             HTML string with dashboard cards, tables, and narrative sections.
         """
-        parts: list[str] = []
-        parts.append(self._render_dashboard(report))
-        parts.append(self._render_confidence(report))
-        parts.append(self._render_health_indicators(report))
-        parts.append(self._render_executive_summary(report))
-        parts.append(self._render_data_quality(report))
-        parts.append(self._render_historical_analysis(report))
-        parts.append(self._render_forecast_outlook(report))
-        parts.append(self._render_model_comparison(report))
-        parts.append(self._render_explainability(report))
-        parts.append(self._render_statistical_audit(report))
-        parts.append(self._render_prediction_intervals(report))
-        parts.append(self._render_recommendations(report))
-        parts.append(self._render_risks(report))
-        parts.append(self._render_assumptions(report))
-        parts.append(self._render_metadata(report))
-        return "\n".join(parts)
+        # The frontend expects a single report body to parse into segments.
+        # The dashboard, health indicators, etc., are now rendered by the
+        # frontend template directly from the structured `executive_report` model.
+        # This renderer should only produce the core narrative content.
+        return (
+            f"{self._render_executive_summary(report)}"
+            f"{self._render_data_quality(report)}"
+            f"{self._render_historical_analysis(report)}"
+            f"{self._render_forecast_outlook(report)}"
+            f"{self._render_model_comparison(report)}"
+            f"{self._render_explainability(report)}"
+            f"{self._render_statistical_audit(report)}"
+        )
 
     # ── Dashboard Cards ───────────────────────────────────────────────────
 
@@ -162,6 +158,10 @@ class HTMLRenderer:
             f"<p><strong>Trend Direction:</strong> {escape(h.trend_direction)}</p>"
             f"<p><strong>Seasonal Pattern:** {'Every ' + str(h.seasonal_period) + ' periods' if h.seasonal_period else 'None detected'}</p>"
             f"{narrative}"
+            '<p class="mt-3"><strong>Figure: Historical Data & Decomposition</strong></p>'
+            "<p>[VISUAL:HISTORICAL]</p>"
+            "<p>[VISUAL:STL]</p>"
+            f"{narrative}"
             "</section>"
         )
 
@@ -176,6 +176,9 @@ class HTMLRenderer:
             '<section class="report-forecast-outlook mb-3">'
             "<h5>Future Growth & Forecast Outlook</h5>"
             f"<p><strong>Projected Change:</strong> {m.pct_change:+.1f}% over {m.horizon} periods.</p>"
+            f"{narrative}"
+            '<p class="mt-3"><strong>Figure: Forecast with Prediction Intervals</strong></p>'
+            "<p>[VISUAL:FORECAST]</p>"
             f"{narrative}"
             "</section>"
         )
@@ -203,6 +206,9 @@ class HTMLRenderer:
             '<table class="table table-sm table-striped">'
             "<thead><tr><th>Model</th><th>RMSE</th><th>MAE</th><th>MAPE</th><th>Selected</th></tr></thead>"
             f"<tbody>{rows}</tbody></table>"
+            '<p class="mt-3"><strong>Figure: Model Diagnostics & Comparison</strong></p>'
+            "<p>[VISUAL:ACF_PACF]</p>"
+            "<p>[VISUAL:COMPARISON]</p>"
             "</section>"
         )
 
