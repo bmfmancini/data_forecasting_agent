@@ -12,6 +12,7 @@ from forecasting.holt_winters import fit_holt_winters
 from forecasting.sarima_model import fit_sarima
 from prompts.forecasting_prompt import FORECASTING_PROMPT
 from schemas import ForecastResult, ModelSelectionResult, StatisticalResult
+from utils.statistical_analysis import analyze_residuals
 from utils.token_tracking import estimate_input_text, extract_token_usage
 
 logger = get_logger(__name__)
@@ -129,6 +130,14 @@ def run_forecasting_agent(
         for name, r in results_store.items()
     }
 
+    # ── Residual Analysis ─────────────────────────────────────────────────────
+    residual_diagnostics = None
+    if "residuals" in res and isinstance(res["residuals"], pd.Series):
+        try:
+            residual_diagnostics = analyze_residuals(res["residuals"])
+        except Exception as exc:
+            logger.warning("Residual analysis failed: %s", exc)
+
     logger.info("Forecasting complete. Selected: %s", selected)
 
     forecast_result = ForecastResult(
@@ -140,6 +149,7 @@ def run_forecasting_agent(
         rmse=res["rmse"],
         mae=res["mae"],
         mape=res["mape"],
+        residual_diagnostics=residual_diagnostics,
         reasoning_steps=reasoning_steps,
         token_usage=token_usage,
     )

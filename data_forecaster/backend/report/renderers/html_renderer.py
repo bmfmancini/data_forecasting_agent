@@ -29,18 +29,22 @@ class HTMLRenderer:
         Returns:
             HTML string with dashboard cards, tables, and narrative sections.
         """
-        # The frontend expects a single report body to parse into segments.
-        # The dashboard, health indicators, etc., are now rendered by the
-        # frontend template directly from the structured `executive_report` model.
-        # This renderer should only produce the core narrative content.
         return (
+            f"{self._render_dashboard(report)}"
+            f"{self._render_confidence(report)}"
+            f"{self._render_health_indicators(report)}"
             f"{self._render_executive_summary(report)}"
             f"{self._render_data_quality(report)}"
             f"{self._render_historical_analysis(report)}"
             f"{self._render_forecast_outlook(report)}"
+            f"{self._render_prediction_intervals(report)}"
             f"{self._render_model_comparison(report)}"
             f"{self._render_explainability(report)}"
             f"{self._render_statistical_audit(report)}"
+            f"{self._render_risks(report)}"
+            f"{self._render_assumptions(report)}"
+            f"{self._render_recommendations(report)}"
+            f"{self._render_metadata(report)}"
         )
 
     # ── Dashboard Cards ───────────────────────────────────────────────────
@@ -300,6 +304,7 @@ class HTMLRenderer:
         intervals = report.forecast_outlook.metrics.prediction_intervals
         if not intervals:
             return ""
+        confidence_level = intervals[0].confidence_level
         rows = "".join(
             f"<tr><td>{escape(pi.date)}</td>"
             f"<td>{pi.forecast}</td>"
@@ -309,7 +314,7 @@ class HTMLRenderer:
         )
         return (
             '<section class="report-prediction-intervals mb-3">'
-            f"<h5>Prediction Intervals ({escape(intervals.confidence_level)})</h5>"
+            f"<h5>Prediction Intervals ({escape(confidence_level)})</h5>"
             '<table class="table table-sm table-striped">'
             "<thead><tr><th>Date</th><th>Forecast</th>"
             "<th>Lower Bound</th><th>Upper Bound</th></tr></thead>"

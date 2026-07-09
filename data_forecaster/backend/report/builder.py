@@ -366,15 +366,19 @@ class ExecutiveReportBuilder:
             breaks_detail = "No structural breaks detected."
 
         # Residual Diagnostics
-        if statistical.is_white_noise or forecast.mape > 20:
+        diag = forecast.residual_diagnostics
+        if diag and not diag.is_uncorrelated:
             resid_status = HEALTH_STATUS["residual_diagnostics"]["concerning"]
-            resid_detail = (
-                "Residual diagnostics or high validation error suggest "
-                "the model may not fully capture the data structure."
-            )
+            resid_detail = "Residuals are autocorrelated, indicating the model has not captured all predictable patterns."
+        elif diag and not diag.is_normal:
+            resid_status = HEALTH_STATUS["residual_diagnostics"]["concerning"]
+            resid_detail = "Residuals are not normally distributed, which may affect the reliability of prediction intervals."
+        elif statistical.is_white_noise or forecast.mape > 20:
+            resid_status = HEALTH_STATUS["residual_diagnostics"]["concerning"]
+            resid_detail = "High validation error or other signals suggest the model may not fully capture the data structure."
         else:
             resid_status = HEALTH_STATUS["residual_diagnostics"]["acceptable"]
-            resid_detail = "Residual diagnostics indicate an acceptable model fit."
+            resid_detail = "Residual analysis confirms the model's errors are random and unbiased, indicating a good fit."
 
         return [
             HealthIndicator(
@@ -1470,5 +1474,12 @@ class ExecutiveReportBuilder:
                 for name, m in all_metrics.items()
             },
         }
-        visual_tags = ["HISTORICAL", "STL", "ACF_PACF", "FORECAST", "COMPARISON"]
+        visual_tags = [
+            "HISTORICAL",
+            "STL",
+            "ACF_PACF",
+            "FORECAST",
+            "COMPARISON",
+            "RESIDUALS",
+        ]
         return Appendix(raw_metrics=raw_metrics, visual_tags=visual_tags)
