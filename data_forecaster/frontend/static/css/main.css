@@ -884,3 +884,17 @@ textarea.form-control {
     display: none;
   }
 }
+
+/* ============================================================
+   Bootstrap modal overrides — must sit above the body::after
+   noise overlay (z-index: 9999) so the modal is interactive.
+   ============================================================ */
+.modal {
+  z-index: 10000;
+}
+.modal-backdrop {
+  z-index: 9998;
+}
+.modal-dialog {
+  z-index: 10001;
+}

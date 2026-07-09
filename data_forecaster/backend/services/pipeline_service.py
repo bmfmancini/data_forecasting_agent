@@ -19,12 +19,14 @@ from agents.report_generation_agent import run_report_agent
 from agents.statistical_analysis_agent import run_statistical_agent
 from agents.statistical_review_agent import run_statistical_review_agent
 from core.logging_config import get_logger
+from report.renderers import HTMLRenderer, MarkdownRenderer
 from schemas import AnalysisResponse, ModelSelectionResult
 from services.rag_service import get_rag_kb
 from utils.data_cleaning import apply_iqr_clipping, apply_zscore_clipping
 from utils.preflight import prepare_series_frame
 from utils.statistical import apply_boxcox, compute_acf_pacf, run_stl_decomposition
 from utils.visualization import (
+    chart_dict_to_png_b64,
     plot_acf_pacf,
     plot_forecast,
     plot_historical,
@@ -237,13 +239,17 @@ def run_pipeline(
                 }
             )
         else:
-            # Re-run model selection with review feedback and exclude the
-            # previously selected model so the LLM picks a different one.
+            # Re-run model selection with review feedback, exclude the
+            # previously selected model, and pass the actual error metrics
+            # from the prior forecasting run so the reselection is
+            # evidence-based rather than relying on statistical properties
+            # alone.
             prev_selected = model_selection.selected_model
             model_selection = run_model_selection_agent(
                 stat_result,
                 review_feedback=review_feedback,
                 exclude_model=prev_selected,
+                all_metrics=all_metrics,
             )
             # Append review feedback to the model selection explanation
             model_selection = model_selection.model_copy(
@@ -295,16 +301,34 @@ def run_pipeline(
     logger.info("Agent 5: Report Generation")
     _progress(90, "Generating report…")
     rag_kb = get_rag_kb(chroma_persist_dir)
-    report, report_reasoning, visual_strategy, report_token_usage = run_report_agent(
-        validation_result,
-        stat_result,
-        model_selection,
-        forecast_result,
-        rag_kb,
-        user_prompt=user_prompt,
-        preflight_options=preflight_options,
-        statistical_review=statistical_review,
+    executive_report, report_reasoning, visual_strategy, report_token_usage = (
+        run_report_agent(
+            validation_result,
+            stat_result,
+            model_selection,
+            forecast_result,
+            rag_kb,
+            user_prompt=user_prompt,
+            preflight_options=preflight_options,
+            statistical_review=statistical_review,
+            all_metrics=all_metrics,
+        )
     )
+    # ── Render report to Markdown and HTML ────────────────────────────────
+    # Renderers are best-effort: a renderer bug must not fail the entire
+    # successful pipeline.  On failure, fall back to empty strings and log
+    # a warning so the frontend can still display the structured report.
+    report_md = ""
+    report_html = ""
+    try:
+        md_renderer = MarkdownRenderer()
+        html_renderer = HTMLRenderer()
+        report_md = md_renderer.render(executive_report)
+        report_html = html_renderer.render(executive_report)
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.warning(
+            "Report rendering failed: %s — using empty render output.", exc
+        )
     _progress(92, "Report complete")
 
     # ── Visualizations ────────────────────────────────────────────────────────
@@ -332,6 +356,28 @@ def run_pipeline(
 
     chart_forecast = plot_forecast(series, forecast_result)
     chart_model_comparison = plot_model_comparison(all_metrics)
+
+    # ── Generate PNG versions for PDF export ────────────────────────────────
+    chart_historical_png = ""
+    chart_stl_png = ""
+    chart_forecast_png = ""
+    chart_model_comparison_png = ""
+    try:
+        chart_historical_png = chart_dict_to_png_b64(chart_historical)
+    except Exception as exc:
+        logger.warning("Historical chart PNG failed: %s", exc)
+    try:
+        chart_stl_png = chart_dict_to_png_b64(chart_stl)
+    except Exception as exc:
+        logger.warning("STL chart PNG failed: %s", exc)
+    try:
+        chart_forecast_png = chart_dict_to_png_b64(chart_forecast)
+    except Exception as exc:
+        logger.warning("Forecast chart PNG failed: %s", exc)
+    try:
+        chart_model_comparison_png = chart_dict_to_png_b64(chart_model_comparison)
+    except Exception as exc:
+        logger.warning("Model comparison chart PNG failed: %s", exc)
 
     # ── Token Usage Aggregation ─────────────────────────────────────────────
     agent_usage = {
@@ -374,7 +420,9 @@ def run_pipeline(
         model_selection=model_selection,
         forecast=forecast_result,
         statistical_review=statistical_review,
-        report=report,
+        report=report_md,
+        executive_report=executive_report.model_dump(),
+        report_html=report_html,
         report_reasoning=report_reasoning,
         strategic_visual_recommendations=visual_strategy,
         llm_fallback=llm_fallback,
@@ -383,6 +431,10 @@ def run_pipeline(
         chart_acf_pacf=chart_acf_pacf,
         chart_forecast=chart_forecast,
         chart_model_comparison=chart_model_comparison,
+        chart_historical_png=chart_historical_png,
+        chart_stl_png=chart_stl_png,
+        chart_forecast_png=chart_forecast_png,
+        chart_model_comparison_png=chart_model_comparison_png,
         pipeline_token_usage=pipeline_token_usage,
     )
 

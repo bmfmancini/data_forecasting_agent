@@ -241,3 +241,92 @@ class TestModelSelectionParser:
 
         result = run_model_selection_agent(seasonal_stat_result)
         assert result.selected_model == "ARIMA"
+
+
+# ── Deterministic Override Tests ──────────────────────────────────────────────
+
+
+class TestDeterministicMetricOverride:
+    """Tests for the deterministic best-metric override during retry."""
+
+    def test_selects_best_metric_model_when_all_metrics_provided(
+        self,
+        seasonal_stat_result: StatisticalResult,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """When all_metrics is provided, the best RMSE model is selected."""
+        # SARIMA has the lowest RMSE, so it should be selected even though
+        # the LLM mock would return Holt-Winters.
+        response = SimpleNamespace(
+            content="Selected model: Holt-Winters\n",
+            usage_metadata={
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "total_tokens": 150,
+            },
+        )
+        _patch_llm(monkeypatch, response)
+
+        all_metrics = {
+            "Holt-Winters": {"RMSE": 0.11, "MAE": 0.09, "MAPE": 0.8},
+            "ARIMA": {"RMSE": 0.10, "MAE": 0.08, "MAPE": 0.7},
+            "SARIMA": {"RMSE": 0.09, "MAE": 0.07, "MAPE": 0.7},
+        }
+        result = run_model_selection_agent(
+            seasonal_stat_result,
+            review_feedback="Previous selection was suboptimal.",
+            exclude_model="Holt-Winters",
+            all_metrics=all_metrics,
+        )
+        # SARIMA has the lowest RMSE and is not excluded
+        assert result.selected_model == "SARIMA"
+        assert "empirical validation metrics" in result.explanation
+
+    def test_excluded_model_not_selected_even_with_best_metrics(
+        self,
+        seasonal_stat_result: StatisticalResult,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The excluded model must not be selected even if it has best metrics."""
+        response = SimpleNamespace(
+            content="Selected model: SARIMA\n",
+            usage_metadata={
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "total_tokens": 150,
+            },
+        )
+        _patch_llm(monkeypatch, response)
+
+        all_metrics = {
+            "Holt-Winters": {"RMSE": 0.08, "MAE": 0.06, "MAPE": 0.5},
+            "ARIMA": {"RMSE": 0.10, "MAE": 0.08, "MAPE": 0.7},
+            "SARIMA": {"RMSE": 0.09, "MAE": 0.07, "MAPE": 0.7},
+        }
+        result = run_model_selection_agent(
+            seasonal_stat_result,
+            exclude_model="Holt-Winters",
+            all_metrics=all_metrics,
+        )
+        # Holt-Winters has best RMSE but is excluded; SARIMA is next best
+        assert result.selected_model == "SARIMA"
+        assert result.selected_model != "Holt-Winters"
+
+    def test_no_override_when_all_metrics_is_none(
+        self,
+        seasonal_stat_result: StatisticalResult,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Without all_metrics, the LLM output is used (no deterministic override)."""
+        response = SimpleNamespace(
+            content="Selected model: Holt-Winters\n",
+            usage_metadata={
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "total_tokens": 150,
+            },
+        )
+        _patch_llm(monkeypatch, response)
+
+        result = run_model_selection_agent(seasonal_stat_result)
+        assert result.selected_model == "Holt-Winters"

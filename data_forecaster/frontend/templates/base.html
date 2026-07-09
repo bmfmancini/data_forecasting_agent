@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>{% block title %}Time Series Forecaster{% endblock %}</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ctext y='14' font-size='14'%3E%F0%9F%93%8A%3C/text%3E%3C/svg%3E">
     <link href="{{ url_for('static', filename='libs/bootstrap@5.3.3_dist_css_bootstrap.min.css') }}" rel="stylesheet">
     <link href="{{ url_for('static', filename='css/main.css') }}" rel="stylesheet">
 </head>
@@ -69,6 +70,11 @@
         </div>
     </div>
 </div>
+
+{# Modals — rendered outside .app-shell so they are direct children of  #}
+{# body and not trapped inside the .tab-content-area stacking context.   #}
+{% block modal %}{% endblock %}
+
     <script src="{{ url_for('static', filename='libs/bootstrap@5.3.3_dist_js_bootstrap.bundle.min.js') }}"></script>
     <script src="{{ url_for('static', filename='libs/marked@12.0.2_min.js') }}"></script>
     <script src="{{ url_for('static', filename='libs/dompurify@3.1.6_dist_purify.min.js') }}"></script>

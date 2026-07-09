@@ -176,6 +176,8 @@ class AnalysisResponse(BaseModel):
     forecast: ForecastResult
     statistical_review: StatisticalReviewResult | None = None
     report: str
+    executive_report: dict[str, Any] | None = None
+    report_html: str | None = None
     report_reasoning: list[dict[str, Any]] = Field(default_factory=list)
     strategic_visual_recommendations: list[dict[str, str]] = Field(default_factory=list)
     llm_fallback: bool = (
@@ -186,6 +188,10 @@ class AnalysisResponse(BaseModel):
     chart_acf_pacf: str  # base64 PNG
     chart_forecast: dict
     chart_model_comparison: dict
+    chart_historical_png: str = ""  # base64 PNG for PDF export
+    chart_stl_png: str = ""  # base64 PNG for PDF export
+    chart_forecast_png: str = ""  # base64 PNG for PDF export
+    chart_model_comparison_png: str = ""  # base64 PNG for PDF export
     pipeline_token_usage: dict[str, Any] = Field(default_factory=dict)
 
 

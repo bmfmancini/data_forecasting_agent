@@ -226,10 +226,10 @@
         messages = messages.concat(preflight.errors);
     }
 
-    let html = `<div class="alert ${alertClass}"><strong>${title}</strong>`;
+    let html = '<div class="alert ' + alertClass + '"><strong>' + title + '</strong>';
     if (messages.length > 0) {
         html += '<ul>';
-        messages.forEach(msg => { html += `<li>${msg}</li>`; });
+        messages.forEach(function (msg) { html += '<li>' + msg + '</li>'; });
         html += '</ul>';
     }
 
@@ -392,23 +392,34 @@
     selects.forEach(function (sel) {
       choices[sel.dataset.key] = sel.value;
     });
-    App._preflightOptions = choices;
 
     postJSON("/api/preflight-choices", { choices: choices })
       .then(function (r) { return r.json(); })
       .then(function () {
-        const modal = bootstrap.Modal.getInstance(
-          document.getElementById("preflightModal")
-        );
+        // Store the choices for later use
+        App._preflightOptions = choices;
+
+        // Hide the modal (do NOT dispose — it needs to be reopenable)
+        const modalEl = document.getElementById("preflightModal");
+        const modal = bootstrap.Modal.getInstance(modalEl);
         if (modal) modal.hide();
 
+        // Clean up any leftover backdrop that would block clicks
+        cleanupModalBackdrop();
+
+        // Disable Run if any choice is "stop"
         const blocks = Object.values(choices).some(function (v) {
           return v === "stop";
         });
         const runBtn = document.getElementById("btn-run");
         if (runBtn) runBtn.disabled = blocks;
+
+        // Refresh preflight status to reflect new choices
+        triggerPreflight();
       })
-      .catch(function () {});
+      .catch(function (err) {
+        console.error("Failed to save preflight choices:", err);
+      });
   }
 
   /** Wire up the forecast horizon range slider display. */
@@ -419,6 +430,15 @@
     slider.addEventListener("input", function () {
       label.textContent = slider.value;
     });
+  }
+
+  /** Clean up leftover Bootstrap modal backdrops that block page interaction. */
+  function cleanupModalBackdrop() {
+    var backdrops = document.querySelectorAll(".modal-backdrop");
+    backdrops.forEach(function (b) { b.remove(); });
+    document.body.classList.remove("modal-open");
+    document.body.style.removeProperty("overflow");
+    document.body.style.removeProperty("padding-right");
   }
 
   /** Wire up the file input change event. */
@@ -509,6 +529,12 @@
     if (document.getElementById('sel-date')) initColumnSelectors();
     if (document.getElementById('btn-run')) initRunButton();
     if (document.getElementById('setup-stepper')) initStepper();
+
+    // Clean up modal backdrop whenever the preflight modal is hidden
+    var modalEl = document.getElementById("preflightModal");
+    if (modalEl) {
+      modalEl.addEventListener("hidden.bs.modal", cleanupModalBackdrop);
+    }
   }
 
   document.addEventListener("DOMContentLoaded", init);
@@ -517,6 +543,7 @@
     runAnalysis: runAnalysis,
     savePreflightChoices: savePreflightChoices,
     triggerPreflight: triggerPreflight,
+    populatePreflightModal: populatePreflightModal,
     populateColumnSelectors: populateColumnSelectors,
     enableControls: enableControls,
     updateUploadStatus: setUploadStatus, // Renamed for clarity in template

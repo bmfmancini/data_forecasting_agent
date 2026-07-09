@@ -439,6 +439,8 @@ def report() -> str:
     result: dict[str, Any] = session.get("analysis_result") or {}
     upload_info: dict[str, Any] = session.get("upload_info") or {}
     report_text: str = result.get("report", "Report not available.")
+    executive_report: dict[str, Any] | None = result.get("executive_report")
+    report_html: str | None = result.get("report_html")
     segments = _parse_report_segments(report_text, result)
     filename: str = upload_info.get("filename", "data")
     base_name = filename.rsplit(".", 1)[0] if "." in filename else filename
@@ -447,6 +449,8 @@ def report() -> str:
         "main/report.html",
         segments=segments,
         pdf_filename=pdf_filename,
+        er=executive_report,
+        report_html=report_html,
     )
 
 
@@ -470,7 +474,9 @@ def report_export() -> Response:
     pdf_filename = f"forecast_report_{base_name}.pdf"
 
     pdf_bytes = report_to_pdf(
-        report_text, title=pdf_filename.replace("_", " ").replace(".pdf", "")
+        report_text,
+        title=pdf_filename.replace("_", " ").replace(".pdf", ""),
+        result=result,
     )
     return send_file(
         io.BytesIO(pdf_bytes),

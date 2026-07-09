@@ -16,7 +16,86 @@
 </div>
 {% endif %}
 
-<hr>
+{% if er %}
+{# ── Dynamic Executive Dashboard ──────────────────────────────────────── #}
+<section class="report-dashboard mb-4">
+    <h5 class="mb-3">Executive Dashboard</h5>
+    <div class="row row-cols-1 row-cols-md-3 g-3">
+        {% for item in er.dashboard.widgets %}
+        <div class="col">
+            <div class="card h-100 border-{% if item.status == 'positive' %}success{% elif item.status == 'negative' %}danger{% elif item.status == 'warning' %}warning{% else %}primary{% endif %}">
+                <div class="card-body">
+                    <h6 class="card-title text-muted">{{ item.icon }} {{ item.title }}</h6>
+                    <p class="h5 mb-1">{{ item.value }}</p>
+                    <small class="text-muted">{{ item.description }}</small>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</section>
+
+{# ── Confidence Score Badge ───────────────────────────────────────────── #}
+<section class="report-confidence mb-3">
+    <span class="badge {% if er.confidence.label == 'High' %}bg-success{% elif er.confidence.label == 'Medium' %}bg-warning{% else %}bg-danger{% endif %} fs-6">
+        Forecast Confidence: {{ er.confidence.score }}/100 — {{ er.confidence.label }}
+    </span>
+    <p class="mt-2 text-muted">{{ er.confidence.explanation }}</p>
+</section>
+
+{# ── Health Indicators Table ──────────────────────────────────────────── #}
+<section class="report-health mb-4">
+    <h5 class="mb-2">Forecast Health Indicators</h5>
+    <table class="table table-sm table-striped">
+        <thead><tr><th>Indicator</th><th>Status</th><th>Detail</th></tr></thead>
+        <tbody>
+            {% for hi in er.health_indicators %}
+            <tr><td>{{ hi.indicator }}</td><td>{{ hi.status }}</td><td class="small text-muted">{{ hi.detail }}</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+
+{# ── Prediction Intervals Table ───────────────────────────────────────── #}
+{% if er.forecast_outlook.metrics.prediction_intervals %}
+<section class="report-prediction-intervals mb-4">
+    <h5 class="mb-2">Prediction Intervals (95%)</h5>
+    <table class="table table-sm table-striped">
+        <thead><tr><th>Date</th><th>Forecast</th><th>Lower Bound</th><th>Upper Bound</th></tr></thead>
+        <tbody>
+            {% for pi in er.forecast_outlook.metrics.prediction_intervals %}
+            <tr><td>{{ pi.date }}</td><td>{{ pi.forecast }}</td><td>{{ pi.lower_ci }}</td><td>{{ pi.upper_ci }}</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endif %}
+
+{# ── Recommendations with Evidence ────────────────────────────────────── #}
+{% if er.recommendations %}
+<section class="report-recommendations mb-4">
+    <h5 class="mb-2">Executive Recommendations</h5>
+    {% for rec in er.recommendations %}
+    <div class="recommendation-block mb-3 p-3 border rounded">
+        <span class="badge {% if rec.priority == 'High' %}bg-danger{% elif rec.priority == 'Medium' %}bg-warning{% else %}bg-info{% endif %}">{{ rec.priority }}</span>
+        <strong class="ms-2">{{ rec.narrative if rec.narrative else rec.recommendation }}</strong>
+        <p class="small mt-2 mb-1"><strong>Rationale:</strong> {{ rec.rationale }}</p>
+        <p class="small mb-1"><em>Expected outcome: {{ rec.expected_outcome }}</em></p>
+        {% if rec.supporting_evidence %}
+        <ul class="small text-muted mb-0">
+            {% for ev in rec.supporting_evidence %}
+            <li>{{ ev.metric }}: {{ ev.value }} (from {{ ev.source_section }})</li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+    </div>
+    {% endfor %}
+</section>
+{% endif %}
+
+<hr class="my-4">
+{% endif %}
+
 <div class="report-body">
 {% for segment in segments %}
     {% if segment.type == 'text' %}
