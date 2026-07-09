@@ -35,8 +35,15 @@ class HTMLRenderer:
         parts.append(self._render_health_indicators(report))
         parts.append(self._render_executive_summary(report))
         parts.append(self._render_data_quality(report))
+        parts.append(self._render_historical_analysis(report))
+        parts.append(self._render_forecast_outlook(report))
+        parts.append(self._render_model_comparison(report))
+        parts.append(self._render_explainability(report))
+        parts.append(self._render_statistical_audit(report))
         parts.append(self._render_prediction_intervals(report))
         parts.append(self._render_recommendations(report))
+        parts.append(self._render_risks(report))
+        parts.append(self._render_assumptions(report))
         parts.append(self._render_metadata(report))
         return "\n".join(parts)
 
@@ -142,6 +149,143 @@ class HTMLRenderer:
             f"{issues}"
             "</section>"
         )
+        
+    # ── Historical Analysis ───────────────────────────────────────────────
+
+    def _render_historical_analysis(self, report: ExecutiveReport) -> str:
+        """Render the historical analysis section."""
+        h = report.historical_analysis
+        narrative = f"<p>{escape(h.narrative)}</p>" if h.narrative else ""
+        return (
+            '<section class="report-historical-analysis mb-3">'
+            "<h5>Historical Performance & Trend Analysis</h5>"
+            f"<p><strong>Trend Direction:</strong> {escape(h.trend_direction)}</p>"
+            f"<p><strong>Seasonal Pattern:** {'Every ' + str(h.seasonal_period) + ' periods' if h.seasonal_period else 'None detected'}</p>"
+            f"{narrative}"
+            "</section>"
+        )
+
+    # ── Forecast Outlook ──────────────────────────────────────────────────
+
+    def _render_forecast_outlook(self, report: ExecutiveReport) -> str:
+        """Render the forecast outlook section."""
+        f = report.forecast_outlook
+        m = f.metrics
+        narrative = f"<p>{escape(f.narrative)}</p>" if f.narrative else ""
+        return (
+            '<section class="report-forecast-outlook mb-3">'
+            "<h5>Future Growth & Forecast Outlook</h5>"
+            f"<p><strong>Projected Change:</strong> {m.pct_change:+.1f}% over {m.horizon} periods.</p>"
+            f"{narrative}"
+            "</section>"
+        )
+
+    # ── Model Comparison ──────────────────────────────────────────────────
+
+    def _render_model_comparison(self, report: ExecutiveReport) -> str:
+        """Render the model comparison table."""
+        mc = report.model_comparison
+        rows = "".join(
+            f"<tr><td>{escape(e.model)}</td>"
+            f"<td>{e.rmse}</td>"
+            f"<td>{e.mae}</td>"
+            f"<td>{e.mape}%</td>"
+            f"<td>{'✓' if e.selected else ''}</td></tr>"
+            for e in mc.entries
+        )
+        narrative = f"<p>{escape(mc.narrative)}</p>" if mc.narrative else ""
+        return (
+            '<section class="report-model-comparison mb-3">'
+            "<h5>Forecasting Approach & Model Comparison</h5>"
+            f"<p><strong>Selected Model:</strong> {escape(mc.selected_model)}</p>"
+            f"<p class='small text-muted'>{escape(mc.selection_rationale)}</p>"
+            f"{narrative}"
+            '<table class="table table-sm table-striped">'
+            "<thead><tr><th>Model</th><th>RMSE</th><th>MAE</th><th>MAPE</th><th>Selected</th></tr></thead>"
+            f"<tbody>{rows}</tbody></table>"
+            "</section>"
+        )
+
+    # ── Explainability ────────────────────────────────────────────────────
+
+    def _render_explainability(self, report: ExecutiveReport) -> str:
+        """Render the explainability section."""
+        ex = report.explainability
+        narrative = f"<p>{escape(ex.narrative)}</p>" if ex.narrative else ""
+        items = "".join(
+            f"<li><strong>{escape(item.finding)}:</strong> {escape(item.interpretation)} "
+            f"<em class='small text-muted'>(Evidence: {escape(item.evidence)})</em></li>"
+            for item in ex.findings
+        )
+        return (
+            '<section class="report-explainability mb-3">'
+            "<h5>Explainability — Why These Conclusions</h5>"
+            f"{narrative}"
+            f"<ul>{items}</ul>"
+            "</section>"
+        )
+
+    # ── Statistical Audit ─────────────────────────────────────────────────
+
+    def _render_statistical_audit(self, report: ExecutiveReport) -> str:
+        """Render the statistical audit section."""
+        sa = report.statistical_audit
+        narrative = f"<p>{escape(sa.narrative)}</p>" if sa.narrative else ""
+        concerns = "".join(f"<li>{escape(c)}</li>" for c in sa.key_concerns)
+        evidence = "".join(f"<li>{escape(e)}</li>" for e in sa.strongest_evidence)
+        return (
+            '<section class="report-statistical-audit mb-3">'
+            "<h5>Statistical Audit Summary</h5>"
+            f"<p><strong>Verdict:</strong> {escape(sa.verdict.upper())}</p>"
+            f"{narrative}"
+            f"{'<h6>Key Concerns</h6><ul>' + concerns + '</ul>' if concerns else ''}"
+            f"{'<h6>Strongest Evidence</h6><ul>' + evidence + '</ul>' if evidence else ''}"
+            "</section>"
+        )
+
+    # ── Risks ─────────────────────────────────────────────────────────────
+
+    def _render_risks(self, report: ExecutiveReport) -> str:
+        """Render the risks section."""
+        if not report.risks:
+            return ""
+        blocks: list[str] = []
+        for risk in report.risks:
+            evidence_items = "".join(f"<li>{escape(ev)}</li>" for ev in risk.evidence)
+            evidence = f'<ul class="small text-muted">{evidence_items}</ul>' if evidence_items else ""
+            blocks.append(
+                f'<div class="risk-block mb-2">'
+                f"<h6>{escape(risk.category)} — {escape(risk.severity)}</h6>"
+                f"<p><strong>Risk:</strong> {escape(risk.description)}</p>"
+                f"<p class='small'><strong>Potential Impact:</strong> {escape(risk.potential_impact)}</p>"
+                f"<p class='small'><strong>Mitigation:</strong> {escape(risk.mitigation)}</p>"
+                f"{evidence}"
+                f"</div>"
+            )
+        return (
+            '<section class="report-risks mb-3">'
+            "<h5>Strategic Risks & Operational Constraints</h5>"
+            + "".join(blocks)
+            + "</section>"
+        )
+
+    # ── Assumptions ───────────────────────────────────────────────────────
+
+    def _render_assumptions(self, report: ExecutiveReport) -> str:
+        """Render the assumptions section."""
+        if not report.assumptions:
+            return ""
+        items = "".join(
+            f"<li><strong>{escape(a.assumption)}</strong>"
+            f"<p class='small text-muted'><em>Consequence if false: {escape(a.consequence_if_false)}</em></p></li>"
+            for a in report.assumptions
+        )
+        return (
+            '<section class="report-assumptions mb-3">'
+            "<h5>Critical Business Assumptions</h5>"
+            f"<ul>{items}</ul>"
+            "</section>"
+        )
 
     # ── Prediction Intervals Table ────────────────────────────────────────
 
@@ -159,7 +303,7 @@ class HTMLRenderer:
         )
         return (
             '<section class="report-prediction-intervals mb-3">'
-            "<h5>Prediction Intervals (95%)</h5>"
+            f"<h5>Prediction Intervals ({escape(intervals.confidence_level)})</h5>"
             '<table class="table table-sm table-striped">'
             "<thead><tr><th>Date</th><th>Forecast</th>"
             "<th>Lower Bound</th><th>Upper Bound</th></tr></thead>"

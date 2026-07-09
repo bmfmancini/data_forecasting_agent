@@ -87,7 +87,6 @@ class ExecutiveReportBuilder:
             forecast:            Forecasting agent output.
             statistical_review:  Statistical review (QA) agent output (optional).
             all_metrics:         All model comparison metrics dict.
-            preflight_options:   Optional preflight configuration dict.
 
         Returns:
             A populated :class:`ExecutiveReport` with empty narrative fields.
@@ -1116,7 +1115,7 @@ class ExecutiveReportBuilder:
             )
         )
 
-        return Explainability(items=items)
+        return Explainability(findings=items)
 
     # ── Historical Analysis ───────────────────────────────────────────────
 

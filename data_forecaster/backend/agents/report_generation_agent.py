@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+from report.narrative import _fallback_narrative
 
 from core.logging_config import get_logger
 from rag.knowledge_base import RAGKnowledgeBase
@@ -122,6 +123,17 @@ def run_report_agent(
                 "llm_fallback": True,
             }
         )
+        # Ensure all narrative fields have a fallback value
+        report.executive_summary.narrative = _fallback_narrative("executive_summary")
+        report.data_quality.narrative = _fallback_narrative("data_quality")
+        report.historical_analysis.narrative = _fallback_narrative("historical_analysis")
+        report.forecast_outlook.narrative = _fallback_narrative("forecast_outlook")
+        report.model_comparison.narrative = _fallback_narrative("model_comparison")
+        report.statistical_audit.narrative = _fallback_narrative("statistical_audit")
+        report.explainability.narrative = _fallback_narrative("explainability")
+        report.recommendations = [
+            rec.model_copy(update={"narrative": _fallback_narrative("recommendation")}) for rec in report.recommendations
+        ]
 
     # ── Visual strategy (retained for pipeline compatibility) ─────────────
     visual_strategy = _compute_visual_strategy(statistical, forecast, model_selection)

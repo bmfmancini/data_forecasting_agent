@@ -77,7 +77,7 @@ Before generating code, detect and respect these exact versions. Never use langu
 | Backend Python | **3.11** | `data_forecaster/docker/Dockerfile.backend` (`FROM python:3.11-slim`), `pyproject.toml` (`requires-python = ">=3.11"`, `python_version = "3.11"`) |
 | Frontend Python (Docker) | **3.12** | `data_forecaster/docker/Dockerfile.flask` (`FROM python:3.12-slim`), `frontend/mypy.ini` (`python_version = 3.12`) |
 
-- Use `from __future__ import annotations` at the top of every Python module (already present in all existing files) to enable PEP 604 union syntax (`str | None`) on 3.11.
+- Use `from __future__ import annotations` at the top of every Python module (already present in all existing files). This postpones the evaluation of type annotations, allowing for forward references. The backend's Python 3.11 natively supports PEP 604 union syntax (`str | None`).
 - Never use 3.12+-only syntax features (e.g. `type` statement, `@override` decorator) in backend code.
 
 ### Backend Framework & Library Versions
@@ -241,7 +241,7 @@ When context files and the Google Python Style Guide don't provide specific guid
 
 ### General (all Python files)
 - **Python 3.11** compatible syntax throughout (backend); 3.12 for frontend Docker image.
-- Start every module with `from __future__ import annotations` to enable PEP 604 union syntax.
+- Start every module with `from __future__ import annotations` to postpone evaluation of type annotations.
 - **PEP 8** with 4-space indentation and max line length **88** characters.
 - **Type hints** on all function parameters and return values — use `str | None`, `list[str]`, `dict[str, Any]` (not `Optional[str]`, `List[str]`).
 - **Import order**: standard library → third-party → local; alphabetised within each group; no wildcard imports.

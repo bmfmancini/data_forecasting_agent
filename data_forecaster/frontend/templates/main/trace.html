@@ -20,7 +20,7 @@
                     </tr>
                 </thead>
                 <tbody>
-                    {% for key, label in [('validation', '1. Data Validation'), ('statistical', '2. Statistical Analysis'), ('model_selection', '3. Model Selection'), ('forecast', '4. Forecasting'), ('report', '5. Report Generation')] %}
+                    {% for key, label in [('validation', '1. Data Validation'), ('statistical', '2. Statistical Analysis'), ('model_selection', '3. Model Selection'), ('forecast', '4. Forecasting'), ('statistical_review', '4.5. QA/Statistical Review'), ('report', '5. Report Generation')] %}
                     {% set u = token_usage.agents.get(key, {}) %}
                     <tr>
                         <td>{{ label }}</td>

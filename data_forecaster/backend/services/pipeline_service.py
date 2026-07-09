@@ -454,9 +454,9 @@ def run_pipeline(
 
 
 def _merge_token_usage(
-    first: dict[str, int],
-    second: dict[str, int],
-) -> dict[str, int]:
+    first: dict[str, int | bool],
+    second: dict[str, int | bool],
+) -> dict[str, int | bool]:
     """Merge two token-usage dicts by summing their numeric values.
 
     Args:
@@ -468,10 +468,10 @@ def _merge_token_usage(
         ``output_tokens``, and ``total_tokens``.  The ``estimated`` flag is
         set to ``True`` if either input was estimated.
     """
-    merged: dict[str, int] = {}
+    merged: dict[str, int | bool] = {}
     for key in ("input_tokens", "output_tokens", "total_tokens"):
-        merged[key] = first.get(key, 0) + second.get(key, 0)
-    merged["estimated"] = bool(
+        merged[key] = int(first.get(key, 0)) + int(second.get(key, 0))
+    merged["estimated"] = (
         first.get("estimated", False) or second.get("estimated", False)
     )
     return merged

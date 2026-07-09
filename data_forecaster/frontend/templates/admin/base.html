@@ -49,6 +49,7 @@
 </div>
 <script src="{{ url_for('static', filename='libs/bootstrap@5.3.3_dist_js_bootstrap.bundle.min.js') }}"></script>
 <script>
+// TODO: This IIFE is duplicated in the main base.html. Centralize into a shared static/js/sidebar.js module.
 // Sidebar toggle for mobile
 (function() {
     var toggle = document.getElementById("sidebar-toggle");
