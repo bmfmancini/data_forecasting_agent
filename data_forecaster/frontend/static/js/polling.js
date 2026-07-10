@@ -64,8 +64,35 @@
       runBtn.textContent = "Run Analysis";
     }
 
-    // The dedicated progress screen has no controls to retry from. The
-    // server has retained the setup state, so return the user there.
+    var progressCard = document.querySelector(".forecast-progress-card");
+    if (progressCard) {
+      var pageErr = document.getElementById("progress-error-message");
+      if (!pageErr) {
+        pageErr = document.createElement("div");
+        pageErr.id = "progress-error-message";
+        pageErr.className = "alert alert-danger mt-4 text-start";
+        pageErr.setAttribute("role", "alert");
+        progressCard.appendChild(pageErr);
+      }
+      pageErr.textContent = message;
+
+      var progressStep = document.getElementById("progress-step");
+      if (progressStep) progressStep.textContent = "Forecast stopped.";
+
+      var retryLink = document.getElementById("progress-retry-link");
+      if (!retryLink) {
+        retryLink = document.createElement("a");
+        retryLink.id = "progress-retry-link";
+        retryLink.className = "btn btn-primary mt-3";
+        retryLink.href = "/forecast-setup";
+        retryLink.textContent = "Back to setup";
+        progressCard.appendChild(retryLink);
+      }
+      return;
+    }
+
+    // The dedicated progress screen handles errors above. If this ever runs
+    // without that markup, fall back to setup where the server displays it.
     if (window.location.pathname === "/forecast-progress") {
       window.location.assign("/forecast-setup");
       return;

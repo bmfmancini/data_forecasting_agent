@@ -15,9 +15,8 @@ import re
 from functools import wraps
 from typing import Any, Callable, TypeVar
 
-import bleach
-import markdown as md_lib
 import pandas
+import requests
 from flask import (
     abort,
     current_app,
@@ -37,6 +36,7 @@ from werkzeug.wrappers import Response
 from blueprints.decorators import password_change_required
 from blueprints.main import main_bp
 from services.api_client import get_api_client
+from services.markdown_service import markdown_to_safe_html
 from services.report_service import (
     ReportLimitError,
     delete_report_for_user,
@@ -57,6 +57,10 @@ _login_required: Callable[[_F], _F] = login_required  # type: ignore[assignment]
 
 _FORECAST_SETUP_ENDPOINT: str = "main.forecast_setup"
 _BACKEND_CONN_ERROR: str = "Backend connection error."
+_JOB_STATUS_TIMEOUT_ERROR: str = (
+    "The forecast status check timed out. The backend may still be busy; "
+    "please try running the forecast again in a moment."
+)
 
 
 def _safe_error_detail(resp: Any, fallback: str = "Request failed.") -> str:
@@ -87,40 +91,6 @@ _CHART_FIELD_BY_TAG: dict[str, str] = {
     "COMPARISON": "chart_model_comparison",
 }
 
-_BLEACH_ALLOWED_TAGS: list[str] = [
-    "p",
-    "h1",
-    "h2",
-    "h3",
-    "h4",
-    "h5",
-    "h6",
-    "ul",
-    "ol",
-    "li",
-    "strong",
-    "em",
-    "code",
-    "pre",
-    "blockquote",
-    "hr",
-    "a",
-    "br",
-    "table",
-    "thead",
-    "tbody",
-    "tr",
-    "th",
-    "td",
-]
-
-_BLEACH_ALLOWED_ATTRS: dict[str, list[str]] = {
-    "a": ["href", "title", "rel"],
-    "th": ["scope"],
-    "td": ["colspan", "rowspan"],
-}
-
-
 def analysis_required(f: _F) -> _F:
     """Decorator that redirects to the chat page when no analysis result exists.
 
@@ -142,32 +112,6 @@ def analysis_required(f: _F) -> _F:
         return f(*args, **kwargs)
 
     return wrapper  # type: ignore[return-value]
-
-
-def _markdown_to_html(text: str) -> str:
-    """Convert a markdown string to sanitised HTML.
-
-    Uses the ``markdown`` library with the ``tables`` and ``fenced_code``
-    extensions, then passes the result through ``bleach`` to remove any
-    potentially unsafe markup.
-
-    Args:
-        text: Markdown-formatted string.
-
-    Returns:
-        Safe HTML string.
-    """
-    raw_html: str = md_lib.markdown(
-        text,
-        extensions=["tables", "fenced_code", "nl2br"],
-    )
-    return bleach.clean(
-        raw_html,
-        tags=_BLEACH_ALLOWED_TAGS,
-        attributes=_BLEACH_ALLOWED_ATTRS,
-        strip=True,
-    )
-
 
 def _build_chart_segment(tag: str, result: dict[str, Any]) -> dict[str, Any]:
     """Return a chart segment descriptor for the given visual tag."""
@@ -207,7 +151,9 @@ def _parse_report_segments(
     for idx, segment in enumerate(parts):
         if idx % 2 == 0:
             if segment.strip():
-                segments.append({"type": "text", "html": _markdown_to_html(segment)})
+                segments.append(
+                    {"type": "text", "html": markdown_to_safe_html(segment)}
+                )
         else:
             segments.append(_build_chart_segment(segment, result))
 
@@ -1038,6 +984,18 @@ def api_job_status() -> Response:
             }
         )
 
+    except requests.exceptions.Timeout:
+        logger.exception("Status poll timed out")
+        session["job_running"] = False
+        session["job_id"] = None
+        session["analysis_error"] = _JOB_STATUS_TIMEOUT_ERROR
+        return make_response(jsonify({"error": _JOB_STATUS_TIMEOUT_ERROR}), 504)
+    except requests.exceptions.RequestException:
+        logger.exception("Status poll request error")
+        session["job_running"] = False
+        session["job_id"] = None
+        session["analysis_error"] = _BACKEND_CONN_ERROR
+        return make_response(jsonify({"error": _BACKEND_CONN_ERROR}), 503)
     except Exception:
         logger.exception("Status poll error")
         return make_response(jsonify({"error": "Status poll error."}), 503)
