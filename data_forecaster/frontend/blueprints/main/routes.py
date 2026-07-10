@@ -718,6 +718,10 @@ def api_analyze() -> Response:
     if not payload["file_id"]:
         return make_response(jsonify({"error": "No file uploaded"}), 400)
 
+    payload["application_user_id"] = current_user.id
+    payload["application_username"] = current_user.username
+    payload["application_user_is_admin"] = current_user.is_admin
+
     try:
         client = get_api_client()
         resp = client.submit_analysis(payload)

@@ -63,6 +63,9 @@ class AnalyzeRequest(BaseModel):
     forced_model: str | None = None  # "Holt-Winters" | "ARIMA" | "SARIMA" | None (auto)
     user_prompt: str | None = None  # Extra instructions appended to the report prompt
     preflight_options: dict[str, Any] | None = Field(default_factory=dict)
+    application_user_id: int | None = None
+    application_username: str | None = Field(default=None, max_length=64)
+    application_user_is_admin: bool = False
 
 
 class ChatRequest(BaseModel):
@@ -225,6 +228,36 @@ class JobStatusResponse(BaseModel):
     step: str
     result: dict | None = None
     error: str | None = None
+
+
+class ForecastJobQueueItem(BaseModel):
+    """Administrator-facing summary of a forecast job."""
+
+    job_id: str
+    application_username: str
+    status: str
+    progress: int
+    step: str
+    forecast_horizon: int
+    forced_model: str | None = None
+    queued_at: str
+    started_at: str | None = None
+    completed_at: str | None = None
+    error: str | None = None
+
+
+class ForecastJobSettings(BaseModel):
+    """Scheduler and history-retention configuration."""
+
+    max_running_jobs_per_user: int = Field(ge=1, le=100)
+    retention_days: int | None = Field(default=30, ge=1)
+    cleanup_enabled: bool = True
+
+
+class DeletedJobsResponse(BaseModel):
+    """Count returned after deleting terminal forecast job records."""
+
+    deleted_count: int
 
 
 # ── API Key Management Schemas ────────────────────────────────────────────────

@@ -43,6 +43,47 @@ CREATE TABLE IF NOT EXISTS uploaded_files (
 
 CREATE INDEX IF NOT EXISTS uploaded_files_owner_created_idx
 ON uploaded_files(owner_id, created_at);
+
+CREATE TABLE IF NOT EXISTS forecast_jobs (
+    job_id                    TEXT PRIMARY KEY,
+    backend_owner_id          INTEGER,
+    application_user_id       INTEGER,
+    application_username      TEXT NOT NULL DEFAULT '',
+    application_user_is_admin INTEGER NOT NULL DEFAULT 0,
+    file_id                   TEXT NOT NULL,
+    date_col                  TEXT NOT NULL,
+    value_col                 TEXT NOT NULL,
+    forecast_horizon          INTEGER NOT NULL,
+    forced_model              TEXT,
+    user_prompt               TEXT,
+    preflight_options         TEXT NOT NULL DEFAULT '{}',
+    status                    TEXT NOT NULL,
+    progress                  INTEGER NOT NULL DEFAULT 0,
+    step                      TEXT NOT NULL,
+    error                     TEXT,
+    queued_at                 TEXT NOT NULL DEFAULT (datetime('now')),
+    started_at                TEXT,
+    completed_at              TEXT,
+    FOREIGN KEY (backend_owner_id) REFERENCES api_users(id) ON DELETE RESTRICT
+);
+
+CREATE INDEX IF NOT EXISTS forecast_jobs_status_queued_idx
+ON forecast_jobs(status, queued_at);
+
+CREATE INDEX IF NOT EXISTS forecast_jobs_application_status_idx
+ON forecast_jobs(application_user_id, status);
+
+CREATE TABLE IF NOT EXISTS forecast_job_settings (
+    singleton                 INTEGER PRIMARY KEY CHECK (singleton = 1),
+    max_running_jobs_per_user INTEGER NOT NULL DEFAULT 1,
+    retention_days            INTEGER,
+    cleanup_enabled           INTEGER NOT NULL DEFAULT 1,
+    updated_at                TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+INSERT OR IGNORE INTO forecast_job_settings
+    (singleton, max_running_jobs_per_user, retention_days, cleanup_enabled)
+VALUES (1, 1, 30, 1);
 """
 
 

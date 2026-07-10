@@ -12,6 +12,28 @@
                         <label class="form-label">Application Name</label>
                         <input type="text" name="app_name" class="form-control" value="{{ config.get('app_name', '') }}">
                     </div>
+                    <hr class="my-4">
+                    <section aria-labelledby="forecast-job-settings-heading">
+                        <h5 id="forecast-job-settings-heading">Forecast Job Settings</h5>
+                        <p class="text-secondary small">Administrators bypass the per-user running-job limit.</p>
+                        <div class="mb-3">
+                            <label class="form-label" for="max_running_jobs_per_user">Maximum running jobs per user</label>
+                            <input class="form-control" id="max_running_jobs_per_user" min="1" name="max_running_jobs_per_user" required step="1" type="number" value="{{ job_settings.max_running_jobs_per_user }}">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label" for="job_retention">Job history retention</label>
+                            <select class="form-select" id="job_retention" name="job_retention">
+                                <option value="1" {{ 'selected' if retention_option == '1' }}>1 day</option>
+                                <option value="7" {{ 'selected' if retention_option == '7' }}>1 week</option>
+                                <option value="14" {{ 'selected' if retention_option == '14' }}>2 weeks</option>
+                                <option value="30" {{ 'selected' if retention_option == '30' }}>1 month</option>
+                                <option value="90" {{ 'selected' if retention_option == '90' }}>3 months</option>
+                                <option value="180" {{ 'selected' if retention_option == '180' }}>6 months</option>
+                                <option value="indefinite" {{ 'selected' if retention_option == 'indefinite' }}>Indefinite</option>
+                                <option value="disabled" {{ 'selected' if retention_option == 'disabled' }}>Disable retention cleanup</option>
+                            </select>
+                        </div>
+                    </section>
                     <div class="d-flex justify-content-end">
                         <button type="submit" class="btn btn-primary btn-sm">Save Settings</button>
                     </div>

@@ -50,6 +50,9 @@ from schemas import (
     BootstrapResponse,
     ChatRequest,
     ChatResponse,
+    DeletedJobsResponse,
+    ForecastJobQueueItem,
+    ForecastJobSettings,
     JobStatusResponse,
     JobSubmitResponse,
     PreflightResponse,
@@ -59,11 +62,16 @@ from services.chat_service import chat_general, chat_with_data
 from services.file_service import get_file, init_storage, store_file
 from services.job_service import (
     create_job,
+    clear_terminal_jobs,
+    cleanup_terminal_jobs,
     get_job,
+    get_job_settings,
     get_job_status_only,
     init_job_queue,
     is_queue_ready,
     job_worker,
+    list_recent_jobs,
+    update_job_settings,
 )
 from utils.data_parser import parse_upload
 from utils.preflight import run_preflight_checks
@@ -71,6 +79,16 @@ from utils.preflight import run_preflight_checks
 logger = get_logger(__name__)
 
 _JSON_MEDIA_TYPE: str = "application/json"
+_JOB_CLEANUP_INTERVAL_SECONDS: int = 24 * 60 * 60
+
+
+async def _cleanup_job_history() -> None:
+    """Run retention cleanup daily without blocking API request handling."""
+    while True:
+        await asyncio.sleep(_JOB_CLEANUP_INTERVAL_SECONDS)
+        deleted_count = await asyncio.to_thread(cleanup_terminal_jobs)
+        if deleted_count:
+            logger.info("Deleted %d expired forecast job records.", deleted_count)
 
 
 @asynccontextmanager
@@ -83,6 +101,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """
     logger.info("Initializing API key database…")
     init_database()
+    cleanup_terminal_jobs()
     init_storage()
     if has_any_users():
         set_api_key_enabled(True)
@@ -118,13 +137,16 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     else:
         logger.info("No API users — auth disabled (open mode).")
     init_job_queue()
-    worker_task = asyncio.create_task(job_worker())
+    worker_tasks = [
+        asyncio.create_task(job_worker())
+        for _ in range(settings.MAX_CONCURRENT_JOBS)
+    ]
+    cleanup_task = asyncio.create_task(_cleanup_job_history())
     yield
-    worker_task.cancel()
-    try:
-        await worker_task
-    except asyncio.CancelledError:
-        pass
+    for worker_task in worker_tasks:
+        worker_task.cancel()
+    cleanup_task.cancel()
+    await asyncio.gather(*worker_tasks, cleanup_task, return_exceptions=True)
 
 
 app = FastAPI(title="Data Forecaster API", version="1.0.0", lifespan=lifespan)
@@ -133,7 +155,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "DELETE"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=[
         "X-API-Username",
         "X-API-Key",
@@ -575,6 +597,11 @@ def analyze(
             user_prompt=body.user_prompt,
             preflight_options=body.preflight_options,
             owner_id=_user.get("id"),
+            application_user_id=body.application_user_id,
+            application_username=body.application_username,
+            application_user_is_admin=(
+                body.application_user_is_admin and bool(_user.get("is_admin"))
+            ),
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -582,6 +609,61 @@ def analyze(
 
 
 # ── Job Status & Results ──────────────────────────────────────────────────────
+
+
+@app.get(
+    "/jobs/recent",
+    response_model=list[ForecastJobQueueItem],
+    responses={403: {"description": "Authenticated user is not an admin"}},
+)
+def recent_jobs(
+    _user: Annotated[dict, Depends(require_admin_api_key)],
+) -> list[dict[str, Any]]:
+    """Return the 25 most recent jobs for the administrator queue."""
+    return list_recent_jobs()
+
+
+@app.delete(
+    "/jobs/terminal",
+    response_model=DeletedJobsResponse,
+    responses={403: {"description": "Authenticated user is not an admin"}},
+)
+def terminal_jobs_clear(
+    _user: Annotated[dict, Depends(require_admin_api_key)],
+) -> dict[str, int]:
+    """Delete completed and failed forecast jobs at an administrator's request."""
+    return {"deleted_count": clear_terminal_jobs()}
+
+
+@app.get(
+    "/job-settings",
+    response_model=ForecastJobSettings,
+    responses={403: {"description": "Authenticated user is not an admin"}},
+)
+def job_settings_get(
+    _user: Annotated[dict, Depends(require_admin_api_key)],
+) -> dict[str, Any]:
+    """Return administrator-managed scheduler and retention settings."""
+    return get_job_settings()
+
+
+@app.put(
+    "/job-settings",
+    response_model=ForecastJobSettings,
+    responses={403: {"description": "Authenticated user is not an admin"}},
+)
+def job_settings_update(
+    job_settings: ForecastJobSettings,
+    _user: Annotated[dict, Depends(require_admin_api_key)],
+) -> dict[str, Any]:
+    """Update scheduler and retention settings, then clean expired history."""
+    updated = update_job_settings(
+        job_settings.max_running_jobs_per_user,
+        job_settings.retention_days,
+        job_settings.cleanup_enabled,
+    )
+    cleanup_terminal_jobs()
+    return updated
 
 
 @app.get("/jobs/{job_id}/status", responses={404: {"description": "Job ID not found"}})

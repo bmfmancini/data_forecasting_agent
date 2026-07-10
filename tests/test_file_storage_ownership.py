@@ -19,7 +19,7 @@ import core.config as settings  # noqa: E402
 import services.file_service as file_service  # noqa: E402
 import services.job_service as job_service  # noqa: E402
 from auth.api_key_db import create_first_user, delete_api_user  # noqa: E402
-from core.database import init_database  # noqa: E402
+from core.database import get_connection, init_database  # noqa: E402
 
 
 @pytest.fixture
@@ -87,6 +87,77 @@ def test_jobs_are_owner_scoped(storage_dir: str) -> None:
     assert job_service.get_job(job_id, {"id": 202, "is_admin": False}) is None
     assert job_service.get_job_status_only(job_id, {"id": owner_id, "is_admin": False})
     assert job_service.get_job(job_id, {"id": 202, "is_admin": True}) is not None
+
+
+def test_non_admin_user_job_limit_queues_additional_work(storage_dir: str) -> None:
+    """A user's second job remains pending until their first job completes."""
+    owner = create_first_user("owner", "test-owner-key")
+    owner_id = int(owner["id"])
+    dataframe = pd.DataFrame(
+        {"date": pd.date_range("2024-01-01", periods=3), "value": [1, 2, 3]}
+    )
+    first_file_id = file_service.store_file(
+        dataframe, "date", "value", "D", "first.csv", owner_id=owner_id
+    )
+    second_file_id = file_service.store_file(
+        dataframe, "date", "value", "D", "second.csv", owner_id=owner_id
+    )
+    job_service.init_job_queue()
+    job_service.update_job_settings(1, 30, True)
+    first_job_id = job_service.create_job(
+        first_file_id,
+        "date",
+        "value",
+        3,
+        None,
+        None,
+        None,
+        owner_id,
+        application_user_id=42,
+        application_username="forecast-user",
+    )
+    second_job_id = job_service.create_job(
+        second_file_id,
+        "date",
+        "value",
+        3,
+        None,
+        None,
+        None,
+        owner_id,
+        application_user_id=42,
+        application_username="forecast-user",
+    )
+
+    assert job_service._claim_job(first_job_id) is not None  # pylint: disable=protected-access
+    assert job_service._claim_job(second_job_id) is None  # pylint: disable=protected-access
+    pending = job_service.get_job_status_only(second_job_id)
+    assert pending is not None
+    assert pending["status"] == "pending"
+
+
+def test_clear_terminal_jobs_preserves_active_work(storage_dir: str) -> None:
+    """Manual queue cleanup deletes terminal jobs without affecting pending work."""
+    connection = get_connection()
+    try:
+        for job_id, status in (("done-job", "done"), ("error-job", "error"), ("pending-job", "pending")):
+            connection.execute(
+                """
+                INSERT INTO forecast_jobs (job_id, file_id, date_col, value_col,
+                    forecast_horizon, status, step, completed_at)
+                VALUES (?, 'file', 'date', 'value', 3, ?, 'test', datetime('now'))
+                """,
+                (job_id, status),
+            )
+        connection.commit()
+    finally:
+        connection.close()
+
+    assert job_service.clear_terminal_jobs() == 2
+    jobs = {job["job_id"]: job for job in job_service.list_recent_jobs()}
+    assert "done-job" not in jobs
+    assert "error-job" not in jobs
+    assert jobs["pending-job"]["status"] == "pending"
 
 
 def test_user_with_uploaded_files_cannot_be_deleted(storage_dir: str) -> None:

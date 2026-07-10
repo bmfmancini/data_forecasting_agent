@@ -119,6 +119,18 @@ class TestAdminEndpoints:
             ("POST", "/api-users/1/admin", {"is_admin": True}),
             ("DELETE", "/api-users/1", None),
             ("GET", "/api-users/bootstrap-status", None),
+            ("GET", "/jobs/recent", None),
+            ("DELETE", "/jobs/terminal", None),
+            ("GET", "/job-settings", None),
+            (
+                "PUT",
+                "/job-settings",
+                {
+                    "max_running_jobs_per_user": 2,
+                    "retention_days": 30,
+                    "cleanup_enabled": True,
+                },
+            ),
         ],
     )
     def test_regular_user_forbidden(
@@ -171,6 +183,24 @@ class TestAdminEndpoints:
         )
         assert response.status_code == 200
         assert response.json()["is_admin"] is True
+
+    def test_admin_can_update_forecast_job_settings(
+        self, client: TestClient, admin_user: tuple[str, str]
+    ) -> None:
+        """An administrator can configure queue concurrency and retention."""
+        username, key = admin_user
+        response = client.put(
+            "/job-settings",
+            headers=_auth_headers(username, key),
+            json={
+                "max_running_jobs_per_user": 3,
+                "retention_days": 7,
+                "cleanup_enabled": True,
+            },
+        )
+        assert response.status_code == 200
+        assert response.json()["max_running_jobs_per_user"] == 3
+        assert response.json()["retention_days"] == 7
 
 
 class TestBootstrap:
