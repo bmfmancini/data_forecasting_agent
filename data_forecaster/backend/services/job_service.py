@@ -16,7 +16,7 @@ from typing import Any, cast
 import core.config as settings
 from core.logging_config import get_logger
 from schemas import AnalysisResponse
-from services.file_service import get_file
+from services.file_service import get_file, release_file, reserve_file
 from services.pipeline_service import run_pipeline
 from services.rag_service import get_rag_kb
 
@@ -53,6 +53,7 @@ def create_job(
     forced_model: str | None,
     user_prompt: str | None,
     preflight_options: dict[str, Any] | None,
+    owner_id: int | None = None,
 ) -> str:
     """Create a pending job, enqueue it, and return the ``job_id``.
 
@@ -73,11 +74,14 @@ def create_job(
         with _job_store_lock:
             if len(_job_store) >= MAX_JOBS:
                 oldest_key = next(iter(_job_store))
-                _job_store.pop(oldest_key)
+                evicted_job = _job_store.pop(oldest_key)
+                if evicted_job["status"] == "pending":
+                    release_file(evicted_job["request"]["file_id"])
 
     job_id = str(uuid.uuid4())
     with _job_store_lock:
         _job_store[job_id] = {
+            "owner_id": owner_id,
             "status": "pending",
             "progress": 0,
             "step": "Queued — waiting for an available slot…",
@@ -93,12 +97,18 @@ def create_job(
             "result": None,
             "error": None,
         }
+    if not reserve_file(file_id):
+        with _job_store_lock:
+            _job_store.pop(job_id, None)
+        raise ValueError(f"File ID '{file_id}' not found in store.")
     JOB_QUEUE.put_nowait(job_id)
     logger.info("Job enqueued: job_id=%s file_id=%s", job_id, file_id)
     return job_id
 
 
-def get_job(job_id: str) -> dict[str, Any] | None:
+def get_job(
+    job_id: str, requester: dict[str, Any] | None = None
+) -> dict[str, Any] | None:
     """Retrieve a job dict by ``job_id``.
 
     Args:
@@ -107,10 +117,21 @@ def get_job(job_id: str) -> dict[str, Any] | None:
     Returns:
         The job dict or ``None`` if not found.
     """
-    return _job_store.get(job_id)
+    job = _job_store.get(job_id)
+    if job is None:
+        return None
+    if (
+        requester
+        and not requester.get("is_admin")
+        and job.get("owner_id") != requester.get("id")
+    ):
+        return None
+    return job
 
 
-def get_job_status_only(job_id: str) -> dict[str, Any] | None:
+def get_job_status_only(
+    job_id: str, requester: dict[str, Any] | None = None
+) -> dict[str, Any] | None:
     """Return only status/progress/step for lightweight polling.
 
     Args:
@@ -120,7 +141,7 @@ def get_job_status_only(job_id: str) -> dict[str, Any] | None:
         A dict with ``status``, ``progress``, and ``step`` keys, or
         ``None`` if the job is not found.
     """
-    job = _job_store.get(job_id)
+    job = get_job(job_id, requester)
     if job is None:
         return None
     return {
@@ -155,6 +176,7 @@ async def job_worker() -> None:
             job["status"] = "error"
             job["step"] = "Error: uploaded file not found."
             job["error"] = f"File ID '{req['file_id']}' not found in store."
+            release_file(req["file_id"])
             JOB_QUEUE.task_done()
             continue
 
@@ -182,13 +204,20 @@ async def job_worker() -> None:
             job["step"] = "Analysis complete."
             job["result"] = result.model_dump()
 
-            # Store the output results in the agent's memory
-            await asyncio.to_thread(
-                index_analysis_results,
-                file_id=req["file_id"],
-                analysis_result=result,
-                chroma_persist_dir=settings.CHROMA_PERSIST_DIR,
-            )
+            # Indexing supports chat but must not turn a completed analysis into
+            # an error when the optional RAG service is unavailable.
+            try:
+                await asyncio.to_thread(
+                    index_analysis_results,
+                    file_id=req["file_id"],
+                    owner_id=job.get("owner_id"),
+                    analysis_result=result,
+                    chroma_persist_dir=settings.CHROMA_PERSIST_DIR,
+                )
+            except Exception:  # pylint: disable=broad-exception-caught
+                logger.exception(
+                    "Analysis result indexing failed for job_id=%s", job_id
+                )
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.exception(
                 "Pipeline failed for job_id=%s file_id=%s", job_id, req["file_id"]
@@ -197,11 +226,15 @@ async def job_worker() -> None:
             job["step"] = "Pipeline failed."
             job["error"] = str(exc)
         finally:
+            release_file(req["file_id"])
             JOB_QUEUE.task_done()
 
 
 def index_analysis_results(
-    file_id: str, analysis_result: AnalysisResponse, chroma_persist_dir: str
+    file_id: str,
+    owner_id: int | None,
+    analysis_result: AnalysisResponse,
+    chroma_persist_dir: str,
 ) -> None:
     """Index analysis results into the RAG knowledge base.
 
@@ -223,7 +256,13 @@ def index_analysis_results(
     if hasattr(rag_kb, "add_texts"):
         rag_kb.add_texts(
             texts=[summary],
-            metadatas=[{"file_id": file_id, "type": "analysis_result"}],
+            metadatas=[
+                {
+                    "file_id": file_id,
+                    "owner_id": str(owner_id) if owner_id is not None else "",
+                    "type": "analysis_result",
+                }
+            ],
         )
     else:
         logger.warning(

@@ -22,11 +22,11 @@ from auth.api_key_db import (  # noqa: E402
     create_api_user,
     create_first_user,
     delete_api_user,
-    init_db,
     list_api_users,
     set_user_admin,
 )
 from auth.dependency import require_admin_api_key, require_api_key  # noqa: E402
+from core.database import init_database  # noqa: E402
 from main import app  # noqa: E402
 
 # Test API key reused from the ADMIN_API_KEY env var set in _reset_api_key_db.
@@ -41,18 +41,17 @@ def _reset_api_key_db(tmp_path: Any, monkeypatch: Any) -> None:
     time, so ``monkeypatch.setenv`` alone is not enough — we must also
     patch the cached attributes directly.
     """
-    db_dir = tmp_path / "api_keys"
-    db_dir.mkdir()
-    monkeypatch.setenv("API_KEY_DB_PATH", str(db_dir))
+    db_path = str(tmp_path / "backend.db")
+    monkeypatch.setenv("BACKEND_DB_PATH", db_path)
     monkeypatch.setenv("API_KEY_ENABLED", "true")
     monkeypatch.setenv("ADMIN_API_KEY", _ADMIN_KEY)
     monkeypatch.setenv("CHROMA_PERSIST_DIR", str(tmp_path / "chroma"))
     monkeypatch.setenv("FILE_STORAGE_DIR", str(tmp_path / "files"))
     # Patch the cached module attributes (read at import time).
-    monkeypatch.setattr(settings, "API_KEY_DB_PATH", str(db_dir))
+    monkeypatch.setattr(settings, "BACKEND_DB_PATH", db_path)
     monkeypatch.setattr(settings, "API_KEY_ENABLED", True)
     monkeypatch.setattr(settings, "ADMIN_API_KEY", _ADMIN_KEY)
-    init_db()
+    init_database()
 
 
 @pytest.fixture

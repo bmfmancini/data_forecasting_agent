@@ -54,7 +54,7 @@ CHROMA_PERSIST_DIR: str = os.getenv("CHROMA_PERSIST_DIR", "./chroma_db")
 # lookups; the DataFrame itself is loaded lazily from disk on demand.
 FILE_STORAGE_DIR: str = os.getenv("FILE_STORAGE_DIR", "./file_store")
 
-API_KEY_DB_PATH: str = os.getenv("API_KEY_DB_PATH", "./data")
+BACKEND_DB_PATH: str = os.getenv("BACKEND_DB_PATH", "./data/backend.db")
 API_KEY_ENABLED: bool = os.getenv("API_KEY_ENABLED", "false").lower() == "true"
 
 # Deployment-time secret used to protect the one-time bootstrap endpoint

@@ -2,7 +2,7 @@
 
 ## How it works
 
-The FastAPI backend requires an API key for all protected endpoints. Keys are hashed with Argon2id and stored in a SQLite database (`api_keys.db`). Plaintext keys are never stored — they're only shown once at creation or rotation time.
+The FastAPI backend requires an API key for all protected endpoints. Keys are hashed with Argon2id and stored in the backend SQLite database (`backend.db`). Plaintext keys are never stored — they're only shown once at creation or rotation time.
 
 Every request to a protected endpoint needs two headers:
 

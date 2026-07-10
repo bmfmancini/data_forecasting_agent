@@ -28,7 +28,6 @@ from auth.api_key_db import (
     delete_api_user,
     has_any_users,
     has_bootstrap_user,
-    init_db as init_api_key_db,
     list_api_users,
     rotate_api_key,
     set_user_admin,
@@ -36,6 +35,7 @@ from auth.api_key_db import (
 )
 from auth.dependency import require_admin_api_key, require_api_key
 from core.config import set_api_key_enabled
+from core.database import init_database
 from core.logging_config import get_logger
 from schemas import (
     APIKeyRotatedResponse,
@@ -82,7 +82,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     on shutdown.
     """
     logger.info("Initializing API key database…")
-    init_api_key_db()
+    init_database()
     init_storage()
     if has_any_users():
         set_api_key_enabled(True)
@@ -480,7 +480,17 @@ async def upload_file(
             detail="An internal error occurred while parsing the file.",
         ) from exc
 
-    file_id = store_file(df, date_col, value_col, freq, file.filename)
+    try:
+        file_id = store_file(
+            df,
+            date_col,
+            value_col,
+            freq,
+            file.filename,
+            owner_id=_user.get("id"),
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     return UploadResponse(
         file_id=file_id,
@@ -505,7 +515,7 @@ async def preflight_check(
     _user: Annotated[dict, Depends(require_api_key)],
 ) -> PreflightResponse:
     """Run data quality checks before starting the full analysis pipeline."""
-    stored = get_file(body.file_id)
+    stored = get_file(body.file_id, requester=_user)
     if not stored:
         raise HTTPException(
             status_code=404,
@@ -546,7 +556,7 @@ def analyze(
     if not is_queue_ready():
         raise HTTPException(status_code=503, detail="Service not ready.")
 
-    stored = get_file(body.file_id)
+    stored = get_file(body.file_id, requester=_user)
     if stored is None:
         raise HTTPException(
             status_code=404, detail=f"File ID '{body.file_id}' not found."
@@ -555,15 +565,19 @@ def analyze(
     date_col = body.date_col or stored["date_col"]
     value_col = body.value_col or stored["value_col"]
 
-    job_id = create_job(
-        file_id=body.file_id,
-        date_col=date_col,
-        value_col=value_col,
-        forecast_horizon=body.forecast_horizon,
-        forced_model=body.forced_model,
-        user_prompt=body.user_prompt,
-        preflight_options=body.preflight_options,
-    )
+    try:
+        job_id = create_job(
+            file_id=body.file_id,
+            date_col=date_col,
+            value_col=value_col,
+            forecast_horizon=body.forecast_horizon,
+            forced_model=body.forced_model,
+            user_prompt=body.user_prompt,
+            preflight_options=body.preflight_options,
+            owner_id=_user.get("id"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     return JobSubmitResponse(job_id=job_id, status="pending")
 
 
@@ -582,7 +596,7 @@ def get_job_status_lightweight(
     ``GET /jobs/{job_id}`` to retrieve the complete results once the
     job is done.
     """
-    status = get_job_status_only(job_id)
+    status = get_job_status_only(job_id, requester=_user)
     if status is None:
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
     return {"job_id": job_id, **status}
@@ -594,7 +608,7 @@ def get_job_status(
     _user: Annotated[dict, Depends(require_api_key)],
 ) -> JobStatusResponse:
     """Retrieve the full status and results of a specific background job."""
-    job = get_job(job_id)
+    job = get_job(job_id, requester=_user)
     if job is None:
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
     return JobStatusResponse(
@@ -623,7 +637,7 @@ async def chat_explorer(
 ) -> ChatResponse:
     """Allow users to chat with the agent about the uploaded data and results."""
     if request.file_id:
-        stored = get_file(request.file_id)
+        stored = get_file(request.file_id, requester=_user)
         if not stored:
             raise HTTPException(
                 status_code=404,
@@ -639,6 +653,7 @@ async def chat_explorer(
                 query=request.query,
                 df=stored["df"],
                 file_id=request.file_id,
+                owner_id=_user.get("id"),
                 chroma_persist_dir=settings.CHROMA_PERSIST_DIR,
             )
             return ChatResponse(**response)

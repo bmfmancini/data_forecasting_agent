@@ -9,12 +9,11 @@ Follows the same raw-``sqlite3`` pattern used by the Flask frontend's
 
 from __future__ import annotations
 
-import os
 import sqlite3
 from typing import Any
 
-import core.config as settings
 from auth.argon2_helpers import generate_api_key, hash_api_key
+from core.database import get_connection
 from core.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -23,92 +22,6 @@ _BOOTSTRAP_DESCRIPTION: str = "Bootstrap API user (created via admin bootstrap)"
 
 _SELECT_USER_BY_ID: str = "SELECT id FROM api_users WHERE id = ?"
 
-_SCHEMA: str = """
-CREATE TABLE IF NOT EXISTS api_users (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    username      TEXT    NOT NULL UNIQUE,
-    api_key_hash  TEXT    NOT NULL,
-    description   TEXT    NOT NULL DEFAULT '',
-    enabled       INTEGER NOT NULL DEFAULT 1,
-    bootstrap     INTEGER NOT NULL DEFAULT 0,
-    is_admin      INTEGER NOT NULL DEFAULT 0,
-    created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
-    last_used     TEXT,
-    last_used_ip  TEXT
-);
-"""
-
-
-def _get_db_path() -> str:
-    """Return the filesystem path to the API key SQLite database.
-
-    Returns:
-        Absolute path to ``api_keys.db`` inside the configured data
-        directory.
-    """
-    db_dir: str = settings.API_KEY_DB_PATH
-    os.makedirs(db_dir, exist_ok=True)
-    return os.path.join(db_dir, "api_keys.db")
-
-
-def _get_connection() -> sqlite3.Connection:
-    """Open a new SQLite connection with ``Row`` row factory.
-
-    Returns:
-        A :class:`sqlite3.Connection` configured for dict-style row
-        access.
-    """
-    conn: sqlite3.Connection = sqlite3.connect(
-        _get_db_path(),
-        detect_types=sqlite3.PARSE_DECLTYPES,
-    )
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode = WAL")
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
-
-
-def get_connection(db_path: str | None = None) -> sqlite3.Connection:
-    """Open a new SQLite connection with ``Row`` row factory.
-
-    Args:
-        db_path: Optional directory containing ``api_keys.db``.  When
-            ``None``, the configured default path is used.
-
-    Returns:
-        A :class:`sqlite3.Connection` configured for dict-style row
-        access.
-    """
-    if db_path is not None:
-        os.makedirs(db_path, exist_ok=True)
-        db_file: str = os.path.join(db_path, "api_keys.db")
-    else:
-        db_file = _get_db_path()
-    conn: sqlite3.Connection = sqlite3.connect(
-        db_file,
-        detect_types=sqlite3.PARSE_DECLTYPES,
-    )
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode = WAL")
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
-
-
-def init_db() -> None:
-    """Create the ``api_users`` table if needed.
-
-    Called once during FastAPI application startup.  Creates the schema
-    only — no users are auto-created.  The first API user is created
-    on-demand via the ``POST /api-users/bootstrap`` endpoint, which is
-    protected by the ``ADMIN_API_KEY`` deployment secret.
-    """
-    conn: sqlite3.Connection = _get_connection()
-    try:
-        conn.executescript(_SCHEMA)
-        conn.commit()
-    finally:
-        conn.close()
-
 
 def has_any_users() -> bool:
     """Check whether any API users exist in the database.
@@ -116,7 +29,7 @@ def has_any_users() -> bool:
     Returns:
         ``True`` when at least one user exists.
     """
-    conn: sqlite3.Connection = _get_connection()
+    conn: sqlite3.Connection = get_connection()
     try:
         row: sqlite3.Row | None = conn.execute(
             "SELECT COUNT(*) AS cnt FROM api_users"
@@ -148,7 +61,7 @@ def create_first_user(username: str, api_key: str) -> dict[str, Any]:
     if not api_key:
         raise ValueError("API key is required.")
 
-    conn: sqlite3.Connection = _get_connection()
+    conn: sqlite3.Connection = get_connection()
     try:
         count_row: sqlite3.Row | None = conn.execute(
             "SELECT COUNT(*) AS cnt FROM api_users"
@@ -207,7 +120,7 @@ def verify_api_key(
     """
     from auth.argon2_helpers import verify_api_key as _verify
 
-    conn: sqlite3.Connection = _get_connection()
+    conn: sqlite3.Connection = get_connection()
     try:
         row: sqlite3.Row | None = conn.execute(
             """
@@ -260,7 +173,7 @@ def list_api_users() -> list[dict[str, Any]]:
     Returns:
         List of user dicts ordered by ``id``.
     """
-    conn: sqlite3.Connection = _get_connection()
+    conn: sqlite3.Connection = get_connection()
     try:
         rows: list[sqlite3.Row] = conn.execute("""
             SELECT id, username, description, enabled, bootstrap, is_admin,
@@ -295,7 +208,7 @@ def get_api_user(user_id: int) -> dict[str, Any] | None:
     Returns:
         User dict or ``None`` when not found.
     """
-    conn: sqlite3.Connection = _get_connection()
+    conn: sqlite3.Connection = get_connection()
     try:
         row: sqlite3.Row | None = conn.execute(
             """
@@ -341,7 +254,7 @@ def create_api_user(username: str, description: str, is_admin: bool = False) -> 
     plaintext_key: str = generate_api_key()
     key_hash: str = hash_api_key(plaintext_key)
 
-    conn: sqlite3.Connection = _get_connection()
+    conn: sqlite3.Connection = get_connection()
     try:
         existing: sqlite3.Row | None = conn.execute(
             "SELECT id FROM api_users WHERE username = ?",
@@ -382,7 +295,7 @@ def rotate_api_key(user_id: int) -> str:
     plaintext_key: str = generate_api_key()
     key_hash: str = hash_api_key(plaintext_key)
 
-    conn: sqlite3.Connection = _get_connection()
+    conn: sqlite3.Connection = get_connection()
     try:
         row: sqlite3.Row | None = conn.execute(
             _SELECT_USER_BY_ID,
@@ -414,7 +327,7 @@ def set_user_enabled(user_id: int, enabled: bool) -> None:
     Raises:
         ValueError: When the user ID does not exist.
     """
-    conn: sqlite3.Connection = _get_connection()
+    conn: sqlite3.Connection = get_connection()
     try:
         row: sqlite3.Row | None = conn.execute(
             _SELECT_USER_BY_ID,
@@ -444,7 +357,7 @@ def set_user_admin(user_id: int, is_admin: bool) -> None:
     Raises:
         ValueError: When the user ID does not exist.
     """
-    conn: sqlite3.Connection = _get_connection()
+    conn: sqlite3.Connection = get_connection()
     try:
         row: sqlite3.Row | None = conn.execute(
             _SELECT_USER_BY_ID,
@@ -472,7 +385,7 @@ def delete_api_user(user_id: int) -> None:
     Raises:
         ValueError: When the user ID does not exist.
     """
-    conn: sqlite3.Connection = _get_connection()
+    conn: sqlite3.Connection = get_connection()
     try:
         row: sqlite3.Row | None = conn.execute(
             _SELECT_USER_BY_ID,
@@ -480,6 +393,14 @@ def delete_api_user(user_id: int) -> None:
         ).fetchone()
         if row is None:
             raise ValueError(f"API user with id {user_id} not found.")
+
+        owned_file = conn.execute(
+            "SELECT 1 FROM uploaded_files WHERE owner_id = ? LIMIT 1", (user_id,)
+        ).fetchone()
+        if owned_file is not None:
+            raise ValueError(
+                f"API user with id {user_id} owns uploaded files and cannot be deleted."
+            )
 
         conn.execute("DELETE FROM api_users WHERE id = ?", (user_id,))
         conn.commit()
@@ -494,7 +415,7 @@ def has_bootstrap_user() -> bool:
     Returns:
         ``True`` when at least one user has ``bootstrap = 1``.
     """
-    conn: sqlite3.Connection = _get_connection()
+    conn: sqlite3.Connection = get_connection()
     try:
         row: sqlite3.Row | None = conn.execute(
             "SELECT COUNT(*) AS cnt FROM api_users WHERE bootstrap = 1"
