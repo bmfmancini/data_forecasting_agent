@@ -121,6 +121,7 @@ class StatisticalResult(BaseModel):
     domain: str | None = None
     seasonal_period: int | None = None
     dominant_period: float | None = None
+    disabled_tests: list[str] = Field(default_factory=list)
     summary: str
     reasoning_steps: list[dict[str, Any]] = Field(default_factory=list)
     token_usage: dict[str, Any] = Field(default_factory=dict)
@@ -143,11 +144,12 @@ class ResidualDiagnostics(BaseModel):
     """Output of residual analysis diagnostics."""
 
     mean: float
-    is_zero_mean: bool
-    ljung_box_p_value: float
-    is_uncorrelated: bool
-    shapiro_wilk_p_value: float
-    is_normal: bool
+    is_zero_mean: bool | None = None
+    ljung_box_p_value: float | None = None
+    is_uncorrelated: bool | None = None
+    shapiro_wilk_p_value: float | None = None
+    is_normal: bool | None = None
+    disabled_tests: list[str] = Field(default_factory=list)
 
 
 class ForecastResult(BaseModel):

@@ -184,12 +184,18 @@ def _build_suitability_summary(stat_result: StatisticalResult) -> str:
     Returns:
         A single string containing all four assessments separated by blank lines.
     """
-    return "\n\n".join([
+    sections = [
         _hw_suitability(stat_result),
         _arima_suitability(stat_result),
         _sarima_suitability(stat_result),
         _ewma_suitability(stat_result),
-    ])
+    ]
+    if stat_result.disabled_tests:
+        sections.append(
+            "User-disabled statistical evidence for this forecast:\n"
+            f"- {', '.join(stat_result.disabled_tests)}"
+        )
+    return "\n\n".join(sections)
 
 
 # ── Heuristic fallback ────────────────────────────────────────────────────────

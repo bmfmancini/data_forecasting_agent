@@ -142,6 +142,31 @@
       const el = document.getElementById(id);
       if (el) el.disabled = false;
     });
+    document.querySelectorAll(".stat-tuning-toggle").forEach(function (el) {
+      el.disabled = false;
+    });
+  }
+
+  /**
+   * Collect advanced statistical choices for the current run only.
+   *
+   * @returns {object}
+   */
+  function collectStatisticalTuning() {
+    const disabled = [];
+    document.querySelectorAll(".stat-tuning-toggle").forEach(function (el) {
+      if (!el.checked && el.dataset.statTest) {
+        disabled.push(el.dataset.statTest);
+      }
+    });
+    return { disabled_tests: disabled };
+  }
+
+  /** Reset advanced statistical tuning to the default all-enabled state. */
+  function resetStatisticalTuning() {
+    document.querySelectorAll(".stat-tuning-toggle").forEach(function (el) {
+      el.checked = true;
+    });
   }
 
   /**
@@ -160,6 +185,7 @@
         if (data.error) {
           setUploadStatus(data.error, true);
         } else {
+          resetStatisticalTuning();
           setUploadStatus(
             "Uploaded — " + data.rows + " rows detected.",
             false
@@ -318,13 +344,19 @@
 
     if (!dateSel || !valueSel) return;
 
+    const preflightOptions = Object.assign(
+      {},
+      App._preflightOptions || {},
+      { statistical_tuning: collectStatisticalTuning() }
+    );
+
     const payload = {
       date_col: dateSel.value,
       value_col: valueSel.value,
       forecast_horizon: horizonEl ? parseInt(horizonEl.value, 10) : 12,
       model_choice: modelEl ? modelEl.value : "Auto (AI selects)",
       user_prompt: promptEl ? promptEl.value : "",
-      preflight_options: App._preflightOptions || {},
+      preflight_options: preflightOptions,
     };
 
     if (runBtn) {

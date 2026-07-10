@@ -114,6 +114,78 @@
                                     <textarea id="inp-prompt" class="form-control" rows="2"
                                               placeholder="e.g. Focus on seasonal patterns" disabled></textarea>
                                 </div>
+                                <div class="mt-3">
+                                    <button class="btn btn-success btn-sm w-100" type="button"
+                                            data-bs-toggle="collapse" data-bs-target="#advanced-statistical-tuning"
+                                            aria-expanded="false" aria-controls="advanced-statistical-tuning">
+                                        Advanced Statistical Tuning
+                                    </button>
+                                    <div class="collapse mt-3" id="advanced-statistical-tuning">
+                                        <div class="border rounded p-3">
+                                            <p class="small text-muted mb-3">
+                                                Disable statistical tests or transforms for this forecast only. Defaults keep every applicable test enabled.
+                                            </p>
+                                            <div class="row g-2">
+                                                <div class="col-sm-6">
+                                                    <div class="form-check">
+                                                        <input class="form-check-input stat-tuning-toggle" type="checkbox" id="stat-adf" data-stat-test="adf" checked disabled>
+                                                        <label class="form-check-label small" for="stat-adf">ADF stationarity</label>
+                                                    </div>
+                                                    <div class="form-check">
+                                                        <input class="form-check-input stat-tuning-toggle" type="checkbox" id="stat-kpss" data-stat-test="kpss" checked disabled>
+                                                        <label class="form-check-label small" for="stat-kpss">KPSS stationarity</label>
+                                                    </div>
+                                                    <div class="form-check">
+                                                        <input class="form-check-input stat-tuning-toggle" type="checkbox" id="stat-trend" data-stat-test="trend" checked disabled>
+                                                        <label class="form-check-label small" for="stat-trend">Trend detection</label>
+                                                    </div>
+                                                    <div class="form-check">
+                                                        <input class="form-check-input stat-tuning-toggle" type="checkbox" id="stat-white-noise" data-stat-test="white_noise" checked disabled>
+                                                        <label class="form-check-label small" for="stat-white-noise">White-noise test</label>
+                                                    </div>
+                                                    <div class="form-check">
+                                                        <input class="form-check-input stat-tuning-toggle" type="checkbox" id="stat-variance" data-stat-test="variance_stability" checked disabled>
+                                                        <label class="form-check-label small" for="stat-variance">Variance stability</label>
+                                                    </div>
+                                                    <div class="form-check">
+                                                        <input class="form-check-input stat-tuning-toggle" type="checkbox" id="stat-boxcox" data-stat-test="box_cox" checked disabled>
+                                                        <label class="form-check-label small" for="stat-boxcox">Box-Cox transform</label>
+                                                    </div>
+                                                </div>
+                                                <div class="col-sm-6">
+                                                    <div class="form-check">
+                                                        <input class="form-check-input stat-tuning-toggle" type="checkbox" id="stat-change-points" data-stat-test="change_points" checked disabled>
+                                                        <label class="form-check-label small" for="stat-change-points">Change points</label>
+                                                    </div>
+                                                    <div class="form-check">
+                                                        <input class="form-check-input stat-tuning-toggle" type="checkbox" id="stat-acf-pacf" data-stat-test="acf_pacf" checked disabled>
+                                                        <label class="form-check-label small" for="stat-acf-pacf">ACF/PACF</label>
+                                                    </div>
+                                                    <div class="form-check">
+                                                        <input class="form-check-input stat-tuning-toggle" type="checkbox" id="stat-stl" data-stat-test="stl" checked disabled>
+                                                        <label class="form-check-label small" for="stat-stl">STL decomposition</label>
+                                                    </div>
+                                                    <div class="form-check">
+                                                        <input class="form-check-input stat-tuning-toggle" type="checkbox" id="stat-periodogram" data-stat-test="periodogram" checked disabled>
+                                                        <label class="form-check-label small" for="stat-periodogram">Periodogram</label>
+                                                    </div>
+                                                    <div class="form-check">
+                                                        <input class="form-check-input stat-tuning-toggle" type="checkbox" id="stat-residual-zero-mean" data-stat-test="residual_zero_mean" checked disabled>
+                                                        <label class="form-check-label small" for="stat-residual-zero-mean">Residual zero mean</label>
+                                                    </div>
+                                                    <div class="form-check">
+                                                        <input class="form-check-input stat-tuning-toggle" type="checkbox" id="stat-residual-autocorrelation" data-stat-test="residual_autocorrelation" checked disabled>
+                                                        <label class="form-check-label small" for="stat-residual-autocorrelation">Residual autocorrelation</label>
+                                                    </div>
+                                                    <div class="form-check">
+                                                        <input class="form-check-input stat-tuning-toggle" type="checkbox" id="stat-residual-normality" data-stat-test="residual_normality" checked disabled>
+                                                        <label class="form-check-label small" for="stat-residual-normality">Residual normality</label>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>

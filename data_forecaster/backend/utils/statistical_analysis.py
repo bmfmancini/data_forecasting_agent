@@ -17,33 +17,40 @@ _AUTOCORRELATION_P_THRESHOLD = 0.05
 _NORMALITY_P_THRESHOLD = 0.05
 
 
-def analyze_residuals(residuals: pd.Series) -> ResidualDiagnostics:
+def analyze_residuals(
+    residuals: pd.Series, disabled_tests: list[str] | None = None
+) -> ResidualDiagnostics:
     """Perform a series of diagnostic tests on model residuals.
 
     Args:
         residuals: The difference between actual and predicted values.
+        disabled_tests: Residual diagnostic tests to skip for this forecast.
 
     Returns:
         A :class:`ResidualDiagnostics` object with test results.
     """
-    # 1. Zero Mean Check (One-sample t-test)
-    # The null hypothesis is that the expected value (mean) of the sample is zero.
-    # We want a high p-value to fail to reject the null.
+    disabled = set(disabled_tests or [])
     mean = residuals.mean()
-    is_zero_mean = ttest_1samp(residuals, 0).pvalue >= _ZERO_MEAN_P_THRESHOLD
 
-    # 2. Autocorrelation (Ljung-Box Test)
-    # The null hypothesis is that the data are independently distributed.
-    # We want a high p-value to fail to reject the null.
-    ljung_box_result = acorr_ljungbox(residuals, lags=[10], return_df=True)
-    ljung_box_p_value = ljung_box_result["lb_pvalue"].iloc[0]
-    is_uncorrelated = ljung_box_p_value >= _AUTOCORRELATION_P_THRESHOLD
+    is_zero_mean = None
+    if "residual_zero_mean" not in disabled:
+        # The null hypothesis is that the sample mean is zero.
+        is_zero_mean = ttest_1samp(residuals, 0).pvalue >= _ZERO_MEAN_P_THRESHOLD
 
-    # 3. Normality (Shapiro-Wilk Test)
-    # The null hypothesis is that the data was drawn from a normal distribution.
-    # We want a high p-value to fail to reject the null.
-    shapiro_stat, shapiro_p = shapiro(residuals)
-    is_normal = shapiro_p >= _NORMALITY_P_THRESHOLD
+    ljung_box_p_value = None
+    is_uncorrelated = None
+    if "residual_autocorrelation" not in disabled:
+        # The null hypothesis is that the data are independently distributed.
+        ljung_box_result = acorr_ljungbox(residuals, lags=[10], return_df=True)
+        ljung_box_p_value = ljung_box_result["lb_pvalue"].iloc[0]
+        is_uncorrelated = ljung_box_p_value >= _AUTOCORRELATION_P_THRESHOLD
+
+    shapiro_p = None
+    is_normal = None
+    if "residual_normality" not in disabled:
+        # The null hypothesis is that the data was drawn from a normal distribution.
+        _, shapiro_p = shapiro(residuals)
+        is_normal = shapiro_p >= _NORMALITY_P_THRESHOLD
 
     return ResidualDiagnostics(
         mean=mean,
@@ -52,4 +59,5 @@ def analyze_residuals(residuals: pd.Series) -> ResidualDiagnostics:
         is_uncorrelated=is_uncorrelated,
         shapiro_wilk_p_value=shapiro_p,
         is_normal=is_normal,
+        disabled_tests=sorted(disabled),
     )

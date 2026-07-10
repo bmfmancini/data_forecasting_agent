@@ -59,6 +59,7 @@ def run_forecasting_agent(
     forecast_horizon: int,
     freq: str,
     existing_metrics: dict[str, dict[str, float]] | None = None,
+    disabled_tests: list[str] | None = None,
 ) -> tuple[ForecastResult, dict[str, dict[str, float]]]:
     """Run all three forecasting models, return ForecastResult for the selected model
     and an all-metrics dict for the comparison chart.
@@ -199,7 +200,9 @@ def run_forecasting_agent(
     residual_diagnostics = None
     if "residuals" in res and isinstance(res["residuals"], pd.Series):
         try:
-            residual_diagnostics = analyze_residuals(res["residuals"])
+            residual_diagnostics = analyze_residuals(
+                res["residuals"], disabled_tests=disabled_tests
+            )
         except Exception as exc:
             logger.warning("Residual analysis failed: %s", exc)
 
