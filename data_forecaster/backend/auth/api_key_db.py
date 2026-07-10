@@ -383,7 +383,8 @@ def delete_api_user(user_id: int) -> None:
         user_id: Primary key of the API user to delete.
 
     Raises:
-        ValueError: When the user ID does not exist.
+        ValueError: When the user ID does not exist, or when the user owns
+            uploaded files or forecast jobs that prevent deletion.
     """
     conn: sqlite3.Connection = get_connection()
     try:
@@ -400,6 +401,15 @@ def delete_api_user(user_id: int) -> None:
         if owned_file is not None:
             raise ValueError(
                 f"API user with id {user_id} owns uploaded files and cannot be deleted."
+            )
+
+        owned_job = conn.execute(
+            "SELECT 1 FROM forecast_jobs WHERE backend_owner_id = ? LIMIT 1",
+            (user_id,),
+        ).fetchone()
+        if owned_job is not None:
+            raise ValueError(
+                f"API user with id {user_id} owns forecast jobs and cannot be deleted."
             )
 
         conn.execute("DELETE FROM api_users WHERE id = ?", (user_id,))
