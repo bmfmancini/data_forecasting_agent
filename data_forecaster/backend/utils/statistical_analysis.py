@@ -40,7 +40,7 @@ def analyze_residuals(residuals: pd.Series) -> ResidualDiagnostics:
     # 3. Normality (Shapiro-Wilk Test)
     # The null hypothesis is that the data was drawn from a normal distribution.
     # We want a high p-value to fail to reject the null.
-    shapiro_stat, shapiro_p = shapiro(residuals)
+    _shapiro_stat, shapiro_p = shapiro(residuals)
     is_normal = shapiro_p >= _NORMALITY_P_THRESHOLD
 
     return ResidualDiagnostics(
