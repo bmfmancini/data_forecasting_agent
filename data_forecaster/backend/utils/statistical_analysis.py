@@ -7,12 +7,12 @@ to check for whiteness (zero mean, no autocorrelation, normally distributed).
 from __future__ import annotations
 
 import pandas as pd
-from scipy.stats import shapiro
+from scipy.stats import shapiro, ttest_1samp
 from statsmodels.stats.diagnostic import acorr_ljungbox
 
 from schemas import ResidualDiagnostics
 
-_ZERO_MEAN_THRESHOLD = 1e-6
+_ZERO_MEAN_P_THRESHOLD = 0.05
 _AUTOCORRELATION_P_THRESHOLD = 0.05
 _NORMALITY_P_THRESHOLD = 0.05
 
@@ -26,9 +26,11 @@ def analyze_residuals(residuals: pd.Series) -> ResidualDiagnostics:
     Returns:
         A :class:`ResidualDiagnostics` object with test results.
     """
-    # 1. Zero Mean Check
+    # 1. Zero Mean Check (One-sample t-test)
+    # The null hypothesis is that the expected value (mean) of the sample is zero.
+    # We want a high p-value to fail to reject the null.
     mean = residuals.mean()
-    is_zero_mean = abs(mean) < _ZERO_MEAN_THRESHOLD
+    is_zero_mean = ttest_1samp(residuals, 0).pvalue >= _ZERO_MEAN_P_THRESHOLD
 
     # 2. Autocorrelation (Ljung-Box Test)
     # The null hypothesis is that the data are independently distributed.

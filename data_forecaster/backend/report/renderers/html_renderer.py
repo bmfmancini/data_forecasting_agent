@@ -31,8 +31,7 @@ class HTMLRenderer:
         """
         return (
             f"{self._render_dashboard(report)}"
-            f"{self._render_confidence(report)}"
-            f"{self._render_health_indicators(report)}"
+            f"{self._render_reliability(report)}"
             f"{self._render_executive_summary(report)}"
             f"{self._render_data_quality(report)}"
             f"{self._render_historical_analysis(report)}"
@@ -70,41 +69,6 @@ class HTMLRenderer:
             + "</div>"
         )
         return f'<section class="report-dashboard">{grid}</section>'
-
-    # ── Confidence Badge ──────────────────────────────────────────────────
-
-    def _render_confidence(self, report: ExecutiveReport) -> str:
-        """Render the confidence score as a badge with explanation."""
-        c = report.confidence
-        color = self._label_color(c.label)
-        return (
-            f'<section class="report-confidence mb-3">'
-            f'<span class="badge bg-{color} fs-6">'
-            f"Forecast Confidence: {c.score}/100 — {escape(c.label)}"
-            f"</span>"
-            f"<p class=\"mt-2 text-muted\">{escape(c.explanation)}</p>"
-            f"</section>"
-        )
-
-    # ── Health Indicators Table ───────────────────────────────────────────
-
-    def _render_health_indicators(self, report: ExecutiveReport) -> str:
-        """Render health indicators as an HTML table."""
-        rows = "".join(
-            f"<tr><td>{escape(hi.indicator)}</td>"
-            f"<td>{escape(hi.status)}</td>"
-            f"<td>{escape(hi.detail)}</td></tr>"
-            for hi in report.health_indicators
-        )
-        return (
-            '<section class="report-health mb-3">'
-            "<h5>Forecast Health Indicators</h5>"
-            '<table class="table table-sm table-striped">'
-            "<thead><tr><th>Indicator</th><th>Status</th>"
-            "<th>Detail</th></tr></thead>"
-            f"<tbody>{rows}</tbody></table>"
-            "</section>"
-        )
 
     # ── Executive Summary ─────────────────────────────────────────────────
 
@@ -167,6 +131,43 @@ class HTMLRenderer:
             "<p>[VISUAL:STL]</p>"
             "</section>"
         )
+
+    # ── Forecast Reliability ──────────────────────────────────────────────
+
+    def _render_reliability(self, report: ExecutiveReport) -> str:
+        """Render reliability with confidence score and health indicators."""
+        c = report.confidence
+        color = self._label_color(c.label)
+        confidence_html = (
+            f'<span class="badge bg-{color} fs-6">'
+            f"Confidence Score: {c.score}/100 — {escape(c.label)}"
+            f"</span>"
+            f"<p class=\"mt-2 text-muted\">{escape(c.explanation)}</p>"
+        )
+
+        health_rows = "".join(
+            f"<tr><td>{escape(hi.indicator)}</td>"
+            f"<td>{escape(hi.status)}</td>"
+            f"<td>{escape(hi.detail)}</td></tr>"
+            for hi in report.health_indicators
+        )
+        health_table = (
+            '<h6>Forecast Health Indicators</h6>'
+            '<table class="table table-sm table-striped">'
+            "<thead><tr><th>Indicator</th><th>Status</th>"
+            "<th>Detail</th></tr></thead>"
+            f"<tbody>{health_rows}</tbody></table>"
+        )
+
+        return (
+            '<section class="report-reliability mb-3">'
+            "<h5>Forecast Reliability & Performance Assessment</h5>"
+            f"{confidence_html}"
+            f"{health_table}"
+            "<p>[VISUAL:COMPARISON]</p>"
+            "</section>"
+        )
+
 
     # ── Forecast Outlook ──────────────────────────────────────────────────
 

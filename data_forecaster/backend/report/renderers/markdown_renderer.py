@@ -189,6 +189,9 @@ class MarkdownRenderer:
         lines = ["## 6. Forecasting Approach & Model Comparison", ""]
         lines.append(f"**Selected Model:** {mc.selected_model}")
         lines.append("")
+        if mc.narrative:
+            lines.append(mc.narrative)
+            lines.append("")
         lines.append("| Model | RMSE | MAE | MAPE | WAPE | MASE | Selected | Rejected Reason |")
         lines.append("|-------|------|-----|------|------|------|----------|-----------------|")
         for entry in mc.entries:
@@ -198,9 +201,6 @@ class MarkdownRenderer:
                 f"| {entry.model} | {entry.rmse:.4f} | {entry.mae:.4f} | {entry.mape:.2f}% | "
                 f"{entry.wape or 0.0:.2f}% | {entry.mase or 0.0:.4f} | {selected} | {rejected} |"
             )
-        if mc.narrative:
-            lines.append("")
-            lines.append(mc.narrative)
         lines.append("")
         lines.append("[VISUAL:ACF_PACF]")
         return "\n".join(lines)
