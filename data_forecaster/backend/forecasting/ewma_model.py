@@ -68,4 +68,7 @@ def fit_ewma(series: pd.Series, forecast_horizon: int, alpha: float = 0.3) -> di
         "rmse": rmse,
         "mae": mae,
         "mape": mape,
+        "y_train": train,
+        "y_test": test,
+        "forecast_test": test_fc,
     }
