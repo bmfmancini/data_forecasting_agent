@@ -553,6 +553,290 @@ body::after {
    Report
    ============================================================ */
 
+.report-hero,
+.report-panel {
+  border: 1px solid rgba(139, 148, 158, 0.22);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.045), transparent 36%),
+    rgba(28, 33, 40, 0.92);
+  box-shadow: var(--card-shadow);
+}
+
+.report-hero {
+  padding: clamp(1rem, 2vw, 1.5rem);
+  overflow: hidden;
+  position: relative;
+}
+
+.report-hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, rgba(63, 185, 80, 0.08), transparent 32%),
+    linear-gradient(180deg, rgba(210, 153, 34, 0.08), transparent 46%);
+  opacity: 0.9;
+}
+
+.report-hero > * {
+  position: relative;
+}
+
+.report-hero-head,
+.report-section-heading,
+.recommendation-topline {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.report-hero-head {
+  margin-bottom: 1rem;
+}
+
+.report-title {
+  font-size: clamp(1.6rem, 3vw, 2.75rem);
+  line-height: 1;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.report-kicker {
+  color: var(--text-muted-custom);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.report-export-form {
+  flex: 0 0 auto;
+}
+
+.report-export-btn {
+  white-space: nowrap;
+}
+
+.report-tile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 0.75rem;
+}
+
+.report-tile {
+  min-height: 150px;
+  border: 1px solid rgba(139, 148, 158, 0.22);
+  background: rgba(14, 17, 23, 0.62);
+  padding: 0.9rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  transition:
+    transform var(--transition-base) var(--ease-out-quart),
+    border-color var(--transition-fast),
+    background-color var(--transition-fast);
+}
+
+.report-tile-positive {
+  border-top: 3px solid var(--accent-green);
+}
+
+.report-tile-negative {
+  border-top: 3px solid var(--accent-red);
+}
+
+.report-tile-warning {
+  border-top: 3px solid var(--accent-amber);
+}
+
+.report-tile-info,
+.report-tile-neutral {
+  border-top: 3px solid var(--accent-blue);
+}
+
+.report-tile-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+  color: var(--text-muted-custom);
+  font-size: 0.76rem;
+  font-weight: 650;
+}
+
+.report-tile-label span:last-child {
+  overflow-wrap: anywhere;
+}
+
+.report-tile-value {
+  margin: 0.75rem 0 0.55rem;
+  color: #f0f6fc;
+  font-size: clamp(1.15rem, 1.7vw, 1.55rem);
+  line-height: 1.12;
+  font-weight: 720;
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+}
+
+.report-tile-copy,
+.health-row p,
+.recommendation-block p {
+  margin: 0;
+  color: var(--text-muted-custom);
+  line-height: 1.45;
+}
+
+.report-tile-copy {
+  font-size: 0.78rem;
+}
+
+.leadership-brief {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(240px, 0.65fr);
+  gap: 1rem;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgba(139, 148, 158, 0.2);
+}
+
+.brief-lead {
+  margin: 0;
+  color: #f0f6fc;
+  font-size: clamp(1rem, 1.4vw, 1.2rem);
+  line-height: 1.55;
+}
+
+.brief-asides {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.brief-asides div,
+.health-row,
+.recommendation-block {
+  border: 1px solid rgba(139, 148, 158, 0.18);
+  background: rgba(14, 17, 23, 0.48);
+}
+
+.brief-asides div {
+  padding: 0.8rem;
+}
+
+.brief-asides span {
+  display: block;
+  margin-bottom: 0.35rem;
+  color: var(--text-muted-custom);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.brief-asides strong {
+  display: block;
+  color: #e6edf3;
+  font-size: 0.9rem;
+  line-height: 1.35;
+}
+
+.report-section-grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.85fr) minmax(320px, 1.15fr);
+  gap: 1rem;
+}
+
+.report-panel {
+  padding: 1rem;
+}
+
+.report-section-heading {
+  margin-bottom: 0.85rem;
+}
+
+.health-list,
+.recommendation-list {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.health-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 1rem;
+  padding: 0.8rem;
+}
+
+.health-row strong {
+  color: #f0f6fc;
+}
+
+.health-row p,
+.recommendation-block p {
+  font-size: 0.8rem;
+}
+
+.health-row span,
+.recommendation-topline span {
+  align-self: start;
+  border: 1px solid rgba(139, 148, 158, 0.24);
+  color: #f0f6fc;
+  background: rgba(255, 255, 255, 0.06);
+  padding: 0.2rem 0.45rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.recommendation-block {
+  padding: 0.85rem;
+  border-left-width: 3px;
+}
+
+.recommendation-high {
+  border-left-color: var(--accent-red);
+}
+
+.recommendation-medium {
+  border-left-color: var(--accent-amber);
+}
+
+.recommendation-low {
+  border-left-color: var(--accent-green);
+}
+
+.recommendation-topline {
+  margin-bottom: 0.65rem;
+}
+
+.recommendation-topline strong {
+  color: #f0f6fc;
+  line-height: 1.35;
+}
+
+.recommendation-block p + p {
+  margin-top: 0.45rem;
+}
+
+.evidence-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.65rem;
+}
+
+.evidence-row span {
+  border: 1px solid rgba(31, 111, 235, 0.35);
+  color: #c9d7ff;
+  background: rgba(31, 111, 235, 0.12);
+  padding: 0.18rem 0.45rem;
+  font-size: 0.72rem;
+}
+
+.report-prediction-intervals .table,
+.report-detail-panel .report-body {
+  margin-bottom: 0;
+}
+
 .report-body h1,
 .report-body h2,
 .report-body h3,
@@ -567,6 +851,55 @@ body::after {
 
 .report-body table {
   font-size: 0.8rem;
+}
+
+.report-body h2:first-child {
+  margin-top: 0;
+}
+
+.report-body hr {
+  border-color: rgba(139, 148, 158, 0.25);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .report-tile:hover {
+    transform: translate3d(0, -3px, 0);
+    border-color: rgba(139, 148, 158, 0.42);
+    background-color: rgba(14, 17, 23, 0.78);
+  }
+}
+
+@media (max-width: 991.98px) {
+  .leadership-brief,
+  .report-section-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 575.98px) {
+  .report-hero-head,
+  .report-section-heading,
+  .recommendation-topline {
+    display: block;
+  }
+
+  .report-export-form {
+    margin-top: 0.75rem;
+  }
+
+  .report-export-btn {
+    width: 100%;
+  }
+
+  .report-tile {
+    min-height: 132px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .report-tile {
+    transition: none;
+  }
 }
 
 /* ============================================================

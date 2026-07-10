@@ -87,7 +87,6 @@ class ExecutiveReportBuilder:
             forecast:            Forecasting agent output.
             statistical_review:  Statistical review (QA) agent output (optional).
             all_metrics:         All model comparison metrics dict.
-            preflight_options:   Optional preflight configuration dict.
 
         Returns:
             A populated :class:`ExecutiveReport` with empty narrative fields.
@@ -367,15 +366,19 @@ class ExecutiveReportBuilder:
             breaks_detail = "No structural breaks detected."
 
         # Residual Diagnostics
-        if statistical.is_white_noise or forecast.mape > 20:
+        diag = forecast.residual_diagnostics
+        if diag and not diag.is_uncorrelated:
             resid_status = HEALTH_STATUS["residual_diagnostics"]["concerning"]
-            resid_detail = (
-                "Residual diagnostics or high validation error suggest "
-                "the model may not fully capture the data structure."
-            )
+            resid_detail = "Residuals are autocorrelated, indicating the model has not captured all predictable patterns."
+        elif diag and not diag.is_normal:
+            resid_status = HEALTH_STATUS["residual_diagnostics"]["concerning"]
+            resid_detail = "Residuals are not normally distributed, which may affect the reliability of prediction intervals."
+        elif statistical.is_white_noise or forecast.mape > 20:
+            resid_status = HEALTH_STATUS["residual_diagnostics"]["concerning"]
+            resid_detail = "High validation error or other signals suggest the model may not fully capture the data structure."
         else:
             resid_status = HEALTH_STATUS["residual_diagnostics"]["acceptable"]
-            resid_detail = "Residual diagnostics indicate an acceptable model fit."
+            resid_detail = "Residual analysis confirms the model's errors are random and unbiased, indicating a good fit."
 
         return [
             HealthIndicator(
@@ -483,6 +486,8 @@ class ExecutiveReportBuilder:
             rmse=round(forecast.rmse, 4),
             mae=round(forecast.mae, 4),
             mape=round(forecast.mape, 2),
+            wape=round(forecast.wape, 2) if forecast.wape is not None else None,
+            mase=round(forecast.mase, 4) if forecast.mase is not None else None,
             prediction_intervals=intervals,
         )
 
@@ -508,6 +513,12 @@ class ExecutiveReportBuilder:
             "ARIMA": model_selection.arima_rejected_reason,
             "SARIMA": model_selection.sarima_rejected_reason,
             "EWMA": model_selection.ewma_rejected_reason,
+            # Baseline models do not have rejection reasons from the selection
+            # agent, as they are not candidates for the primary forecast.
+            "Naive": "Baseline model for comparison.",
+            "Seasonal Naive": "Baseline model for comparison.",
+            "Mean Forecast": "Baseline model for comparison.",
+            "Drift": "Baseline model for comparison.",
         }
         entries: list[ModelComparisonEntry] = []
         for name, metrics in all_metrics.items():
@@ -517,6 +528,8 @@ class ExecutiveReportBuilder:
                     rmse=round(metrics.get("RMSE", 0.0), 4),
                     mae=round(metrics.get("MAE", 0.0), 4),
                     mape=round(metrics.get("MAPE", 0.0), 2),
+                    wape=round(metrics.get("WAPE", 0.0) * 100, 2), # Convert to percentage
+                    mase=round(metrics.get("MASE", 0.0), 4),
                     selected=(name == selected),
                     rejected_reason=(
                         rejection_map.get(name) if name != selected else None
@@ -1110,7 +1123,7 @@ class ExecutiveReportBuilder:
             )
         )
 
-        return Explainability(items=items)
+        return Explainability(findings=items)
 
     # ── Historical Analysis ───────────────────────────────────────────────
 
@@ -1455,15 +1468,26 @@ class ExecutiveReportBuilder:
             "rmse": round(forecast.rmse, 4),
             "mae": round(forecast.mae, 4),
             "mape": round(forecast.mape, 2),
+            "wape": round(forecast.wape, 2) if forecast.wape is not None else None,
+            "mase": round(forecast.mase, 4) if forecast.mase is not None else None,
             "mape_quality": mape_quality(forecast.mape),
             "all_models": {
                 name: {
                     "RMSE": round(m.get("RMSE", 0.0), 4),
                     "MAE": round(m.get("MAE", 0.0), 4),
                     "MAPE": round(m.get("MAPE", 0.0), 2),
+                    "WAPE": round(m.get("WAPE", 0.0) * 100, 2),
+                    "MASE": round(m.get("MASE", 0.0), 4),
                 }
                 for name, m in all_metrics.items()
             },
         }
-        visual_tags = ["HISTORICAL", "STL", "ACF_PACF", "FORECAST", "COMPARISON"]
+        visual_tags = [
+            "HISTORICAL",
+            "STL",
+            "ACF_PACF",
+            "FORECAST",
+            "COMPARISON",
+            "RESIDUALS",
+        ]
         return Appendix(raw_metrics=raw_metrics, visual_tags=visual_tags)

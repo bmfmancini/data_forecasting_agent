@@ -21,6 +21,7 @@ from agents.statistical_review_agent import run_statistical_review_agent
 from core.logging_config import get_logger
 from report.renderers import HTMLRenderer, MarkdownRenderer
 from schemas import AnalysisResponse, ModelSelectionResult
+from services.baseline_service import run_baseline_models
 from services.rag_service import get_rag_kb
 from utils.data_cleaning import apply_iqr_clipping, apply_zscore_clipping
 from utils.preflight import prepare_series_frame
@@ -192,6 +193,14 @@ def run_pipeline(
     )
     _progress(75, "Forecast complete")
 
+    # ── Baseline Model Comparison ─────────────────────────────────────────────
+    logger.info("Running baseline model comparisons")
+    baseline_metrics = run_baseline_models(
+        series, forecast_horizon, seasonal_period
+    )
+    all_metrics.update(baseline_metrics)
+    logger.info("Baseline models complete")
+
     # ── Agent 4.5: Statistical Review (QA) ────────────────────────────────────
     logger.info("Agent 4.5: Statistical Review")
     _progress(77, "Statistical review…")
@@ -264,7 +273,12 @@ def run_pipeline(
         # Re-run forecasting with the new model selection
         _progress(85, "Re-running forecast with revised model…")
         forecast_result, all_metrics = run_forecasting_agent(
-            series, model_selection, stat_result, forecast_horizon, freq
+            series,
+            model_selection,
+            stat_result,
+            forecast_horizon,
+            freq,
+            all_metrics=all_metrics,  # Pass existing metrics
         )
         # Re-run statistical review on the new outputs
         _progress(87, "Re-running statistical review…")
@@ -440,9 +454,9 @@ def run_pipeline(
 
 
 def _merge_token_usage(
-    first: dict[str, int],
-    second: dict[str, int],
-) -> dict[str, int]:
+    first: dict[str, int | bool],
+    second: dict[str, int | bool],
+) -> dict[str, int | bool]:
     """Merge two token-usage dicts by summing their numeric values.
 
     Args:
@@ -454,10 +468,10 @@ def _merge_token_usage(
         ``output_tokens``, and ``total_tokens``.  The ``estimated`` flag is
         set to ``True`` if either input was estimated.
     """
-    merged: dict[str, int] = {}
+    merged: dict[str, int | bool] = {}
     for key in ("input_tokens", "output_tokens", "total_tokens"):
-        merged[key] = first.get(key, 0) + second.get(key, 0)
-    merged["estimated"] = bool(
+        merged[key] = int(first.get(key, 0)) + int(second.get(key, 0))
+    merged["estimated"] = (
         first.get("estimated", False) or second.get("estimated", False)
     )
     return merged

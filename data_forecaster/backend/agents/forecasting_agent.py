@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from core.llm_factory import get_llm
@@ -12,10 +13,44 @@ from forecasting.holt_winters import fit_holt_winters
 from forecasting.sarima_model import fit_sarima
 from prompts.forecasting_prompt import FORECASTING_PROMPT
 from schemas import ForecastResult, ModelSelectionResult, StatisticalResult
+from utils.statistical_analysis import analyze_residuals
 from utils.token_tracking import estimate_input_text, extract_token_usage
 
 logger = get_logger(__name__)
 
+def _calculate_additional_metrics(
+    y_true: pd.Series, y_pred: pd.Series, y_train: pd.Series, seasonal_period: int
+) -> dict[str, float]:
+    """Calculate WAPE and MASE."""
+    metrics = {}
+    # WAPE: Sum of absolute errors / sum of actuals
+    # Stable alternative to MAPE, especially with zeros in y_true.
+    absolute_errors = np.abs(y_true - y_pred)
+    sum_of_actuals = np.sum(y_true)
+    if sum_of_actuals != 0:
+        metrics["wape"] = np.sum(absolute_errors) / sum_of_actuals
+    else:
+        metrics["wape"] = np.nan # Avoid division by zero
+
+    # MASE: Mean Absolute Error / MAE of a naive seasonal forecast on training data
+    # The gold standard for comparing forecast accuracy across different series.
+    mae = np.mean(absolute_errors)
+    if y_train.shape[0] > seasonal_period:
+        y_train_naive = y_train.shift(seasonal_period).dropna()
+        train_residuals_naive = y_train[y_train_naive.index] - y_train_naive
+        mae_naive = np.mean(np.abs(train_residuals_naive))
+        if mae_naive != 0:
+            metrics["mase"] = mae / mae_naive
+        else:
+            metrics["mase"] = np.inf # Should be rare
+    else:
+        # Fallback for very short series where seasonal naive is not possible
+        mae_naive = np.mean(np.abs(np.diff(y_train)))
+        if mae_naive != 0:
+            metrics["mase"] = mae / mae_naive
+        else:
+            metrics["mase"] = np.inf
+    return metrics
 
 def run_forecasting_agent(
     series: pd.Series,
@@ -29,7 +64,7 @@ def run_forecasting_agent(
 
     Returns:
         (ForecastResult, all_metrics_dict)
-        all_metrics_dict: {"ARIMA": {"RMSE": x, "MAE": y, "MAPE": z}, ...}
+        all_metrics_dict: {"ARIMA": {"RMSE": x, "MAE": y, "MAPE": z, "WAPE": w, "MASE": m}, ...}
     """
     seasonal_period = stat_result.seasonal_period or 12
     results_store: dict[str, dict[str, Any]] = {}
@@ -43,12 +78,26 @@ def run_forecasting_agent(
     ]:
         try:
             results_store[name] = fn(series, forecast_horizon, **kwargs)
+            # Post-hoc calculation of WAPE and MASE
+            # Assumes fit functions return test set actuals and training data
+            if "y_test" in results_store[name] and "forecast" in results_store[name]:
+                y_test = results_store[name]["y_test"]
+                forecast = results_store[name]["forecast"]
+                y_train = results_store[name].get("y_train", series[:len(series) - len(y_test)])
+                
+                additional_metrics = _calculate_additional_metrics(
+                    y_test, forecast, y_train, seasonal_period
+                )
+                results_store[name].update(additional_metrics)
+
         except Exception as exc:
             logger.warning("%s fitting failed: %s", name, exc)
 
     comparison_summary = "Model comparison metrics (lower is better):\n"
     for name, res in results_store.items():
-        comparison_summary += f"- {name}: RMSE={res['rmse']:.4f}, MAE={res['mae']:.4f}, MAPE={res['mape']:.2f}%\n"
+        wape_text = f", WAPE={res.get('wape', np.nan)*100:.2f}%" if 'wape' in res else ""
+        mase_text = f", MASE={res.get('mase', np.nan):.4f}" if 'mase' in res else ""
+        comparison_summary += f"- {name}: RMSE={res['rmse']:.4f}, MAE={res['mae']:.4f}, MAPE={res['mape']:.2f}%{wape_text}{mase_text}\n"
 
     # ── LLM Setup ────────────────────────────────────────────────────────────
     llm = get_llm(temperature=0)
@@ -125,9 +174,23 @@ def run_forecasting_agent(
 
     # ── Build all_metrics dict for comparison chart ───────────────────────────
     all_metrics = {
-        name: {"RMSE": r["rmse"], "MAE": r["mae"], "MAPE": r["mape"]}
-        for name, r in results_store.items()
+        name: {
+            "RMSE": r["rmse"],
+            "MAE": r["mae"],
+            "MAPE": r["mape"],
+            "WAPE": r.get("wape", np.nan),
+            "MASE": r.get("mase", np.nan),
+        }
+        for name, r in results_store.items() if "rmse" in r # Ensure model ran successfully
     }
+
+    # ── Residual Analysis ─────────────────────────────────────────────────────
+    residual_diagnostics = None
+    if "residuals" in res and isinstance(res["residuals"], pd.Series):
+        try:
+            residual_diagnostics = analyze_residuals(res["residuals"])
+        except Exception as exc:
+            logger.warning("Residual analysis failed: %s", exc)
 
     logger.info("Forecasting complete. Selected: %s", selected)
 
@@ -140,6 +203,9 @@ def run_forecasting_agent(
         rmse=res["rmse"],
         mae=res["mae"],
         mape=res["mape"],
+        wape=res.get("wape"),
+        mase=res.get("mase"),
+        residual_diagnostics=residual_diagnostics,
         reasoning_steps=reasoning_steps,
         token_usage=token_usage,
     )

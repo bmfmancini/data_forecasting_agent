@@ -136,6 +136,17 @@ class ModelSelectionResult(BaseModel):
     token_usage: dict[str, Any] = Field(default_factory=dict)
 
 
+class ResidualDiagnostics(BaseModel):
+    """Output of residual analysis diagnostics."""
+
+    mean: float
+    is_zero_mean: bool
+    ljung_box_p_value: float
+    is_uncorrelated: bool
+    shapiro_wilk_p_value: float
+    is_normal: bool
+
+
 class ForecastResult(BaseModel):
     """Output of the forecasting agent for the selected model."""
 
@@ -147,6 +158,9 @@ class ForecastResult(BaseModel):
     rmse: float
     mae: float
     mape: float
+    wape: float | None = None
+    mase: float | None = None
+    residual_diagnostics: ResidualDiagnostics | None = None
     reasoning_steps: list[dict[str, Any]] = Field(default_factory=list)
     token_usage: dict[str, Any] = Field(default_factory=dict)
 

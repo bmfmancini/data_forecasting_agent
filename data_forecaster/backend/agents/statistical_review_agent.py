@@ -265,6 +265,77 @@ def _check_suboptimal_rmse(
     return None
 
 
+def _check_residual_autocorrelation(
+    forecast_result: ForecastResult,
+) -> dict[str, Any] | None:
+    """Flag when model residuals are autocorrelated.
+
+    Args:
+        forecast_result: Output of the forecasting agent.
+
+    Returns:
+        A flag dict if autocorrelation is detected, otherwise ``None``.
+    """
+    diag = forecast_result.residual_diagnostics
+    if diag and not diag.is_uncorrelated:
+        return {
+            "agent": "forecasting",
+            "severity": "critical",
+            "issue": (
+                f"Model residuals are autocorrelated (Ljung-Box p-value="
+                f"{diag.ljung_box_p_value:.4f}). The model has failed to "
+                "capture all predictable patterns in the data."
+            ),
+            "recommendation": (
+                "The model is likely misspecified. Consider a different "
+                "model (e.g., SARIMA if seasonality is present) or "
+                "different model orders."
+            ),
+        }
+    return None
+
+
+def _check_residual_normality(
+    forecast_result: ForecastResult,
+) -> dict[str, Any] | None:
+    """Flag when model residuals are not normally distributed.
+
+    Args:
+        forecast_result: Output of the forecasting agent.
+
+    Returns:
+        A flag dict if non-normality is detected, otherwise ``None``.
+    """
+    diag = forecast_result.residual_diagnostics
+    if diag and not diag.is_normal:
+        return {
+            "agent": "forecasting",
+            "severity": "warning",
+            "issue": (
+                f"Model residuals are not normally distributed (Shapiro-Wilk "
+                f"p-value={diag.shapiro_wilk_p_value:.4f})."
+            ),
+            "recommendation": (
+                "The calculated prediction intervals may be unreliable. "
+                "This can be caused by unhandled outliers or structural breaks."
+            ),
+        }
+    return None
+
+
+def _check_residual_mean(forecast_result: ForecastResult) -> dict[str, Any] | None:
+    """Flag when model residuals have a non-zero mean."""
+    diag = forecast_result.residual_diagnostics
+    if diag and not diag.is_zero_mean:
+        return {
+            "agent": "forecasting",
+            "severity": "warning",
+            "issue": f"Model residuals have a non-zero mean ({diag.mean:.4f}), indicating a systematic forecast bias.",
+            "recommendation": "Review model specification; the forecast may be consistently too high or too low.",
+        }
+    return None
+
+
 def _deterministic_pre_check(
     stat_result: StatisticalResult,
     model_selection: ModelSelectionResult,
@@ -294,6 +365,9 @@ def _deterministic_pre_check(
         _check_trend_ewma_lag(stat_result, selected),
         _check_explanation_mismatch(model_selection, selected),
         _check_suboptimal_rmse(selected, all_metrics),
+        _check_residual_autocorrelation(forecast_result),
+        _check_residual_normality(forecast_result),
+        _check_residual_mean(forecast_result),
     ]
 
     return [flag for flag in checks if flag is not None]
@@ -335,12 +409,21 @@ def _build_model_selection_text(
 def _build_forecast_text(forecast_result: ForecastResult) -> str:
     """Build a text summary of the forecast for the LLM prompt."""
     forecast_sample = [round(v, 2) for v in forecast_result.forecast[:10]]
+    residual_text = "Not available."
+    if diag := forecast_result.residual_diagnostics:
+        residual_text = (
+            f"Mean={diag.mean:.4f} (is_zero: {diag.is_zero_mean}), "
+            f"Ljung-Box p={diag.ljung_box_p_value:.4f} (is_uncorrelated: {diag.is_uncorrelated}), "
+            f"Shapiro-Wilk p={diag.shapiro_wilk_p_value:.4f} (is_normal: {diag.is_normal})"
+        )
+
     return (
         f"- Model used: {forecast_result.model_used}\n"
         f"- RMSE: {forecast_result.rmse:.4f}\n"
         f"- MAE: {forecast_result.mae:.4f}\n"
         f"- MAPE: {forecast_result.mape:.2f}%\n"
         f"- Forecast sample (first 10): {forecast_sample}\n"
+        f"- Residual Diagnostics: {residual_text}\n"
         f"- Forecast dates: "
         f"{forecast_result.forecast_dates[:3]}...{forecast_result.forecast_dates[-3:]}"
     )

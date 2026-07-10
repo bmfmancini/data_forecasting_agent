@@ -204,6 +204,22 @@ def _parse_report_segments(
     return segments
 
 
+def _remove_web_dashboard_section(report_text: str) -> str:
+    """Remove the markdown dashboard section from the web report body.
+
+    The report page renders the executive dashboard as a richer tile-based
+    overview.  PDF/export still receives the full markdown report, including
+    the dashboard table, so audit/export behavior remains unchanged.
+    """
+    sections = report_text.split("\n\n---\n\n")
+    filtered = [
+        section
+        for section in sections
+        if not section.lstrip().startswith("## 1. Executive Dashboard")
+    ]
+    return "\n\n---\n\n".join(filtered)
+
+
 @main_bp.route("/")
 @_login_required
 def index() -> Response:
@@ -438,19 +454,20 @@ def report() -> str:
     """
     result: dict[str, Any] = session.get("analysis_result") or {}
     upload_info: dict[str, Any] = session.get("upload_info") or {}
-    report_text: str = result.get("report", "Report not available.")
     executive_report: dict[str, Any] | None = result.get("executive_report")
-    report_html: str | None = result.get("report_html")
-    segments = _parse_report_segments(report_text, result)
+    # The segment parser expects markdown (it converts markdown → HTML and
+    # splits on ``[VISUAL:TAG]`` tokens).  Using the pre-rendered HTML here
+    # would cause double-processing and bleach stripping of the visual tags.
+    report_md: str = result.get("report", "Report not available.")
+    web_report_md = _remove_web_dashboard_section(report_md)
     filename: str = upload_info.get("filename", "data")
     base_name = filename.rsplit(".", 1)[0] if "." in filename else filename
     pdf_filename = f"forecast_report_{base_name}.pdf"
     return render_template(
         "main/report.html",
-        segments=segments,
+        segments=_parse_report_segments(web_report_md, result),
         pdf_filename=pdf_filename,
         er=executive_report,
-        report_html=report_html,
     )
 
 
@@ -467,7 +484,7 @@ def report_export() -> Response:
 
     result: dict[str, Any] = session.get("analysis_result") or {}
     upload_info: dict[str, Any] = session.get("upload_info") or {}
-    report_text: str = result.get("report", "Report not available.")
+    report_text: str = result.get("report", "Report not available.") # For PDF
 
     filename: str = upload_info.get("filename", "data")
     base_name = filename.rsplit(".", 1)[0] if "." in filename else filename

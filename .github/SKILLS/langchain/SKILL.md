@@ -10,7 +10,7 @@ Build sophisticated LLM applications with composable chains and agent graphs.
 ## Quick Start
 
 ```bash
-pip install langchain langchain-openai langchain-anthropic langgraph
+pip install langchain langchain-openai langchain-anthropic langgraph langchain-community
 ```
 
 ```python

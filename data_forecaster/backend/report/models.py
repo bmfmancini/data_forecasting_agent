@@ -146,6 +146,8 @@ class ForecastMetrics(BaseModel):
         rmse:          Root mean squared error (validation).
         mae:           Mean absolute error (validation).
         mape:          Mean absolute percentage error (validation).
+        wape:          Weighted absolute percentage error (validation).
+        mase:          Mean absolute scaled error (validation).
         prediction_intervals: Per-period prediction intervals.
     """
 
@@ -159,6 +161,8 @@ class ForecastMetrics(BaseModel):
     rmse: float
     mae: float
     mape: float
+    wape: float | None = None
+    mase: float | None = None
     prediction_intervals: list[PredictionInterval] = Field(default_factory=list)
 
 
@@ -173,6 +177,8 @@ class ModelComparisonEntry(BaseModel):
         rmse:           Root mean squared error.
         mae:            Mean absolute error.
         mape:           Mean absolute percentage error.
+        wape:           Weighted absolute percentage error.
+        mase:           Mean absolute scaled error.
         selected:       Whether this model was selected.
         rejected_reason: Why this model was rejected (if not selected).
     """
@@ -181,6 +187,8 @@ class ModelComparisonEntry(BaseModel):
     rmse: float
     mae: float
     mape: float
+    wape: float | None = None
+    mase: float | None = None
     selected: bool
     rejected_reason: str | None = None
 

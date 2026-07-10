@@ -9,6 +9,9 @@ parsing logic lives in one place.
 from __future__ import annotations
 
 import os
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def env_int(key: str, default: int) -> int:
@@ -21,9 +24,13 @@ def env_int(key: str, default: int) -> int:
     Returns:
         The integer value from the environment or the default.
     """
+    value = os.getenv(key)
+    if value is None:
+        return default
     try:
-        return int(os.getenv(key, default))
+        return int(value)
     except (ValueError, TypeError):
+        logger.warning("Invalid value for env var '%s': '%s'. Using default: %s", key, value, default)
         return default
 
 
@@ -37,7 +44,11 @@ def env_float(key: str, default: float) -> float:
     Returns:
         The float value from the environment or the default.
     """
+    value = os.getenv(key)
+    if value is None:
+        return default
     try:
-        return float(os.getenv(key, default))
+        return float(value)
     except (ValueError, TypeError):
+        logger.warning("Invalid value for env var '%s': '%s'. Using default: %s", key, value, default)
         return default

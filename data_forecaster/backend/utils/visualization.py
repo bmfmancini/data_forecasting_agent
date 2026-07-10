@@ -293,13 +293,15 @@ def _render_trace(ax: Any, trace: dict[str, Any]) -> None:
     ys = trace.get("y", [])
     name = trace.get("name", "")
     if trace_type == "bar":
+        color = trace.get("marker", {}).get("color")
         xs = trace.get("x", [])
         x_labels = [str(x) for x in xs] if xs else range(len(ys))
-        ax.bar(x_labels, ys, label=name, alpha=0.8)
+        ax.bar(x_labels, ys, label=name, alpha=0.8, color=color)
     elif trace.get("fill") == "toself":
+        xs = trace.get("x", [])
         half = len(ys) // 2
         ax.fill_between(
-            range(half), ys[:half], ys[half:][::-1],
+            xs[:half], ys[:half], ys[half:][::-1],
             alpha=0.15, color="red", label=name,
         )
     else:

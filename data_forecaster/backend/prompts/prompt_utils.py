@@ -75,6 +75,4 @@ def apply_token_budget(prompt: ChatPromptTemplate, name: str) -> ChatPromptTempl
     if budget is None:
         return prompt
 
-    existing_metadata = dict(prompt.metadata or {})
-    existing_metadata["token_budget"] = budget
-    return prompt.model_copy(update={"metadata": existing_metadata})
+    return prompt

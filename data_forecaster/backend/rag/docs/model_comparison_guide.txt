@@ -1,0 +1,74 @@
+Title: Guide to Forecasting Models
+
+This guide explains the different time series forecasting models used by the Data Forecasting Agent, outlining their strengths, weaknesses, and typical use cases.
+
+---
+
+### 1. ARIMA (Autoregressive Integrated Moving Average)
+
+ARIMA is one of the most widely used classical forecasting models. It is a general class of models that can capture a wide range of temporal structures in time series data.
+
+**Components:**
+- **AR (Autoregressive):** The model uses the dependent relationship between an observation and some number of lagged observations (past values).
+- **I (Integrated):** The model uses differencing of raw observations to make the time series stationary (i.e., remove trend and seasonality).
+- **MA (Moving Average):** The model uses the dependency between an observation and a residual error from a moving average model applied to lagged observations.
+
+**Strengths:**
+- Excellent for capturing non-seasonal trends and dependencies on past values.
+- Based on a well-understood statistical foundation.
+
+**Weaknesses:**
+- Requires the time series to be stationary (or be made stationary through differencing).
+- Does not natively handle seasonality.
+
+**Best For:** Forecasting non-seasonal data where the future value depends on past values, such as stock prices or economic indicators.
+
+---
+
+### 2. SARIMA (Seasonal ARIMA)
+
+SARIMA is an extension of ARIMA that explicitly supports time series data with a seasonal component.
+
+**Strengths:**
+- Powerfully models data with a clear and consistent seasonal pattern (e.g., daily, weekly, monthly, quarterly).
+- Can model trend and seasonality simultaneously.
+
+**Weaknesses:**
+- Has more parameters to estimate than ARIMA, so it generally requires more data.
+- Can be overly complex if seasonality is not truly present.
+
+**Best For:** Forecasting data with predictable seasonal cycles, such as retail sales, energy demand, or website traffic.
+
+---
+
+### 3. Holt-Winters (Triple Exponential Smoothing)
+
+Holt-Winters is an exponential smoothing method that explicitly models trend and seasonality. Unlike ARIMA, it does not require the data to be stationary.
+
+**Strengths:**
+- Often performs well on data with clear trend and seasonality, even with shorter series.
+- Conceptually simpler than SARIMA and computationally faster.
+- Can handle additive or multiplicative seasonality.
+
+**Weaknesses:**
+- Can be less flexible than SARIMA for complex autocorrelation patterns.
+- Assumes that the trend and seasonality are relatively stable over time.
+
+**Best For:** A robust alternative to SARIMA, especially when the seasonal pattern is clear and stable. It is often a strong performer for business metrics like product sales or call center volume.
+
+---
+
+### 4. EWMA (Exponentially Weighted Moving Average)
+
+EWMA is a simple but effective smoothing technique that calculates a weighted average of all past data, giving more weight to recent observations.
+
+**Strengths:**
+- Very effective for smoothing out noisy data to identify the underlying short-term trend.
+- Extremely fast to compute.
+- Requires only one parameter (the smoothing factor, alpha).
+
+**Weaknesses:**
+- It is not a true forecasting model in the same way as the others. It is primarily for smoothing and cannot project trends or seasonality into the future.
+- The "forecast" is typically just the last smoothed value projected forward (a flat line).
+
+**Best For:** Noise reduction and identifying the current underlying level of a series. It is often used in process control charts, not for multi-step-ahead forecasting.

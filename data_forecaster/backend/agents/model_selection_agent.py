@@ -9,6 +9,8 @@ and well below the SonarQube Cognitive Complexity threshold.
 
 from __future__ import annotations
 
+import math
+
 from core.llm_factory import get_llm
 from core.logging_config import get_logger
 from prompts.model_selection_prompt import MODEL_SELECTION_PROMPT
@@ -18,6 +20,7 @@ from utils.token_tracking import estimate_input_text, extract_token_usage
 logger = get_logger(__name__)
 
 _MODELS = ("ARIMA", "SARIMA", "Holt-Winters", "EWMA")
+_METRIC_PRIORITY = ("MASE", "WAPE", "RMSE", "MAE", "MAPE")
 
 # Unicode hyphen characters that the LLM may emit instead of ASCII '-'.
 _UNICODE_HYPHENS = (
@@ -390,27 +393,210 @@ def _parse_selected_model(output: str, fallback_model: str) -> str:
     return selected if selected is not None else fallback_model
 
 
-def _rejection_reasons(
-    selected_model: str, reason: str = "Not selected based on LLM reasoning.",
+def _finite_metric(metrics: dict[str, float], metric: str) -> float | None:
+    """Return a finite metric value or ``None`` when unavailable."""
+    value = metrics.get(metric)
+    if value is None or not math.isfinite(value):
+        return None
+    return value
+
+
+def _format_metric(metric: str, value: float) -> str:
+    """Format a validation metric for business-readable model explanations."""
+    if metric == "WAPE":
+        return f"WAPE {value * 100:.2f}%"
+    if metric == "MAPE":
+        return f"MAPE {value:.2f}%"
+    if metric == "MASE":
+        return f"MASE {value:.4f}"
+    return f"{metric} {value:.4f}"
+
+
+def _primary_metric(
+    all_metrics: dict[str, dict[str, float]] | None,
+    model: str,
+) -> tuple[str, float] | None:
+    """Find the highest-priority available metric for a model."""
+    if not all_metrics or model not in all_metrics:
+        return None
+    metrics = all_metrics[model]
+    for metric in _METRIC_PRIORITY:
+        value = _finite_metric(metrics, metric)
+        if value is not None:
+            return metric, value
+    return None
+
+
+def _metric_rejection_reason(
+    model: str,
+    selected_model: str,
+    all_metrics: dict[str, dict[str, float]] | None,
+) -> str | None:
+    """Explain a rejected model using comparable validation error metrics."""
+    rejected_metric = _primary_metric(all_metrics, model)
+    selected_metric = _primary_metric(all_metrics, selected_model)
+    if not rejected_metric or not selected_metric:
+        return None
+    metric, rejected_value = rejected_metric
+    selected_metric_name, selected_value = selected_metric
+    if metric == selected_metric_name and rejected_value > selected_value:
+        return (
+            "Higher forecast error on validation data: "
+            f"{_format_metric(metric, rejected_value)} versus "
+            f"{_format_metric(metric, selected_value)} for {selected_model}."
+        )
+    if metric == selected_metric_name and rejected_value <= selected_value:
+        return (
+            "Validation error was competitive, but statistical review or "
+            "model assumptions made it a weaker production choice."
+        )
+    return (
+        "Less favorable validation evidence than the selected model: "
+        f"{_format_metric(metric, rejected_value)} compared with "
+        f"{_format_metric(selected_metric_name, selected_value)} for "
+        f"{selected_model}."
+    )
+
+
+def _statistical_fit_reason(
+    stat_result: StatisticalResult,
+    model: str,
+    selected: bool,
+) -> str:
+    """Explain model suitability using statistical properties of the series."""
+    sp = stat_result.seasonal_period or 1
+    has_seasonality = sp > 1
+    has_trend = stat_result.has_trend and abs(stat_result.trend_slope) > 0.1
+
+    if model == "ARIMA":
+        if has_seasonality:
+            if selected:
+                return (
+                    "ARIMA was selected despite detected seasonality; users "
+                    "should monitor residuals for any remaining seasonal "
+                    "pattern."
+                )
+            return (
+                "Plain ARIMA does not model the recurring seasonal cycle, so "
+                "predictable seasonal patterns could remain in the errors."
+            )
+        return (
+            "ARIMA fits the non-seasonal structure well because no reliable "
+            "seasonal cycle was detected."
+        )
+    if model == "SARIMA":
+        if has_seasonality:
+            return (
+                f"SARIMA is statistically appropriate because it can model the "
+                f"detected {sp}-period seasonal cycle."
+            )
+        if selected:
+            return (
+                "SARIMA was selected despite limited seasonality evidence; "
+                "this should be monitored for avoidable model complexity."
+            )
+        return (
+            "SARIMA was rejected because there was insufficient evidence of a "
+            "stable seasonal cycle; seasonal terms would add complexity and "
+            "overfitting risk."
+        )
+    if model == "Holt-Winters":
+        if has_seasonality or has_trend:
+            if selected:
+                return (
+                    "Holt-Winters is a reasonable choice because it can "
+                    "represent trend and seasonality in an interpretable way."
+                )
+            return (
+                "Holt-Winters can represent trend and seasonality, but it is "
+                "less flexible than the selected model when validation error "
+                "or residual behavior is weaker."
+            )
+        if selected:
+            return (
+                "Holt-Winters was selected for its simple smoothing behavior, "
+                "although there is limited trend or seasonality to model."
+            )
+        return (
+            "Holt-Winters was rejected because no strong trend or seasonal "
+            "pattern was detected, so its smoothing components may add little "
+            "business value."
+        )
+    if model == "EWMA":
+        if has_seasonality:
+            if selected:
+                return (
+                    "EWMA was selected as the simplest stable option, but it "
+                    "does not explicitly model seasonality."
+                )
+            return (
+                "EWMA was rejected because it smooths recent values but does "
+                "not explicitly model seasonality."
+            )
+        if has_trend or not stat_result.is_stationary_adf:
+            if selected:
+                return (
+                    "EWMA was selected as a simple benchmark-style forecast, "
+                    "but the changing baseline means it may lag trend changes."
+                )
+            return (
+                "EWMA was rejected because the series is changing over time; "
+                "simple smoothing can lag behind the trend and become unstable."
+            )
+        return (
+            "EWMA is simple and stable, but it can miss autocorrelation that a "
+            "time-series model can use for more accurate forecasts."
+        )
+    return (
+        "Selected for the best balance of validation accuracy, assumptions, "
+        "and reliability."
+        if selected
+        else "Rejected because it offered a weaker balance of accuracy and assumptions."
+    )
+
+
+def _build_selection_explanation(
+    selected_model: str,
+    stat_result: StatisticalResult,
+    all_metrics: dict[str, dict[str, float]] | None,
+    review_feedback: str | None = None,
+) -> str:
+    """Build a concise business-readable explanation for the selected model."""
+    metric = _primary_metric(all_metrics, selected_model)
+    parts = [f"Selected model: {selected_model}."]
+    if metric:
+        metric_name, value = metric
+        parts.append(
+            f"It had the strongest available validation evidence "
+            f"({_format_metric(metric_name, value)}, lower is better)."
+        )
+    parts.append(_statistical_fit_reason(stat_result, selected_model, selected=True))
+    if review_feedback:
+        parts.append(
+            "The selection also accounts for statistical review feedback from "
+            "the prior run."
+        )
+    return " ".join(parts)
+
+
+def _business_selection_reasons(
+    selected_model: str,
+    stat_result: StatisticalResult,
+    all_metrics: dict[str, dict[str, float]] | None = None,
 ) -> dict[str, str | None]:
-    """Build rejection reasons for non-selected models.
-
-    Args:
-        selected_model: The model that was selected.
-        reason:         Rejection reason text applied to all non-selected
-            models.  Defaults to the LLM-selection wording; deterministic
-            override paths should pass a metric/override-specific message.
-
-    Returns:
-        A dict mapping each model name to a rejection reason (or ``None`` for
-        the selected model).
-    """
+    """Build per-model business explanations for selection and rejection."""
     reasons: dict[str, str | None] = {}
-    for m in _MODELS:
-        if m == selected_model:
-            reasons[m] = None
-        else:
-            reasons[m] = reason
+    for model in _MODELS:
+        if model == selected_model:
+            reasons[model] = None
+            continue
+        metric_reason = _metric_rejection_reason(
+            model, selected_model, all_metrics
+        )
+        fit_reason = _statistical_fit_reason(stat_result, model, selected=False)
+        reasons[model] = (
+            f"{metric_reason} {fit_reason}" if metric_reason else fit_reason
+        )
     return reasons
 
 
@@ -436,10 +622,12 @@ def _format_metrics_text(
         rmse = metrics.get("RMSE", float("nan"))
         mae = metrics.get("MAE", float("nan"))
         mape = metrics.get("MAPE", float("nan"))
+        wape = metrics.get("WAPE", float("nan")) * 100
+        mase = metrics.get("MASE", float("nan"))
         lines.append(
-            f"- {name}: RMSE={rmse:.4f}, MAE={mae:.4f}, MAPE={mape:.2f}%"
+            f"- {name}: RMSE={rmse:.4f}, MAE={mae:.4f}, MAPE={mape:.2f}%, WAPE={wape:.2f}%, MASE={mase:.4f}"
         )
-    return "\n".join(lines)
+    return "\n".join(lines) + "\n(WAPE is a robust alternative to MAPE; MASE < 1 is better than a naive forecast)"
 
 
 def _select_best_metric_model(
@@ -449,7 +637,8 @@ def _select_best_metric_model(
     """Deterministically select the model with the lowest RMSE.
 
     Used during review-triggered retries when actual error metrics are
-    available.  Falls back to MAE then MAPE if RMSE is unavailable.
+    available. Prioritizes MASE, then falls back to WAPE, RMSE, MAE, then
+    MAPE if others are unavailable.
 
     Args:
         all_metrics: Dict of model metrics.
@@ -463,10 +652,12 @@ def _select_best_metric_model(
     }
     if not candidates:
         return None
-    # Select by RMSE (primary), then MAE, then MAPE as tie-breakers
-    def _metric_key(item: tuple[str, dict[str, float]]) -> tuple[float, float, float]:
+    # Select by MASE (primary), then WAPE, RMSE, MAE, then MAPE as tie-breakers
+    def _metric_key(item: tuple[str, dict[str, float]]) -> tuple[float, float, float, float, float]:
         m = item[1]
         return (
+            m.get("MASE", float("inf")),
+            m.get("WAPE", float("inf")),
             m.get("RMSE", float("inf")),
             m.get("MAE", float("inf")),
             m.get("MAPE", float("inf")),
@@ -504,9 +695,10 @@ def _build_suitability_input(
             "\n\n## ACTUAL ERROR METRICS (from prior forecasting run)\n"
             f"{metrics_text}\n\n"
             "These are real validation metrics (lower is better) from fitting "
-            "all candidate models on the same train-test split. You MUST "
-            "weight these empirical results heavily in your selection — "
-            "a model with substantially lower RMSE/MAE/MAPE is objectively "
+            "all candidate models on the same train-test split. You MUST give "
+            "strong preference to the model with the lowest MASE (Mean Absolute "
+            "Scaled Error), as it is the most reliable indicator of forecast "
+            "accuracy. A model with a lower MASE is objectively better, "
             "more accurate and should be preferred unless there is a strong "
             "methodological reason not to."
         )
@@ -606,17 +798,16 @@ def run_model_selection_agent(
             )
             metrics_text = _format_metrics_text(all_metrics)
             explanation = (
-                f"Model re-selected based on empirical validation metrics "
-                f"from the prior forecasting run. '{best_model}' achieved "
-                f"the lowest error scores:\n{metrics_text}\n\n"
-                f"[Statistical Review Feedback]: {review_feedback or 'N/A'}"
+                "Model re-selected based on empirical validation metrics. "
+                + _build_selection_explanation(
+                    best_model, stat_result, all_metrics, review_feedback
+                )
+                + "\n\nValidation metrics considered:\n"
+                + metrics_text
+                + f"\n\n[Statistical Review Feedback]: {review_feedback or 'N/A'}"
             )
-            reasons = _rejection_reasons(
-                best_model,
-                reason=(
-                    "Not selected — deterministic override chose the model "
-                    "with the lowest empirical validation error."
-                ),
+            reasons = _business_selection_reasons(
+                best_model, stat_result, all_metrics
             )
             return ModelSelectionResult(
                 selected_model=best_model,
@@ -649,13 +840,18 @@ def run_model_selection_agent(
 
     output, token_usage = llm_result
     selected_model = _parse_selected_model(output, fallback_model)
-    reasons = _rejection_reasons(selected_model)
+    reasons = _business_selection_reasons(selected_model, stat_result)
+    explanation = (
+        f"{output}\n\n"
+        "Business-readable selection summary: "
+        f"{_build_selection_explanation(selected_model, stat_result, None)}"
+    )
     logger.info("Model selection agent output: %s", output[:200])
     logger.info("Selected model: %s", selected_model)
 
     return ModelSelectionResult(
         selected_model=selected_model,
-        explanation=output,
+        explanation=explanation,
         holt_winters_rejected_reason=reasons["Holt-Winters"],
         arima_rejected_reason=reasons["ARIMA"],
         sarima_rejected_reason=reasons["SARIMA"],
@@ -689,18 +885,23 @@ def _build_heuristic_result(
     Returns:
         A :class:`ModelSelectionResult` reflecting the heuristic selection.
     """
-    sp = stat_result.seasonal_period
     explanation = (
-        f"Heuristic selection: {fallback_model} chosen based on seasonal period={sp}."
+        "Heuristic fallback used because the model-selection LLM was "
+        "unavailable. "
+        + _build_selection_explanation(fallback_model, stat_result, None)
     )
+    reasons = _business_selection_reasons(fallback_model, stat_result)
+    for model, reason in fallback_reasoning.items():
+        if model != fallback_model and reason:
+            reasons[model] = f"{reason} {reasons[model]}"
     logger.info("Selected model: %s", fallback_model)
     return ModelSelectionResult(
         selected_model=fallback_model,
         explanation=explanation,
-        holt_winters_rejected_reason=fallback_reasoning["Holt-Winters"],
-        arima_rejected_reason=fallback_reasoning["ARIMA"],
-        sarima_rejected_reason=fallback_reasoning["SARIMA"],
-        ewma_rejected_reason=fallback_reasoning["EWMA"],
+        holt_winters_rejected_reason=reasons["Holt-Winters"],
+        arima_rejected_reason=reasons["ARIMA"],
+        sarima_rejected_reason=reasons["SARIMA"],
+        ewma_rejected_reason=reasons["EWMA"],
         reasoning_steps=[
             {
                 "thought": "Model selection agent failed; using heuristic.",

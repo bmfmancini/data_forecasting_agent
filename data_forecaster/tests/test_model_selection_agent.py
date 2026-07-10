@@ -71,6 +71,22 @@ class _MockChain:
         return self._response
 
 
+class _FailingPrompt:
+    """Mock prompt whose chain fails during invocation."""
+
+    def __or__(self, other: object) -> _FailingChain:
+        del other  # Unused.
+        return _FailingChain()
+
+
+class _FailingChain:
+    """Mock LCEL chain that raises on invoke."""
+
+    def invoke(self, inputs: dict) -> SimpleNamespace:
+        del inputs  # Unused.
+        raise RuntimeError("LLM down")
+
+
 def _patch_llm(
     monkeypatch: pytest.MonkeyPatch,
     response: SimpleNamespace,
@@ -114,6 +130,11 @@ class TestModelSelectionParser:
 
         result = run_model_selection_agent(seasonal_stat_result)
         assert result.selected_model == "SARIMA"
+        assert "Business-readable selection summary" in result.explanation
+        assert result.arima_rejected_reason is not None
+        assert "does not model the recurring seasonal cycle" in (
+            result.arima_rejected_reason
+        )
 
     def test_parses_markdown_bold_selected_model(
         self,
@@ -281,6 +302,11 @@ class TestDeterministicMetricOverride:
         # SARIMA has the lowest RMSE and is not excluded
         assert result.selected_model == "SARIMA"
         assert "empirical validation metrics" in result.explanation
+        assert result.arima_rejected_reason is not None
+        assert "Higher forecast error" in result.arima_rejected_reason
+        assert "does not model the recurring seasonal cycle" in (
+            result.arima_rejected_reason
+        )
 
     def test_excluded_model_not_selected_even_with_best_metrics(
         self,
@@ -330,3 +356,34 @@ class TestDeterministicMetricOverride:
 
         result = run_model_selection_agent(seasonal_stat_result)
         assert result.selected_model == "Holt-Winters"
+
+
+# ── Business Explanation Tests ───────────────────────────────────────────────
+
+
+class TestBusinessModelExplanations:
+    """Tests for business-readable selection and rejection explanations."""
+
+    def test_heuristic_fallback_explains_rejected_models(
+        self,
+        seasonal_stat_result: StatisticalResult,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """LLM failure should still produce specific rejection reasons."""
+        monkeypatch.setattr(
+            "agents.model_selection_agent.get_llm",
+            lambda temperature=0: SimpleNamespace(),
+        )
+        monkeypatch.setattr(
+            "agents.model_selection_agent.MODEL_SELECTION_PROMPT",
+            _FailingPrompt(),
+        )
+
+        result = run_model_selection_agent(seasonal_stat_result)
+
+        assert result.selected_model == "SARIMA"
+        assert "Heuristic fallback used" in result.explanation
+        assert result.arima_rejected_reason is not None
+        assert "plain ARIMA ignores seasonality" in result.arima_rejected_reason
+        assert result.ewma_rejected_reason is not None
+        assert "does not explicitly model seasonality" in result.ewma_rejected_reason

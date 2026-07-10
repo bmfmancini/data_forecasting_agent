@@ -14,6 +14,7 @@ import logging
 import os
 import re
 import tempfile
+from binascii import Error as BinasciiError
 from typing import Any
 
 from fpdf import FPDF
@@ -86,8 +87,8 @@ def _fetch_chart_png(
         return None
     try:
         return base64.b64decode(b64_data)
-    except Exception as exc:
-        logger.warning("Failed to decode %s base64: %s", tag, exc)
+    except (BinasciiError, ValueError) as exc:
+        logger.warning("Failed to decode base64 for chart tag '%s': %s", tag, exc)
         return None
 
 
@@ -99,18 +100,20 @@ def _embed_image(pdf: FPDF, png_bytes: bytes, max_width: float) -> None:
         png_bytes:  PNG image bytes.
         max_width:  Maximum width in mm for the image.
     """
+    tmp_path = None
     try:
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
             tmp.write(png_bytes)
             tmp_path = tmp.name
         pdf.image(tmp_path, w=max_width)
-    except Exception as exc:
-        logger.warning("Failed to embed image in PDF: %s", exc)
+    except RuntimeError as exc: # fpdf2 raises RuntimeError on image issues
+        logger.warning("Failed to embed image in PDF (path: %s): %s", tmp_path, exc)
     finally:
-        try:
-            os.unlink(tmp_path)
-        except Exception:
-            pass
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except OSError as exc:
+                logger.warning("Failed to clean up temp image file %s: %s", tmp_path, exc)
 
 
 def _process_line(
