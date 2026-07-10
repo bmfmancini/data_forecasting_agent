@@ -486,6 +486,8 @@ class ExecutiveReportBuilder:
             rmse=round(forecast.rmse, 4),
             mae=round(forecast.mae, 4),
             mape=round(forecast.mape, 2),
+            wape=round(forecast.wape, 2) if forecast.wape is not None else None,
+            mase=round(forecast.mase, 4) if forecast.mase is not None else None,
             prediction_intervals=intervals,
         )
 
@@ -526,6 +528,8 @@ class ExecutiveReportBuilder:
                     rmse=round(metrics.get("RMSE", 0.0), 4),
                     mae=round(metrics.get("MAE", 0.0), 4),
                     mape=round(metrics.get("MAPE", 0.0), 2),
+                    wape=round(metrics.get("WAPE", 0.0) * 100, 2), # Convert to percentage
+                    mase=round(metrics.get("MASE", 0.0), 4),
                     selected=(name == selected),
                     rejected_reason=(
                         rejection_map.get(name) if name != selected else None
@@ -1464,12 +1468,16 @@ class ExecutiveReportBuilder:
             "rmse": round(forecast.rmse, 4),
             "mae": round(forecast.mae, 4),
             "mape": round(forecast.mape, 2),
+            "wape": round(forecast.wape, 2) if forecast.wape is not None else None,
+            "mase": round(forecast.mase, 4) if forecast.mase is not None else None,
             "mape_quality": mape_quality(forecast.mape),
             "all_models": {
                 name: {
                     "RMSE": round(m.get("RMSE", 0.0), 4),
                     "MAE": round(m.get("MAE", 0.0), 4),
                     "MAPE": round(m.get("MAPE", 0.0), 2),
+                    "WAPE": round(m.get("WAPE", 0.0) * 100, 2),
+                    "MASE": round(m.get("MASE", 0.0), 4),
                 }
                 for name, m in all_metrics.items()
             },

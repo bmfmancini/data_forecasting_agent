@@ -158,6 +158,8 @@ class ForecastResult(BaseModel):
     rmse: float
     mae: float
     mape: float
+    wape: float | None = None
+    mase: float | None = None
     residual_diagnostics: ResidualDiagnostics | None = None
     reasoning_steps: list[dict[str, Any]] = Field(default_factory=list)
     token_usage: dict[str, Any] = Field(default_factory=dict)

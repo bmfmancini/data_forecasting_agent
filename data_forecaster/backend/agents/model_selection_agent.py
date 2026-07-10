@@ -436,10 +436,12 @@ def _format_metrics_text(
         rmse = metrics.get("RMSE", float("nan"))
         mae = metrics.get("MAE", float("nan"))
         mape = metrics.get("MAPE", float("nan"))
+        wape = metrics.get("WAPE", float("nan")) * 100
+        mase = metrics.get("MASE", float("nan"))
         lines.append(
-            f"- {name}: RMSE={rmse:.4f}, MAE={mae:.4f}, MAPE={mape:.2f}%"
+            f"- {name}: RMSE={rmse:.4f}, MAE={mae:.4f}, MAPE={mape:.2f}%, WAPE={wape:.2f}%, MASE={mase:.4f}"
         )
-    return "\n".join(lines)
+    return "\n".join(lines) + "\n(WAPE is a robust alternative to MAPE; MASE < 1 is better than a naive forecast)"
 
 
 def _select_best_metric_model(
@@ -449,7 +451,8 @@ def _select_best_metric_model(
     """Deterministically select the model with the lowest RMSE.
 
     Used during review-triggered retries when actual error metrics are
-    available.  Falls back to MAE then MAPE if RMSE is unavailable.
+    available. Prioritizes MASE, then falls back to WAPE, RMSE, MAE, then
+    MAPE if others are unavailable.
 
     Args:
         all_metrics: Dict of model metrics.
@@ -463,10 +466,12 @@ def _select_best_metric_model(
     }
     if not candidates:
         return None
-    # Select by RMSE (primary), then MAE, then MAPE as tie-breakers
-    def _metric_key(item: tuple[str, dict[str, float]]) -> tuple[float, float, float]:
+    # Select by MASE (primary), then WAPE, RMSE, MAE, then MAPE as tie-breakers
+    def _metric_key(item: tuple[str, dict[str, float]]) -> tuple[float, float, float, float, float]:
         m = item[1]
         return (
+            m.get("MASE", float("inf")),
+            m.get("WAPE", float("inf")),
             m.get("RMSE", float("inf")),
             m.get("MAE", float("inf")),
             m.get("MAPE", float("inf")),
@@ -504,9 +509,10 @@ def _build_suitability_input(
             "\n\n## ACTUAL ERROR METRICS (from prior forecasting run)\n"
             f"{metrics_text}\n\n"
             "These are real validation metrics (lower is better) from fitting "
-            "all candidate models on the same train-test split. You MUST "
-            "weight these empirical results heavily in your selection — "
-            "a model with substantially lower RMSE/MAE/MAPE is objectively "
+            "all candidate models on the same train-test split. You MUST give "
+            "strong preference to the model with the lowest MASE (Mean Absolute "
+            "Scaled Error), as it is the most reliable indicator of forecast "
+            "accuracy. A model with a lower MASE is objectively better, "
             "more accurate and should be preferred unless there is a strong "
             "methodological reason not to."
         )

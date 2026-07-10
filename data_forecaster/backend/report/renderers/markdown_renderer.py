@@ -189,14 +189,14 @@ class MarkdownRenderer:
         lines = ["## 6. Forecasting Approach & Model Comparison", ""]
         lines.append(f"**Selected Model:** {mc.selected_model}")
         lines.append("")
-        lines.append("| Model | RMSE | MAE | MAPE | Selected | Rejected Reason |")
-        lines.append("|-------|------|-----|------|----------|-----------------|")
+        lines.append("| Model | RMSE | MAE | MAPE | WAPE | MASE | Selected | Rejected Reason |")
+        lines.append("|-------|------|-----|------|------|------|----------|-----------------|")
         for entry in mc.entries:
             selected = "✓" if entry.selected else ""
             rejected = _sanitize_cell(entry.rejected_reason or "")
             lines.append(
-                f"| {entry.model} | {entry.rmse} | {entry.mae} | "
-                f"{entry.mape}% | {selected} | {rejected} |"
+                f"| {entry.model} | {entry.rmse:.4f} | {entry.mae:.4f} | {entry.mape:.2f}% | "
+                f"{entry.wape or 0.0:.2f}% | {entry.mase or 0.0:.4f} | {selected} | {rejected} |"
             )
         if mc.narrative:
             lines.append("")

@@ -160,12 +160,11 @@ class HTMLRenderer:
             '<section class="report-historical-analysis mb-3">'
             "<h5>Historical Performance & Trend Analysis</h5>"
             f"<p><strong>Trend Direction:</strong> {escape(h.trend_direction)}</p>"
-            f"<p><strong>Seasonal Pattern:** {'Every ' + str(h.seasonal_period) + ' periods' if h.seasonal_period else 'None detected'}</p>"
+            f"<p><strong>Seasonal Pattern:</strong> {'Every ' + str(h.seasonal_period) + ' periods' if h.seasonal_period else 'None detected'}</p>"
             f"{narrative}"
             '<p class="mt-3"><strong>Figure: Historical Data & Decomposition</strong></p>'
             "<p>[VISUAL:HISTORICAL]</p>"
             "<p>[VISUAL:STL]</p>"
-            f"{narrative}"
             "</section>"
         )
 
@@ -192,11 +191,14 @@ class HTMLRenderer:
     def _render_model_comparison(self, report: ExecutiveReport) -> str:
         """Render the model comparison table."""
         mc = report.model_comparison
+        # Ensure wape and mase have fallbacks for rendering
         rows = "".join(
             f"<tr><td>{escape(e.model)}</td>"
-            f"<td>{e.rmse}</td>"
-            f"<td>{e.mae}</td>"
-            f"<td>{e.mape}%</td>"
+            f"<td>{e.rmse:.4f}</td>"
+            f"<td>{e.mae:.4f}</td>"
+            f"<td>{e.mape:.2f}%</td>"
+            f"<td>{e.wape or 0.0:.2f}%</td>"
+            f"<td>{e.mase or 0.0:.4f}</td>"
             f"<td>{'✓' if e.selected else ''}</td></tr>"
             for e in mc.entries
         )
@@ -207,8 +209,8 @@ class HTMLRenderer:
             f"<p><strong>Selected Model:</strong> {escape(mc.selected_model)}</p>"
             f"<p class='small text-muted'>{escape(mc.selection_rationale)}</p>"
             f"{narrative}"
-            '<table class="table table-sm table-striped">'
-            "<thead><tr><th>Model</th><th>RMSE</th><th>MAE</th><th>MAPE</th><th>Selected</th></tr></thead>"
+            '<table class="table table-sm table-striped" title="Forecast accuracy metrics. WAPE is a robust alternative to MAPE. MASE < 1 is better than a naive forecast.">'
+            "<thead><tr><th>Model</th><th>RMSE</th><th>MAE</th><th>MAPE</th><th>WAPE</th><th>MASE</th><th>Selected</th></tr></thead>"
             f"<tbody>{rows}</tbody></table>"
             '<p class="mt-3"><strong>Figure: Model Diagnostics & Comparison</strong></p>'
             "<p>[VISUAL:ACF_PACF]</p>"

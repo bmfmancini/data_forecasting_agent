@@ -439,13 +439,16 @@ def report() -> str:
     result: dict[str, Any] = session.get("analysis_result") or {}
     upload_info: dict[str, Any] = session.get("upload_info") or {}
     executive_report: dict[str, Any] | None = result.get("executive_report")
-    report_html: str = result.get("report_html", "Report not available.")
+    # The segment parser expects markdown (it converts markdown → HTML and
+    # splits on ``[VISUAL:TAG]`` tokens).  Using the pre-rendered HTML here
+    # would cause double-processing and bleach stripping of the visual tags.
+    report_md: str = result.get("report", "Report not available.")
     filename: str = upload_info.get("filename", "data")
     base_name = filename.rsplit(".", 1)[0] if "." in filename else filename
     pdf_filename = f"forecast_report_{base_name}.pdf"
     return render_template(
         "main/report.html",
-        segments=_parse_report_segments(report_html, result),
+        segments=_parse_report_segments(report_md, result),
         pdf_filename=pdf_filename,
         er=executive_report,
     )
