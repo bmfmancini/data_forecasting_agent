@@ -2,22 +2,133 @@
 {% block title %}Report — Forecaster{% endblock %}
 {% block header %}📄 Report{% endblock %}
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
-    <h4 class="mb-0">Forecast Report</h4>
-    <form method="post" action="{{ url_for('main.report_export') }}" style="display:inline;">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <button type="submit" class="btn btn-outline-primary btn-sm">⬇️ Download Report as PDF</button>
-    </form>
-</div>
-
 {% if session.analysis_result.llm_fallback %}
 <div class="alert alert-warning">
     ⚠️ The LLM was not available for report generation. A local template was used as a fallback.
 </div>
 {% endif %}
 
-<hr>
-<div class="report-body">
+{% if er %}
+{# ── Unified Executive Overview ───────────────────────────────────────── #}
+<section class="report-hero mb-4">
+    <div class="report-hero-head">
+        <div>
+            <p class="report-kicker mb-1">Executive Dashboard</p>
+            <h2 class="report-title mb-0">Forecast decision brief</h2>
+        </div>
+        <form method="post" action="{{ url_for('main.report_export') }}" class="report-export-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-outline-light btn-sm report-export-btn">Download PDF</button>
+        </form>
+    </div>
+
+    <div class="report-tile-grid">
+        {% for item in er.dashboard.widgets %}
+        <div class="report-tile report-tile-{{ item.status }}">
+            <div class="report-tile-label">
+                <span aria-hidden="true">{{ item.icon }}</span>
+                <span>{{ item.title }}</span>
+            </div>
+            <div class="report-tile-value">{{ item.value }}</div>
+            <p class="report-tile-copy">{{ item.description }}</p>
+        </div>
+        {% endfor %}
+    </div>
+
+    <div class="leadership-brief">
+        <div class="brief-copy">
+            <p class="report-kicker mb-2">Leadership Brief</p>
+            <p class="brief-lead">{{ er.executive_summary.narrative if er.executive_summary.narrative else er.executive_summary.strategic_outlook }}</p>
+        </div>
+        <div class="brief-asides">
+            <div>
+                <span>Planning stance</span>
+                <strong>{{ er.executive_summary.recommended_action }}</strong>
+            </div>
+            <div>
+                <span>Primary watchpoint</span>
+                <strong>{{ er.executive_summary.primary_risk }}</strong>
+            </div>
+        </div>
+    </div>
+</section>
+
+<div class="report-section-grid mb-4">
+    {# ── Health Indicators ─────────────────────────────────────────────── #}
+    <section class="report-panel report-health">
+        <div class="report-section-heading">
+            <p class="report-kicker mb-1">Operating Signal</p>
+            <h5 class="mb-0">Forecast Health</h5>
+        </div>
+        <div class="health-list">
+            {% for hi in er.health_indicators %}
+            <div class="health-row">
+                <div>
+                    <strong>{{ hi.indicator }}</strong>
+                    <p>{{ hi.detail }}</p>
+                </div>
+                <span>{{ hi.status }}</span>
+            </div>
+            {% endfor %}
+        </div>
+    </section>
+
+    {# ── Recommendations with Evidence ────────────────────────────────── #}
+    {% if er.recommendations %}
+    <section class="report-panel report-recommendations">
+        <div class="report-section-heading">
+            <p class="report-kicker mb-1">Management Actions</p>
+            <h5 class="mb-0">Executive Recommendations</h5>
+        </div>
+        <div class="recommendation-list">
+            {% for rec in er.recommendations %}
+            <article class="recommendation-block recommendation-{{ rec.priority | lower }}">
+                <div class="recommendation-topline">
+                    <span>{{ rec.priority }}</span>
+                    <strong>{{ rec.narrative if rec.narrative else rec.recommendation }}</strong>
+                </div>
+                <p><b>Why it matters:</b> {{ rec.rationale }}</p>
+                <p><b>Expected outcome:</b> {{ rec.expected_outcome }}</p>
+                {% if rec.supporting_evidence %}
+                <div class="evidence-row">
+                    {% for ev in rec.supporting_evidence %}
+                    <span>{{ ev.metric }}: {{ ev.value }}</span>
+                    {% endfor %}
+                </div>
+                {% endif %}
+            </article>
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
+</div>
+
+{# ── Prediction Intervals Table ───────────────────────────────────────── #}
+{% if er.forecast_outlook.metrics.prediction_intervals %}
+<section class="report-panel report-prediction-intervals mb-4">
+    <div class="report-section-heading">
+        <p class="report-kicker mb-1">Planning Range</p>
+        <h5 class="mb-0">Forecast Range (95%)</h5>
+    </div>
+    <table class="table table-sm table-striped">
+        <thead><tr><th>Date</th><th>Forecast</th><th>Lower Bound</th><th>Upper Bound</th></tr></thead>
+        <tbody>
+            {% for pi in er.forecast_outlook.metrics.prediction_intervals %}
+            <tr><td>{{ pi.date }}</td><td>{{ pi.forecast }}</td><td>{{ pi.lower_ci }}</td><td>{{ pi.upper_ci }}</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endif %}
+
+{% endif %}
+
+<section class="report-panel report-detail-panel">
+    <div class="report-section-heading">
+        <p class="report-kicker mb-1">Detailed Evidence</p>
+        <h5 class="mb-0">Report Narrative</h5>
+    </div>
+    <div class="report-body">
 {% for segment in segments %}
     {% if segment.type == 'text' %}
         {{ segment.html | safe }}
@@ -29,7 +140,8 @@
         {% endif %}
     {% endif %}
 {% endfor %}
-</div>
+    </div>
+</section>
 {% endblock %}
 {% block scripts %}
 <script>

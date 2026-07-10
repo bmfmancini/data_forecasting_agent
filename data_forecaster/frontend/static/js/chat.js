@@ -145,7 +145,7 @@
     try { return JSON.parse(match[1]); } catch (e) { return null; }
   }
 
-  /** Wire up the Enter key on the chat input. */
+  /** Wire up the Enter key on the chat input and scroll-to-bottom button. */
   function init() {
     var input = document.getElementById("chat-input");
     if (!input) return;
@@ -155,8 +155,39 @@
         send();
       }
     });
+
     var container = document.getElementById("chat-messages");
-    if (container) container.scrollTop = container.scrollHeight;
+    if (container) {
+      container.scrollTop = container.scrollHeight;
+
+      // Scroll-to-bottom button logic
+      var scrollBtn = document.getElementById("chat-scroll-btn");
+      if (scrollBtn) {
+        container.addEventListener("scroll", function () {
+          var atBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 60;
+          if (atBottom) {
+            scrollBtn.classList.remove("visible");
+          } else {
+            scrollBtn.classList.add("visible");
+          }
+        });
+        scrollBtn.addEventListener("click", function () {
+          container.scrollTo({
+            top: container.scrollHeight,
+            behavior: "smooth",
+          });
+        });
+      }
+    }
+
+    // Example question chips
+    var chips = document.querySelectorAll(".chat-example-chip");
+    chips.forEach(function (chip) {
+      chip.addEventListener("click", function () {
+        input.value = chip.textContent.trim();
+        input.focus();
+      });
+    });
   }
 
   window.Chat = { send: send, init: init };

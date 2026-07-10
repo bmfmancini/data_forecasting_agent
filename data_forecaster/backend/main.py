@@ -807,3 +807,10 @@ def api_users_bootstrap_status(
 ) -> dict[str, bool]:
     """Check whether a bootstrap API user still exists."""
     return {"has_bootstrap": has_bootstrap_user()}
+
+
+# ── Chart PNG Export ─────────────────────────────────────────────────────────
+# Chart PNGs are now pre-computed in the pipeline (see
+# utils.visualization.chart_dict_to_png_b64) and stored as base64 strings
+# in the AnalysisResponse.  The /api/charts/png endpoint has been removed
+# — no network round-trips are needed for PDF export.

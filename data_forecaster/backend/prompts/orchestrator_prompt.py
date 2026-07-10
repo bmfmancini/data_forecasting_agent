@@ -1,5 +1,7 @@
 """Prompt for the orchestrator's chat with data functionality."""
 
+from __future__ import annotations
+
 from langchain_core.prompts import ChatPromptTemplate
 
 ORCHESTRATOR_CHAT_PROMPT = ChatPromptTemplate.from_messages(

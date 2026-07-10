@@ -11,11 +11,10 @@ schema validation.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Literal
+from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
-from pandas.tseries.frequencies import to_offset
 from scipy.signal import savgol_filter
 from statsmodels.tsa.seasonal import seasonal_decompose
 
@@ -38,7 +37,7 @@ __all__ = [
 ]
 
 
-def audit_series(series: pd.Series) -> Dict[str, Any]:
+def audit_series(series: pd.Series) -> dict[str, Any]:
     """Return a quick audit of a time‑series.
 
     Mirrors the checklist from the freeCodeCamp article and is consumed by
@@ -149,7 +148,7 @@ def impute_missing(
     return filled
 
 
-def detect_outliers_iqr(series: pd.Series) -> Dict[str, Any]:
+def detect_outliers_iqr(series: pd.Series) -> dict[str, Any]:
     """Detect outliers using the Interquartile Range (IQR) method.
 
     Args:
@@ -183,7 +182,7 @@ def detect_outliers_iqr(series: pd.Series) -> Dict[str, Any]:
     }
 
 
-def detect_outliers_zscore(series: pd.Series, threshold: float = 3.0) -> Dict[str, Any]:
+def detect_outliers_zscore(series: pd.Series, threshold: float = 3.0) -> dict[str, Any]:
     """Detect outliers using the Z‑score method (moved from ``utils.statistical``).
 
     Z‑score is more appropriate for normally distributed data, while IQR is
@@ -379,8 +378,8 @@ def smooth_series(
 
 def validate_schema(
     series: pd.Series,
-    config: Dict[str, Any],
-) -> Dict[str, Any]:
+    config: dict[str, Any],
+) -> dict[str, Any]:
     """Validate a series against a simple schema.
 
     The ``config`` dictionary may contain:
@@ -395,7 +394,7 @@ def validate_schema(
     Returns:
         Dictionary with boolean flags and diagnostic messages.
     """
-    report: Dict[str, Any] = {}
+    report: dict[str, Any] = {}
     inferred = pd.infer_freq(series.index)
     report["freq_regular"] = bool(inferred == config.get("expected_freq"))
     missing_rate = series.isna().mean()
@@ -443,7 +442,7 @@ def _infer_seasonal_period(series: pd.Series) -> int:
         "h": 24,
     }
     try:
-        offset = to_offset(freq)
+        offset = pd.tseries.frequencies.to_offset(freq)
         base = offset.name
     except (ValueError, TypeError):
         base = str(freq)

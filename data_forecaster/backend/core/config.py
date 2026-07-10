@@ -1,4 +1,14 @@
+"""Application configuration for the Data Forecaster backend.
+
+Reads environment variables at import time and exposes them as module-level
+constants.  LLM provider selection, upload limits, storage paths, and API
+key auth toggles are all configured here.
+"""
+
+from __future__ import annotations
+
 import os
+
 from dotenv import load_dotenv
 
 load_dotenv()

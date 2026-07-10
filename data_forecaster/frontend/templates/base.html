@@ -5,32 +5,34 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>{% block title %}Time Series Forecaster{% endblock %}</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ctext y='14' font-size='14'%3E%F0%9F%93%8A%3C/text%3E%3C/svg%3E">
     <link href="{{ url_for('static', filename='libs/bootstrap@5.3.3_dist_css_bootstrap.min.css') }}" rel="stylesheet">
     <link href="{{ url_for('static', filename='css/main.css') }}" rel="stylesheet">
 </head>
 <body>
+<div class="sidebar-backdrop" id="sidebar-backdrop"></div>
 <div class="app-shell">
-    <nav class="sidebar">
+    <nav class="sidebar" id="sidebar">
         <div class="sidebar-inner">
             <div class="sidebar-heading">Data Forecaster</div>
             <ul class="nav flex-column">
-                <li class="nav-item"><a class="nav-link" href="{{ url_for('main.chat') }}">💬 Chat</a></li>
-                <li class="nav-item"><a class="nav-link" href="{{ url_for('main.started') }}">ℹ️ Get Started</a></li>
-                <li class="nav-item"><a class="nav-link" href="{{ url_for('main.forecast_setup') }}">🚀 Forecast Setup</a></li>
+                <li class="nav-item"><a class="nav-link {{ 'active' if request.endpoint == 'main.chat' }}" href="{{ url_for('main.chat') }}">💬 Chat</a></li>
+                <li class="nav-item"><a class="nav-link {{ 'active' if request.endpoint == 'main.started' }}" href="{{ url_for('main.started') }}">ℹ️ Get Started</a></li>
+                <li class="nav-item"><a class="nav-link {{ 'active' if request.endpoint == 'main.forecast_setup' }}" href="{{ url_for('main.forecast_setup') }}">🚀 Forecast Setup</a></li>
                 {% if session.get('analysis_result') %}
-                <li class="nav-item"><a class="nav-link" href="{{ url_for('main.report') }}">📄 Report</a></li>
-                <li class="nav-item"><a class="nav-link" href="{{ url_for('main.overview') }}">📊 Overview</a></li>
-                <li class="nav-item"><a class="nav-link" href="{{ url_for('main.quality') }}">🔍 Quality</a></li>
-                <li class="nav-item"><a class="nav-link" href="{{ url_for('main.stats') }}">📐 Statistics</a></li>
-                <li class="nav-item"><a class="nav-link" href="{{ url_for('main.model') }}">🤖 Model</a></li>
-                <li class="nav-item"><a class="nav-link" href="{{ url_for('main.forecast') }}">🔮 Forecast</a></li>
-                <li class="nav-item"><a class="nav-link" href="{{ url_for('main.trace') }}">🕵️ AI Trace</a></li>
+                <li class="nav-item"><a class="nav-link {{ 'active' if request.endpoint == 'main.report' }}" href="{{ url_for('main.report') }}">📄 Report</a></li>
+                <li class="nav-item"><a class="nav-link {{ 'active' if request.endpoint == 'main.overview' }}" href="{{ url_for('main.overview') }}">📊 Overview</a></li>
+                <li class="nav-item"><a class="nav-link {{ 'active' if request.endpoint == 'main.quality' }}" href="{{ url_for('main.quality') }}">🔍 Quality</a></li>
+                <li class="nav-item"><a class="nav-link {{ 'active' if request.endpoint == 'main.stats' }}" href="{{ url_for('main.stats') }}">📐 Statistics</a></li>
+                <li class="nav-item"><a class="nav-link {{ 'active' if request.endpoint == 'main.model' }}" href="{{ url_for('main.model') }}">🤖 Model</a></li>
+                <li class="nav-item"><a class="nav-link {{ 'active' if request.endpoint == 'main.forecast' }}" href="{{ url_for('main.forecast') }}">🔮 Forecast</a></li>
+                <li class="nav-item"><a class="nav-link {{ 'active' if request.endpoint == 'main.trace' }}" href="{{ url_for('main.trace') }}">🕵️ AI Trace</a></li>
                 {% endif %}
             </ul>
             <hr class="sidebar-hr">
             <div class="sidebar-heading">Analysis</div>
             <div id="progress-area" class="d-none">
-                <div class="small" style="color:var(--text-muted-custom);" id="progress-text">Queued…</div>
+                <div class="small" style="color:var(--text-muted-custom);" id="progress-text"><span class="job-status-dot"></span>Queued…</div>
                 <div class="progress mt-1" style="height:6px;">
                     <div class="progress-bar" id="progress-bar" style="width:0%"></div>
                 </div>
@@ -39,7 +41,7 @@
             <ul class="nav flex-column">
                 {% if current_user.is_authenticated %}
                 {% if current_user.is_admin %}
-                <li class="nav-item"><a class="nav-link" href="{{ url_for('admin.dashboard') }}">Admin Panel</a></li>
+                <li class="nav-item"><a class="nav-link {{ 'active' if request.blueprint == 'admin' }}" href="{{ url_for('admin.dashboard') }}">Admin Panel</a></li>
                 {% endif %}
                 <li class="nav-item"><a class="nav-link" href="{{ url_for('auth.logout') }}">Logout ({{ current_user.username }})</a></li>
                 {% endif %}
@@ -48,7 +50,10 @@
     </nav>
     <div class="main-content">
         <header class="app-header d-flex align-items-center justify-content-between">
-            <span class="fw-semibold">{% block header %}Data Forecaster{% endblock %}</span>
+            <div class="d-flex align-items-center gap-2">
+                <button class="sidebar-toggle" id="sidebar-toggle" type="button" aria-label="Toggle navigation">☰</button>
+                <span class="fw-semibold">{% block header %}Data Forecaster{% endblock %}</span>
+            </div>
         </header>
         <div class="tab-content-area p-4">
             {% with messages = get_flashed_messages(with_categories=true) %}
@@ -65,6 +70,11 @@
         </div>
     </div>
 </div>
+
+{# Modals — rendered outside .app-shell so they are direct children of  #}
+{# body and not trapped inside the .tab-content-area stacking context.   #}
+{% block modal %}{% endblock %}
+
     <script src="{{ url_for('static', filename='libs/bootstrap@5.3.3_dist_js_bootstrap.bundle.min.js') }}"></script>
     <script src="{{ url_for('static', filename='libs/marked@12.0.2_min.js') }}"></script>
     <script src="{{ url_for('static', filename='libs/dompurify@3.1.6_dist_purify.min.js') }}"></script>
@@ -73,6 +83,31 @@
 <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 <script src="{{ url_for('static', filename='js/chat.js') }}"></script>
 <script src="{{ url_for('static', filename='js/polling.js') }}"></script>
+<script>
+// Sidebar toggle for mobile
+(function() {
+    var toggle = document.getElementById("sidebar-toggle");
+    var sidebar = document.getElementById("sidebar");
+    var backdrop = document.getElementById("sidebar-backdrop");
+    if (!toggle || !sidebar) return;
+    function openSidebar() {
+        sidebar.classList.add("open");
+        if (backdrop) backdrop.classList.add("show");
+    }
+    function closeSidebar() {
+        sidebar.classList.remove("open");
+        if (backdrop) backdrop.classList.remove("show");
+    }
+    toggle.addEventListener("click", openSidebar);
+    if (backdrop) backdrop.addEventListener("click", closeSidebar);
+    // Close on nav-link click (mobile)
+    sidebar.querySelectorAll(".nav-link").forEach(function(link) {
+        link.addEventListener("click", function() {
+            if (window.innerWidth < 768) closeSidebar();
+        });
+    });
+})();
+</script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

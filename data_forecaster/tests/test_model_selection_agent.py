@@ -1,0 +1,389 @@
+"""Unit tests for the model selection agent parser.
+
+Tests focus on the LLM output parsing logic, especially the handling
+of markdown formatting and unicode hyphens that previously caused the
+parser to override the LLM's explicit model choice.
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+from types import SimpleNamespace
+
+import pytest
+
+# Add the backend directory to the path so that backend-internal imports
+# (e.g. ``from core.logging_config import ...``) resolve correctly.
+sys.path.insert(
+    0,
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "backend")),
+)
+
+from agents.model_selection_agent import run_model_selection_agent  # noqa: E402
+from schemas import StatisticalResult  # noqa: E402
+
+# ── Fixtures ──────────────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def seasonal_stat_result() -> StatisticalResult:
+    """A statistical result with seasonality and trend."""
+    return StatisticalResult(
+        is_stationary_adf=False,
+        adf_statistic=-1.5,
+        adf_p_value=0.45,
+        is_stationary_kpss=False,
+        kpss_statistic=0.8,
+        kpss_p_value=0.01,
+        has_trend=True,
+        trend_slope=2.65,
+        outlier_count=2,
+        outlier_ratio=0.02,
+        is_white_noise=False,
+        white_noise_p_value=0.001,
+        recommended_remediation=["box_cox"],
+        seasonal_period=12,
+        dominant_period=12.0,
+        summary="Non-stationary seasonal series with trend.",
+    )
+
+
+class _MockPrompt:
+    """Mock ChatPromptTemplate that supports the ``|`` operator."""
+
+    def __init__(self, response: SimpleNamespace) -> None:
+        self._response = response
+
+    def __or__(self, other: object) -> _MockChain:
+        del other  # Unused.
+        return _MockChain(self._response)
+
+
+class _MockChain:
+    """Mock LCEL chain that returns a pre-set response on invoke."""
+
+    def __init__(self, response: SimpleNamespace) -> None:
+        self._response = response
+
+    def invoke(self, inputs: dict) -> SimpleNamespace:
+        del inputs  # Unused.
+        return self._response
+
+
+class _FailingPrompt:
+    """Mock prompt whose chain fails during invocation."""
+
+    def __or__(self, other: object) -> _FailingChain:
+        del other  # Unused.
+        return _FailingChain()
+
+
+class _FailingChain:
+    """Mock LCEL chain that raises on invoke."""
+
+    def invoke(self, inputs: dict) -> SimpleNamespace:
+        del inputs  # Unused.
+        raise RuntimeError("LLM down")
+
+
+def _patch_llm(
+    monkeypatch: pytest.MonkeyPatch,
+    response: SimpleNamespace,
+) -> None:
+    """Patch get_llm and MODEL_SELECTION_PROMPT for deterministic tests."""
+    monkeypatch.setattr(
+        "agents.model_selection_agent.get_llm",
+        lambda temperature=0: SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        "agents.model_selection_agent.MODEL_SELECTION_PROMPT",
+        _MockPrompt(response),
+    )
+
+
+# ── Parser Tests ──────────────────────────────────────────────────────────────
+
+
+class TestModelSelectionParser:
+    """Tests for the model selection LLM output parser."""
+
+    def test_parses_plain_text_selected_model(
+        self,
+        seasonal_stat_result: StatisticalResult,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Plain text 'Selected model: SARIMA' should parse correctly."""
+        response = SimpleNamespace(
+            content=(
+                "Selected model: SARIMA\n\n"
+                "## Why this model was chosen\n"
+                "SARIMA handles seasonality."
+            ),
+            usage_metadata={
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "total_tokens": 150,
+            },
+        )
+        _patch_llm(monkeypatch, response)
+
+        result = run_model_selection_agent(seasonal_stat_result)
+        assert result.selected_model == "SARIMA"
+        assert "Business-readable selection summary" in result.explanation
+        assert result.arima_rejected_reason is not None
+        assert "does not model the recurring seasonal cycle" in (
+            result.arima_rejected_reason
+        )
+
+    def test_parses_markdown_bold_selected_model(
+        self,
+        seasonal_stat_result: StatisticalResult,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Markdown bold '**Selected model:**' should parse correctly."""
+        response = SimpleNamespace(
+            content=(
+                "**Selected model:** Holt-Winters\n\n"
+                "## Why this model was chosen\n"
+                "Holt-Winters natively incorporates seasonality."
+            ),
+            usage_metadata={
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "total_tokens": 150,
+            },
+        )
+        _patch_llm(monkeypatch, response)
+
+        result = run_model_selection_agent(seasonal_stat_result)
+        assert result.selected_model == "Holt-Winters"
+
+    def test_parses_unicode_hyphen_holt_winters(
+        self,
+        seasonal_stat_result: StatisticalResult,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Unicode non-breaking hyphen (U+2011) should be normalized."""
+        # This is the exact bug from production: the LLM used a unicode
+        # hyphen in "Holt‑Winters" which caused the parser to miss the
+        # match and fall back to scanning the first 100 chars.
+        response = SimpleNamespace(
+            content=(
+                "**Selected model:** Holt\u2011Winters\n\n"
+                "## Why this model was chosen\n"
+                "Holt\u2011Winters natively incorporates seasonality."
+            ),
+            usage_metadata={
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "total_tokens": 150,
+            },
+        )
+        _patch_llm(monkeypatch, response)
+
+        result = run_model_selection_agent(seasonal_stat_result)
+        assert result.selected_model == "Holt-Winters"
+
+    def test_does_not_override_explicit_choice_with_fallback_scan(
+        self,
+        seasonal_stat_result: StatisticalResult,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Fallback scan must not override an explicit 'Selected model' line.
+
+        Previously, when the exact match failed (e.g. due to markdown or
+        unicode), the fallback scan would search the first 100 chars and
+        pick whichever model name appeared first — often SARIMA from the
+        suitability text, overriding the LLM's actual choice.
+        """
+        response = SimpleNamespace(
+            content=(
+                "**Selected model:** Holt\u2011Winters\n\n"
+                "## Why this model was chosen\n"
+                "SARIMA Assessment: good for seasonality.\n"
+                "Holt\u2011Winters natively incorporates seasonality."
+            ),
+            usage_metadata={
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "total_tokens": 150,
+            },
+        )
+        _patch_llm(monkeypatch, response)
+
+        result = run_model_selection_agent(seasonal_stat_result)
+        assert result.selected_model == "Holt-Winters"
+
+    def test_fallback_scans_selected_model_line_only(
+        self,
+        seasonal_stat_result: StatisticalResult,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Fallback should scan the 'Selected model' line, not first 100 chars."""
+        # No exact "Selected model: X" match, but a line with "selected model"
+        # that contains the model name.
+        response = SimpleNamespace(
+            content=(
+                "The selected model is ARIMA for this series.\n\n"
+                "## Why this model was chosen\n"
+                "SARIMA Assessment: good for seasonality."
+            ),
+            usage_metadata={
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "total_tokens": 150,
+            },
+        )
+        _patch_llm(monkeypatch, response)
+
+        result = run_model_selection_agent(seasonal_stat_result)
+        assert result.selected_model == "ARIMA"
+
+    def test_parses_lowercase_selected_model(
+        self,
+        seasonal_stat_result: StatisticalResult,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Lowercase 'selected model: arima' should parse via case-insensitive match."""
+        response = SimpleNamespace(
+            content=(
+                "selected model: arima\n\n"
+                "## Why this model was chosen\n"
+                "ARIMA handles autocorrelation well."
+            ),
+            usage_metadata={
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "total_tokens": 150,
+            },
+        )
+        _patch_llm(monkeypatch, response)
+
+        result = run_model_selection_agent(seasonal_stat_result)
+        assert result.selected_model == "ARIMA"
+
+
+# ── Deterministic Override Tests ──────────────────────────────────────────────
+
+
+class TestDeterministicMetricOverride:
+    """Tests for the deterministic best-metric override during retry."""
+
+    def test_selects_best_metric_model_when_all_metrics_provided(
+        self,
+        seasonal_stat_result: StatisticalResult,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """When all_metrics is provided, the best RMSE model is selected."""
+        # SARIMA has the lowest RMSE, so it should be selected even though
+        # the LLM mock would return Holt-Winters.
+        response = SimpleNamespace(
+            content="Selected model: Holt-Winters\n",
+            usage_metadata={
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "total_tokens": 150,
+            },
+        )
+        _patch_llm(monkeypatch, response)
+
+        all_metrics = {
+            "Holt-Winters": {"RMSE": 0.11, "MAE": 0.09, "MAPE": 0.8},
+            "ARIMA": {"RMSE": 0.10, "MAE": 0.08, "MAPE": 0.7},
+            "SARIMA": {"RMSE": 0.09, "MAE": 0.07, "MAPE": 0.7},
+        }
+        result = run_model_selection_agent(
+            seasonal_stat_result,
+            review_feedback="Previous selection was suboptimal.",
+            exclude_model="Holt-Winters",
+            all_metrics=all_metrics,
+        )
+        # SARIMA has the lowest RMSE and is not excluded
+        assert result.selected_model == "SARIMA"
+        assert "empirical validation metrics" in result.explanation
+        assert result.arima_rejected_reason is not None
+        assert "Higher forecast error" in result.arima_rejected_reason
+        assert "does not model the recurring seasonal cycle" in (
+            result.arima_rejected_reason
+        )
+
+    def test_excluded_model_not_selected_even_with_best_metrics(
+        self,
+        seasonal_stat_result: StatisticalResult,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The excluded model must not be selected even if it has best metrics."""
+        response = SimpleNamespace(
+            content="Selected model: SARIMA\n",
+            usage_metadata={
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "total_tokens": 150,
+            },
+        )
+        _patch_llm(monkeypatch, response)
+
+        all_metrics = {
+            "Holt-Winters": {"RMSE": 0.08, "MAE": 0.06, "MAPE": 0.5},
+            "ARIMA": {"RMSE": 0.10, "MAE": 0.08, "MAPE": 0.7},
+            "SARIMA": {"RMSE": 0.09, "MAE": 0.07, "MAPE": 0.7},
+        }
+        result = run_model_selection_agent(
+            seasonal_stat_result,
+            exclude_model="Holt-Winters",
+            all_metrics=all_metrics,
+        )
+        # Holt-Winters has best RMSE but is excluded; SARIMA is next best
+        assert result.selected_model == "SARIMA"
+        assert result.selected_model != "Holt-Winters"
+
+    def test_no_override_when_all_metrics_is_none(
+        self,
+        seasonal_stat_result: StatisticalResult,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Without all_metrics, the LLM output is used (no deterministic override)."""
+        response = SimpleNamespace(
+            content="Selected model: Holt-Winters\n",
+            usage_metadata={
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "total_tokens": 150,
+            },
+        )
+        _patch_llm(monkeypatch, response)
+
+        result = run_model_selection_agent(seasonal_stat_result)
+        assert result.selected_model == "Holt-Winters"
+
+
+# ── Business Explanation Tests ───────────────────────────────────────────────
+
+
+class TestBusinessModelExplanations:
+    """Tests for business-readable selection and rejection explanations."""
+
+    def test_heuristic_fallback_explains_rejected_models(
+        self,
+        seasonal_stat_result: StatisticalResult,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """LLM failure should still produce specific rejection reasons."""
+        monkeypatch.setattr(
+            "agents.model_selection_agent.get_llm",
+            lambda temperature=0: SimpleNamespace(),
+        )
+        monkeypatch.setattr(
+            "agents.model_selection_agent.MODEL_SELECTION_PROMPT",
+            _FailingPrompt(),
+        )
+
+        result = run_model_selection_agent(seasonal_stat_result)
+
+        assert result.selected_model == "SARIMA"
+        assert "Heuristic fallback used" in result.explanation
+        assert result.arima_rejected_reason is not None
+        assert "plain ARIMA ignores seasonality" in result.arima_rejected_reason
+        assert result.ewma_rejected_reason is not None
+        assert "does not explicitly model seasonality" in result.ewma_rejected_reason

@@ -12,6 +12,16 @@
   var _intervalId = null;
   var POLL_INTERVAL_MS = 1500;
 
+  function updateBar(elementId, progress) {
+    var bar = document.getElementById(elementId);
+    if (bar) {
+      bar.style.width = progress + "%";
+      bar.classList.add("active-polling");
+      if (elementId === "progress-bar-main") bar.textContent = progress + "%";
+    }
+  }
+
+
   /**
    * Update the progress bar and step text in the sidebar.
    *
@@ -19,10 +29,21 @@
    * @param {string} stepText  Human-readable step description.
    */
   function updateProgress(progress, stepText) {
-    var bar = document.getElementById("progress-bar");
     var text = document.getElementById("progress-text");
-    if (bar) bar.style.width = progress + "%";
-    if (text) text.textContent = stepText + " (" + progress + "%)";
+    if (text) {
+        text.innerHTML = ''; // Clear existing content
+        var dot = document.createElement('span');
+        dot.className = 'job-status-dot';
+        text.appendChild(dot);
+        var textNode = document.createTextNode(" " + stepText + " (" + progress + "%)");
+        text.appendChild(textNode);
+    }
+
+    updateBar("progress-bar", progress);
+    updateBar("progress-bar-main", progress);
+    // Also update the main progress bar on the setup page
+    var mainStep = document.getElementById("progress-step");
+    if (mainStep) mainStep.textContent = stepText;
   }
 
   /**
@@ -98,6 +119,9 @@
       clearInterval(_intervalId);
       _intervalId = null;
     }
+    // Remove animated stripes when done
+    var bars = document.querySelectorAll(".progress-bar.active-polling");
+    bars.forEach(function (b) { b.classList.remove("active-polling"); });
   }
 
   /** Auto-start polling when the page loads if a job is already running. */

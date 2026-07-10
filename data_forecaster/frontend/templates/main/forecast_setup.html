@@ -7,6 +7,30 @@
     <div class="col-12">
         <div class="card">
             <div class="card-body">
+
+                {# ── Setup Stepper ─────────────────────────────────── #}
+                <div class="setup-stepper" id="setup-stepper">
+                    <div class="stepper-step active" data-step="1" aria-current="step">
+                        <div class="stepper-circle">1</div>
+                        <span class="stepper-label">Data Source</span>
+                        <div class="stepper-line"></div>
+                    </div>
+                    <div class="stepper-step" data-step="2">
+                        <div class="stepper-circle">2</div>
+                        <span class="stepper-label">Columns</span>
+                        <div class="stepper-line"></div>
+                    </div>
+                    <div class="stepper-step" data-step="3">
+                        <div class="stepper-circle">3</div>
+                        <span class="stepper-label">Preflight</span>
+                        <div class="stepper-line"></div>
+                    </div>
+                    <div class="stepper-step" data-step="4">
+                        <div class="stepper-circle">4</div>
+                        <span class="stepper-label">Configure</span>
+                    </div>
+                </div>
+
                 <div class="row">
                     {# ── Section 1: Data Source ─────────────────────────── #}
                     <div class="col-lg-6 mb-4">
@@ -116,8 +140,12 @@
         </div>
     </div>
 </div>
+{% endblock %}
 
+{% block modal %}
 {# ── Preflight Modal ───────────────────────────────────────── #}
+{# Rendered outside the content block so it is a direct child of  #}
+{# body, avoiding the .tab-content-area stacking context trap.    #}
 <div class="modal fade" id="preflightModal" tabindex="-1">
     <div class="modal-dialog modal-lg">
         <div class="modal-content">

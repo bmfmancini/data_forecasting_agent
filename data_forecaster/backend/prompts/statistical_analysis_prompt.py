@@ -1,7 +1,10 @@
 """Prompt for the statistical analysis agent."""
 
+from __future__ import annotations
+
 from langchain_core.prompts import ChatPromptTemplate
-from .prompt_utils import apply_token_budget, TOKEN_BUDGETS
+
+from prompts.prompt_utils import apply_token_budget
 
 STATISTICAL_ANALYSIS_PROMPT = ChatPromptTemplate.from_messages(
     [

@@ -1,17 +1,37 @@
 """Prompts module for the forecasting agents."""
 
-from .data_validation_prompt import DATA_VALIDATION_PROMPT
-from .forecasting_prompt import FORECASTING_PROMPT
-from .model_selection_prompt import MODEL_SELECTION_PROMPT
-from .statistical_analysis_prompt import STATISTICAL_ANALYSIS_PROMPT
-from .report_generation_prompt import REPORT_GENERATION_PROMPT
-from .orchestrator_prompt import ORCHESTRATOR_CHAT_PROMPT
+from __future__ import annotations
+
+from prompts.data_validation_prompt import DATA_VALIDATION_PROMPT
+from prompts.forecasting_prompt import FORECASTING_PROMPT
+from prompts.general_chat_prompt import GENERAL_CHAT_PROMPT
+from prompts.model_selection_prompt import MODEL_SELECTION_PROMPT
+from prompts.orchestrator_prompt import ORCHESTRATOR_CHAT_PROMPT
+from prompts.report_generation_prompt import (
+    DATA_QUALITY_NARRATIVE_PROMPT,
+    EXECUTIVE_SUMMARY_NARRATIVE_PROMPT,
+    EXPLAINABILITY_NARRATIVE_PROMPT,
+    FORECAST_OUTLOOK_NARRATIVE_PROMPT,
+    HISTORICAL_ANALYSIS_NARRATIVE_PROMPT,
+    MODEL_COMPARISON_NARRATIVE_PROMPT,
+    RECOMMENDATION_NARRATIVE_PROMPT,
+    STATISTICAL_AUDIT_NARRATIVE_PROMPT,
+)
+from prompts.statistical_analysis_prompt import STATISTICAL_ANALYSIS_PROMPT
 
 __all__ = [
+    "DATA_QUALITY_NARRATIVE_PROMPT",
     "DATA_VALIDATION_PROMPT",
+    "EXECUTIVE_SUMMARY_NARRATIVE_PROMPT",
+    "EXPLAINABILITY_NARRATIVE_PROMPT",
+    "FORECAST_OUTLOOK_NARRATIVE_PROMPT",
     "FORECASTING_PROMPT",
+    "GENERAL_CHAT_PROMPT",
+    "HISTORICAL_ANALYSIS_NARRATIVE_PROMPT",
+    "MODEL_COMPARISON_NARRATIVE_PROMPT",
     "MODEL_SELECTION_PROMPT",
-    "STATISTICAL_ANALYSIS_PROMPT",
-    "REPORT_GENERATION_PROMPT",
     "ORCHESTRATOR_CHAT_PROMPT",
+    "RECOMMENDATION_NARRATIVE_PROMPT",
+    "STATISTICAL_ANALYSIS_PROMPT",
+    "STATISTICAL_AUDIT_NARRATIVE_PROMPT",
 ]

@@ -204,6 +204,22 @@ def _parse_report_segments(
     return segments
 
 
+def _remove_web_dashboard_section(report_text: str) -> str:
+    """Remove the markdown dashboard section from the web report body.
+
+    The report page renders the executive dashboard as a richer tile-based
+    overview.  PDF/export still receives the full markdown report, including
+    the dashboard table, so audit/export behavior remains unchanged.
+    """
+    sections = report_text.split("\n\n---\n\n")
+    filtered = [
+        section
+        for section in sections
+        if not section.lstrip().startswith("## 1. Executive Dashboard")
+    ]
+    return "\n\n---\n\n".join(filtered)
+
+
 @main_bp.route("/")
 @_login_required
 def index() -> Response:
@@ -418,7 +434,10 @@ def trace() -> str:
             "steps": result.get("report_reasoning", []),
         },
     ]
-    return render_template("main/trace.html", agents=agents)
+    token_usage: dict[str, Any] = result.get("pipeline_token_usage") or {}
+    return render_template(
+        "main/trace.html", agents=agents, token_usage=token_usage
+    )
 
 
 @main_bp.route("/report")
@@ -435,15 +454,20 @@ def report() -> str:
     """
     result: dict[str, Any] = session.get("analysis_result") or {}
     upload_info: dict[str, Any] = session.get("upload_info") or {}
-    report_text: str = result.get("report", "Report not available.")
-    segments = _parse_report_segments(report_text, result)
+    executive_report: dict[str, Any] | None = result.get("executive_report")
+    # The segment parser expects markdown (it converts markdown → HTML and
+    # splits on ``[VISUAL:TAG]`` tokens).  Using the pre-rendered HTML here
+    # would cause double-processing and bleach stripping of the visual tags.
+    report_md: str = result.get("report", "Report not available.")
+    web_report_md = _remove_web_dashboard_section(report_md)
     filename: str = upload_info.get("filename", "data")
     base_name = filename.rsplit(".", 1)[0] if "." in filename else filename
     pdf_filename = f"forecast_report_{base_name}.pdf"
     return render_template(
         "main/report.html",
-        segments=segments,
+        segments=_parse_report_segments(web_report_md, result),
         pdf_filename=pdf_filename,
+        er=executive_report,
     )
 
 
@@ -460,14 +484,16 @@ def report_export() -> Response:
 
     result: dict[str, Any] = session.get("analysis_result") or {}
     upload_info: dict[str, Any] = session.get("upload_info") or {}
-    report_text: str = result.get("report", "Report not available.")
+    report_text: str = result.get("report", "Report not available.") # For PDF
 
     filename: str = upload_info.get("filename", "data")
     base_name = filename.rsplit(".", 1)[0] if "." in filename else filename
     pdf_filename = f"forecast_report_{base_name}.pdf"
 
     pdf_bytes = report_to_pdf(
-        report_text, title=pdf_filename.replace("_", " ").replace(".pdf", "")
+        report_text,
+        title=pdf_filename.replace("_", " ").replace(".pdf", ""),
+        result=result,
     )
     return send_file(
         io.BytesIO(pdf_bytes),

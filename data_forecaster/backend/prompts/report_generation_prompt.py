@@ -1,201 +1,209 @@
-"""Prompt for the report generation agent."""
+"""Prompt templates for executive report narrative generation (Stage 2).
+
+Each narrative section has its own focused :class:`ChatPromptTemplate` that
+receives the pre-computed structured data for that section as JSON context.
+The LLM is instructed to use ONLY the provided values — it must never invent
+metrics, financial impacts, or business conclusions.
+
+Common rules enforced by all prompts:
+- Executive tone, no statistical jargon.
+- Hedged language (ban "will", "proves", "guarantees").
+- No unsupported business conclusions (staffing, fleet, pricing, revenue,
+  cost, seat claims) unless explicitly supplied by the user.
+- No financial fabrication ("$X million" placeholders).
+- Use only the values provided in the structured context.
+"""
+
+from __future__ import annotations
 
 from langchain_core.prompts import ChatPromptTemplate
-from .prompt_utils import apply_token_budget, TOKEN_BUDGETS
 
-REPORT_GENERATION_PROMPT = ChatPromptTemplate.from_messages(
-    [
-        (
-            "system",
-            (
-                "You are an elite business strategist and analyst, a trusted advisor to a "
-                "corporate Board of Directors. Your mission is to translate complex "
-                "data, statistical analysis, and forecasts into a clear, concise, and "
-                "actionable executive report. Your audience is the C-suite; they "
-                "expect strategic insights, not a data science lecture. Every point "
-                "you make must directly address business implications: revenue, cost, "
-                "risk, and opportunity. Your analysis must be rigorously grounded in "
-                "the provided data. Use [VISUAL:TAG] tokens to embed visualizations. "
-                "Use only the data provided. If a required metric is missing, state "
-                "'Information not available.' Do not infer or fabricate values."
-            ),
-        ),
-        (
-            "human",
-            (
-                """### AUDIENCE: C-SUITE & BOARD OF DIRECTORS ###
-"
-                "Interests: Strategic impact, financial outcomes, operational efficiency, "
-                "forecast reliability, risk mitigation, and actionable recommendations. "
-                "They are NOT interested in technical jargon, mathematical formulas, or "
-                "model implementation details. Translate all findings into executive "
-                "business language.
+from prompts.prompt_utils import apply_token_budget
 
-"
-                "### GROUNDING RULES ###
-"
-                "1. **Data Fidelity:** Use ONLY the data provided in the context. Do not "
-                "invent or assume information. All numbers must be traceable to the source.
-"
-                "2. **Handle Missing Information:** If data (e.g., metrics like RMSE, MAPE) "
-                "is not available, state: 'Information not available.' Do not estimate "
-                "or fill in gaps.
-"
-                "3. **Evidence-Based Insights:** All conclusions, risks, and opportunities "
-                "must derive directly from the supplied evidence. Do not use external "
-                "knowledge or make unsupported claims.
-"
-                "4. **Business Impact Focus:** Every finding must be linked to its impact "
-                "on business operations, financials, or strategy.
-"
-                "5. **No Chatter:** Begin immediately with Section 1. No intros, greetings, "
-                "or conversational filler.
+# ── Shared system message fragment ───────────────────────────────────────────
 
-"
-                "DATA CONTEXT:
-"
-                "{data_context}
-
-"
-                "FORECASTING EVIDENCE:
-"
-                "{rag_context}
-
-"
-                "MODEL SELECTION REASONING:
-"
-                "{ai_logic_instruction}
-
-"
-                "### OUTPUT CONTRACT (MANDATORY) ###
-"
-                "Generate a report with exactly these sections in this exact order. For "
-                "each major finding, provide: Observation (what the data shows), "
-                "Business Impact (financial/operational implications), Strategic "
-                "Significance (why leadership should care), and Recommended Action.
-
-"
-                "## 1. Strategic Overview
-"
-                "Distill the entire analysis into a powerful executive summary. Start "
-                "with the most critical takeaway. State the primary forecast direction "
-                "and its expected impact on key business KPIs (e.g., revenue, "
-                "production targets, costs). Pinpoint the single most significant "
-                "opportunity and risk. Conclude with a clear recommendation for "
-                "leadership's immediate focus and a confidence assessment based on "
-                "the forecast's reliability.
-
-"
-                "## 2. Historical Performance & Trend Analysis
-"
-                "Analyze historical data to reveal the underlying business story. Go "
-                "beyond describing the trend—explain its business significance. "
-                "Analyze the long-term trend (e.g., 'consistent 5% quarterly growth'), "
-                "seasonality ('20% sales spike in Q4'), and any structural breaks or "
-                "anomalies ('sudden 30% drop in user engagement post-platform "
-                "change'). For each, quantify the business impact (e.g., 'the seasonal "
-                "spike represents $5M in revenue').
-"
-                "REQUIRED: End with:
-
-"
-                "[VISUAL:HISTORICAL]
-
-"
-                "[VISUAL:STL]
-
-"
-                "## 3. Future Growth & Forecast Outlook
-"
-                "Translate the forecast into a tangible business outlook. Quantify the "
-                "projected growth or decline in terms of core business metrics. "
-                "Discuss the direct implications for resource planning (e.g., "
-                "'forecasted demand requires a 15% increase in staffing'), budget "
-                "allocation, and strategic initiatives. Highlight key opportunities "
-                "revealed by the forecast (e.g., 'projected growth in Q3 presents an "
-                "opportunity to capture market share').
-"
-                "REQUIRED: End with:
-
-"
-                "[VISUAL:FORECAST]
-
-"
-                "## 4. Forecasting Approach & Confidence Drivers
-"
-                "Explain the 'why' behind the forecast model in simple business "
-                "terms. Justify the model choice (e.g., 'SARIMA was chosen for its "
-                "ability to model our strong seasonality'). Briefly state why other "
-                "models were rejected. List factors that increase confidence (e.g., "
-                "'low error metrics in validation') and factors that reduce it (e.g., "
-                "'high volatility in recent data').
-"
-                "REQUIRED: End with:
-
-"
-                "[VISUAL:ACF_PACF]
-
-"
-                "## 5. Critical Business Assumptions
-"
-                "List the core business and market assumptions the forecast depends "
-                "on. For each, describe the specific, material consequence if that "
-                "assumption proves false (e.g., 'Assumption: stable material costs. "
-                "Consequence of failure: a 10% rise in costs would erase projected "
-                "profit margins').
-
-"
-                "## 6. Forecast Reliability & Performance Assessment
-"
-                "Assess the forecast's reliability using only the supplied validation "
-                "metrics (e.g., MAPE, RMSE). Explain what these metrics mean in "
-                "business terms (e.g., 'A MAPE of 5% means our forecasts have been, "
-                "on average, within 5% of actuals').
-"
-                "REQUIRED: End with:
-
-"
-                "[VISUAL:COMPARISON]
-
-"
-                "## 7. Strategic Risks & Operational Constraints
-"
-                "Identify and categorize strategic risks stemming from the analysis "
-                "(e.g., Market, Operational, Financial). Focus only on risks "
-                "supported by the data. For each risk, assess its potential business "
-                "impact (e.g., 'Risk of supply chain disruption could delay production "
-                "by 2-4 weeks'), and suggest a strategic mitigation approach for "
-                "leadership to consider.
-
-"
-                "## 8. Executive Recommendations & Next Steps
-"
-                "Provide a set of clear, decisive, and evidence-backed "
-                "recommendations. For each: state the action, link it to the "
-                "supporting data point, quantify the expected business outcome (e.g., "
-                "'increase marketing spend by 10% to capture forecasted demand, "
-                "targeting a $2M revenue increase'), and assign a priority (High/Medium/Low).
-
-"
-                "### VISUAL TAG RULES ###
-"
-                "1. Each tag must be on its own line with blank lines before and after.
-"
-                "2. The tag must be the ONLY text on the line: `[VISUAL:TAG_NAME]`
-"
-                "3. Use ONLY these tags, each once, in its designated section:
-"
-                "[VISUAL:HISTORICAL], [VISUAL:STL], [VISUAL:ACF_PACF], "
-                "[VISUAL:FORECAST], [VISUAL:COMPARISON]
-
-"
-                "### ADDITIONAL USER INSTRUCTIONS ###
-"
-                "{extra_instructions}"""
-            ),
-        ),
-    ]
+_SYSTEM_PREAMBLE = (
+    "You are an elite business strategist writing for a C-suite audience. "
+    "Your task is to transform pre-computed structured data into polished "
+    "executive narrative. You are NOT a forecaster — every number, score, "
+    "and metric has already been computed by the analytics engine.\n\n"
+    "### ABSOLUTE RULES ###\n"
+    "1. Use ONLY the values provided in the structured context. Do NOT "
+    "invent, estimate, or fabricate any metric, score, or value.\n"
+    "2. Do NOT generate financial impacts (e.g. '$X million') unless "
+    "explicitly provided. Write 'Financial impact depends on average "
+    "revenue per unit and other business KPIs' instead.\n"
+    "3. Do NOT make unsupported business conclusions about staffing, fleet "
+    "sizing, pricing, marketing, revenue, or operating costs unless those "
+    "values are in the context. Use hedged language: 'The projected "
+    "increase may warrant a review of operational capacity.'\n"
+    "4. Replace absolute language. Never use 'will', 'proves', 'guarantees', "
+    "'confirms beyond doubt'. Prefer 'is expected to', 'suggests', "
+    "'indicates', 'projects', 'based on historical evidence'.\n"
+    "5. No statistical jargon. Do NOT mention: ADF, KPSS, p-values, "
+    "differencing, stationarity, residuals, confidence intervals (use "
+    "'forecast range'), AR/MA/I components, or model order parameters.\n"
+    "6. Begin immediately with the narrative — no greetings, no section "
+    "headers, no meta-commentary.\n"
 )
 
-# Apply token budget
-REPORT_GENERATION_PROMPT = apply_token_budget(REPORT_GENERATION_PROMPT, "report_generation")
+# ── Executive Summary Narrative ──────────────────────────────────────────────
+
+EXECUTIVE_SUMMARY_NARRATIVE_PROMPT = apply_token_budget(
+    ChatPromptTemplate.from_messages(
+        [
+            ("system", _SYSTEM_PREAMBLE),
+            (
+                "human",
+                "Write a concise executive summary (3-4 sentences) for the "
+                "following forecast. The audience should understand the "
+                "forecast in less than one minute. Cover: strategic outlook, "
+                "expected growth, why confidence is at its level, the primary "
+                "risk, and the recommended action. Do not repeat the raw "
+                "values verbatim — weave them into executive prose.\n\n"
+                "STRUCTURED CONTEXT:\n{section_json}",
+            ),
+        ]
+    ),
+    "narrative_executive_summary",
+)
+
+# ── Data Quality Narrative ───────────────────────────────────────────────────
+
+DATA_QUALITY_NARRATIVE_PROMPT = apply_token_budget(
+    ChatPromptTemplate.from_messages(
+        [
+            ("system", _SYSTEM_PREAMBLE),
+            (
+                "human",
+                "Write a 2-3 sentence data quality summary for executives. "
+                "Explain the rating, the most significant issues (if any), "
+                "and how data quality may influence forecast reliability. "
+                "Do not list every metric — highlight what matters for "
+                "decision-making.\n\n"
+                "STRUCTURED CONTEXT:\n{section_json}",
+            ),
+        ]
+    ),
+    "narrative_data_quality",
+)
+
+# ── Historical Analysis Narrative ────────────────────────────────────────────
+
+HISTORICAL_ANALYSIS_NARRATIVE_PROMPT = apply_token_budget(
+    ChatPromptTemplate.from_messages(
+        [
+            ("system", _SYSTEM_PREAMBLE),
+            (
+                "human",
+                "Write a 3-4 sentence historical performance summary for "
+                "executives. Explain the trend direction, its business "
+                "significance, and any seasonal patterns in plain language. "
+                "Do not use statistical terminology.\n\n"
+                "STRUCTURED CONTEXT:\n{section_json}",
+            ),
+        ]
+    ),
+    "narrative_historical_analysis",
+)
+
+# ── Forecast Outlook Narrative ───────────────────────────────────────────────
+
+FORECAST_OUTLOOK_NARRATIVE_PROMPT = apply_token_budget(
+    ChatPromptTemplate.from_messages(
+        [
+            ("system", _SYSTEM_PREAMBLE),
+            (
+                "human",
+                "Write a 3-4 sentence forecast outlook for executives. "
+                "State the projected direction and growth, and emphasise "
+                "that forecasts carry uncertainty — reference the "
+                "prediction intervals as the planning range. Do not present "
+                "forecasts as exact numbers without uncertainty.\n\n"
+                "STRUCTURED CONTEXT:\n{section_json}",
+            ),
+        ]
+    ),
+    "narrative_forecast_outlook",
+)
+
+# ── Model Comparison Narrative ───────────────────────────────────────────────
+
+MODEL_COMPARISON_NARRATIVE_PROMPT = apply_token_budget(
+    ChatPromptTemplate.from_messages(
+        [
+            ("system", _SYSTEM_PREAMBLE),
+            (
+                "human",
+                "Write a 3-4 sentence explanation of why the selected "
+                "forecasting model was chosen, what characteristics it "
+                "captures, and why it outperformed alternatives. Refer to "
+                "the model as 'the forecasting model' or 'our predictive "
+                "model' — the model name may appear once. Do not use "
+                "statistical jargon or model order parameters.\n\n"
+                "STRUCTURED CONTEXT:\n{section_json}",
+            ),
+        ]
+    ),
+    "narrative_model_comparison",
+)
+
+# ── Statistical Audit Narrative ──────────────────────────────────────────────
+
+STATISTICAL_AUDIT_NARRATIVE_PROMPT = apply_token_budget(
+    ChatPromptTemplate.from_messages(
+        [
+            ("system", _SYSTEM_PREAMBLE),
+            (
+                "human",
+                "Write a 2-3 sentence independent statistical assessment "
+                "for executives. Summarise the strongest evidence, key "
+                "concerns (if any), and recommended follow-up. Frame any "
+                "concerns as forward-looking recommendations, not process "
+                "failures. Do not mention agent names or internal pipeline "
+                "mechanics.\n\n"
+                "STRUCTURED CONTEXT:\n{section_json}",
+            ),
+        ]
+    ),
+    "narrative_statistical_audit",
+)
+
+# ── Explainability Narrative ─────────────────────────────────────────────────
+
+EXPLAINABILITY_NARRATIVE_PROMPT = apply_token_budget(
+    ChatPromptTemplate.from_messages(
+        [
+            ("system", _SYSTEM_PREAMBLE),
+            (
+                "human",
+                "Write a 2-3 sentence explainability summary that helps "
+                "executives understand why the AI reached its conclusions. "
+                "Translate the findings into plain business language. Do "
+                "not use statistical terminology.\n\n"
+                "STRUCTURED CONTEXT:\n{section_json}",
+            ),
+        ]
+    ),
+    "narrative_explainability",
+)
+
+# ── Recommendation Narrative ─────────────────────────────────────────────────
+
+RECOMMENDATION_NARRATIVE_PROMPT = apply_token_budget(
+    ChatPromptTemplate.from_messages(
+        [
+            ("system", _SYSTEM_PREAMBLE),
+            (
+                "human",
+                "Rewrite the following recommendation into polished "
+                "executive prose (1-2 sentences). Do NOT change the intent, "
+                "priority, or supporting evidence. Do NOT add financial "
+                "impacts or business conclusions not present in the data. "
+                "Improve readability and executive tone only.\n\n"
+                "STRUCTURED CONTEXT:\n{section_json}",
+            ),
+        ]
+    ),
+    "narrative_recommendation",
+)
