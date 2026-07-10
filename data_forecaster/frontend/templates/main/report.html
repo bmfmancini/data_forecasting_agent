@@ -2,14 +2,6 @@
 {% block title %}Report — Forecaster{% endblock %}
 {% block header %}📄 Report{% endblock %}
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
-    <h4 class="mb-0">Forecast Report</h4>
-    <form method="post" action="{{ url_for('main.report_export') }}" style="display:inline;">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <button type="submit" class="btn btn-outline-primary btn-sm">⬇️ Download Report as PDF</button>
-    </form>
-</div>
-
 {% if session.analysis_result.llm_fallback %}
 <div class="alert alert-warning">
     ⚠️ The LLM was not available for report generation. A local template was used as a fallback.
@@ -17,49 +9,107 @@
 {% endif %}
 
 {% if er %}
-{# ── Dynamic Executive Dashboard ──────────────────────────────────────── #}
-<section class="report-dashboard mb-4">
-    <h5 class="mb-3">Executive Dashboard</h5>
-    <div class="row row-cols-1 row-cols-md-3 g-3">
+{# ── Unified Executive Overview ───────────────────────────────────────── #}
+<section class="report-hero mb-4">
+    <div class="report-hero-head">
+        <div>
+            <p class="report-kicker mb-1">Executive Dashboard</p>
+            <h2 class="report-title mb-0">Forecast decision brief</h2>
+        </div>
+        <form method="post" action="{{ url_for('main.report_export') }}" class="report-export-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-outline-light btn-sm report-export-btn">Download PDF</button>
+        </form>
+    </div>
+
+    <div class="report-tile-grid">
         {% for item in er.dashboard.widgets %}
-        <div class="col">
-            <div class="card h-100 border-{% if item.status == 'positive' %}success{% elif item.status == 'negative' %}danger{% elif item.status == 'warning' %}warning{% else %}primary{% endif %}">
-                <div class="card-body">
-                    <h6 class="card-title text-muted">{{ item.icon }} {{ item.title }}</h6>
-                    <p class="h5 mb-1">{{ item.value }}</p>
-                    <small class="text-muted">{{ item.description }}</small>
-                </div>
+        <div class="report-tile report-tile-{{ item.status }}">
+            <div class="report-tile-label">
+                <span aria-hidden="true">{{ item.icon }}</span>
+                <span>{{ item.title }}</span>
             </div>
+            <div class="report-tile-value">{{ item.value }}</div>
+            <p class="report-tile-copy">{{ item.description }}</p>
         </div>
         {% endfor %}
     </div>
+
+    <div class="leadership-brief">
+        <div class="brief-copy">
+            <p class="report-kicker mb-2">Leadership Brief</p>
+            <p class="brief-lead">{{ er.executive_summary.narrative if er.executive_summary.narrative else er.executive_summary.strategic_outlook }}</p>
+        </div>
+        <div class="brief-asides">
+            <div>
+                <span>Planning stance</span>
+                <strong>{{ er.executive_summary.recommended_action }}</strong>
+            </div>
+            <div>
+                <span>Primary watchpoint</span>
+                <strong>{{ er.executive_summary.primary_risk }}</strong>
+            </div>
+        </div>
+    </div>
 </section>
 
-{# ── Confidence Score Badge ───────────────────────────────────────────── #}
-<section class="report-confidence mb-3">
-    <span class="badge {% if er.confidence.label == 'High' %}bg-success{% elif er.confidence.label == 'Medium' %}bg-warning{% else %}bg-danger{% endif %} fs-6">
-        Forecast Confidence: {{ er.confidence.score }}/100 — {{ er.confidence.label }}
-    </span>
-    <p class="mt-2 text-muted">{{ er.confidence.explanation }}</p>
-</section>
-
-{# ── Health Indicators Table ──────────────────────────────────────────── #}
-<section class="report-health mb-4">
-    <h5 class="mb-2">Forecast Health Indicators</h5>
-    <table class="table table-sm table-striped">
-        <thead><tr><th>Indicator</th><th>Status</th><th>Detail</th></tr></thead>
-        <tbody>
+<div class="report-section-grid mb-4">
+    {# ── Health Indicators ─────────────────────────────────────────────── #}
+    <section class="report-panel report-health">
+        <div class="report-section-heading">
+            <p class="report-kicker mb-1">Operating Signal</p>
+            <h5 class="mb-0">Forecast Health</h5>
+        </div>
+        <div class="health-list">
             {% for hi in er.health_indicators %}
-            <tr><td>{{ hi.indicator }}</td><td>{{ hi.status }}</td><td class="small text-muted">{{ hi.detail }}</td></tr>
+            <div class="health-row">
+                <div>
+                    <strong>{{ hi.indicator }}</strong>
+                    <p>{{ hi.detail }}</p>
+                </div>
+                <span>{{ hi.status }}</span>
+            </div>
             {% endfor %}
-        </tbody>
-    </table>
-</section>
+        </div>
+    </section>
+
+    {# ── Recommendations with Evidence ────────────────────────────────── #}
+    {% if er.recommendations %}
+    <section class="report-panel report-recommendations">
+        <div class="report-section-heading">
+            <p class="report-kicker mb-1">Management Actions</p>
+            <h5 class="mb-0">Executive Recommendations</h5>
+        </div>
+        <div class="recommendation-list">
+            {% for rec in er.recommendations %}
+            <article class="recommendation-block recommendation-{{ rec.priority | lower }}">
+                <div class="recommendation-topline">
+                    <span>{{ rec.priority }}</span>
+                    <strong>{{ rec.narrative if rec.narrative else rec.recommendation }}</strong>
+                </div>
+                <p><b>Why it matters:</b> {{ rec.rationale }}</p>
+                <p><b>Expected outcome:</b> {{ rec.expected_outcome }}</p>
+                {% if rec.supporting_evidence %}
+                <div class="evidence-row">
+                    {% for ev in rec.supporting_evidence %}
+                    <span>{{ ev.metric }}: {{ ev.value }}</span>
+                    {% endfor %}
+                </div>
+                {% endif %}
+            </article>
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
+</div>
 
 {# ── Prediction Intervals Table ───────────────────────────────────────── #}
 {% if er.forecast_outlook.metrics.prediction_intervals %}
-<section class="report-prediction-intervals mb-4">
-    <h5 class="mb-2">Prediction Intervals (95%)</h5>
+<section class="report-panel report-prediction-intervals mb-4">
+    <div class="report-section-heading">
+        <p class="report-kicker mb-1">Planning Range</p>
+        <h5 class="mb-0">Forecast Range (95%)</h5>
+    </div>
     <table class="table table-sm table-striped">
         <thead><tr><th>Date</th><th>Forecast</th><th>Lower Bound</th><th>Upper Bound</th></tr></thead>
         <tbody>
@@ -71,32 +121,14 @@
 </section>
 {% endif %}
 
-{# ── Recommendations with Evidence ────────────────────────────────────── #}
-{% if er.recommendations %}
-<section class="report-recommendations mb-4">
-    <h5 class="mb-2">Executive Recommendations</h5>
-    {% for rec in er.recommendations %}
-    <div class="recommendation-block mb-3 p-3 border rounded">
-        <span class="badge {% if rec.priority == 'High' %}bg-danger{% elif rec.priority == 'Medium' %}bg-warning{% else %}bg-info{% endif %}">{{ rec.priority }}</span>
-        <strong class="ms-2">{{ rec.narrative if rec.narrative else rec.recommendation }}</strong>
-        <p class="small mt-2 mb-1"><strong>Rationale:</strong> {{ rec.rationale }}</p>
-        <p class="small mb-1"><em>Expected outcome: {{ rec.expected_outcome }}</em></p>
-        {% if rec.supporting_evidence %}
-        <ul class="small text-muted mb-0">
-            {% for ev in rec.supporting_evidence %}
-            <li>{{ ev.metric }}: {{ ev.value }} (from {{ ev.source_section }})</li>
-            {% endfor %}
-        </ul>
-        {% endif %}
+{% endif %}
+
+<section class="report-panel report-detail-panel">
+    <div class="report-section-heading">
+        <p class="report-kicker mb-1">Detailed Evidence</p>
+        <h5 class="mb-0">Report Narrative</h5>
     </div>
-    {% endfor %}
-</section>
-{% endif %}
-
-<hr class="my-4">
-{% endif %}
-
-<div class="report-body">
+    <div class="report-body">
 {% for segment in segments %}
     {% if segment.type == 'text' %}
         {{ segment.html | safe }}
@@ -108,7 +140,8 @@
         {% endif %}
     {% endif %}
 {% endfor %}
-</div>
+    </div>
+</section>
 {% endblock %}
 {% block scripts %}
 <script>
