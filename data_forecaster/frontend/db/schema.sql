@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS users (
     role_id              INTEGER NOT NULL DEFAULT 2,
     active               INTEGER NOT NULL DEFAULT 1,
     must_change_password INTEGER NOT NULL DEFAULT 0,
+    session_version      INTEGER NOT NULL DEFAULT 0,
     created_at           TEXT    NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (role_id) REFERENCES roles (id)
 );

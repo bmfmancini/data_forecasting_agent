@@ -13,7 +13,9 @@ from wtforms import (
     StringField,
     SubmitField,
 )
-from wtforms.validators import DataRequired, Length, NumberRange, Optional, URL
+from wtforms.validators import DataRequired, Length, NumberRange, Optional, Regexp, URL
+
+from blueprints.auth.forms import PASSWORD_COMPLEXITY_MESSAGE, PASSWORD_COMPLEXITY_RE
 
 
 class UserCreateForm(FlaskForm):  # type: ignore[misc]
@@ -33,7 +35,11 @@ class UserCreateForm(FlaskForm):  # type: ignore[misc]
     )
     password = PasswordField(
         "Password",
-        validators=[DataRequired(), Length(min=4)],
+        validators=[
+            DataRequired(),
+            Length(min=8),
+            Regexp(PASSWORD_COMPLEXITY_RE, message=PASSWORD_COMPLEXITY_MESSAGE),
+        ],
     )
     confirm_password = PasswordField(
         "Confirm Password",
@@ -62,7 +68,11 @@ class UserEditForm(FlaskForm):  # type: ignore[misc]
 
     password = PasswordField(
         "New Password (leave blank to keep current)",
-        validators=[Optional(), Length(min=4)],
+        validators=[
+            Optional(),
+            Length(min=8),
+            Regexp(PASSWORD_COMPLEXITY_RE, message=PASSWORD_COMPLEXITY_MESSAGE),
+        ],
     )
     confirm_password = PasswordField(
         "Confirm New Password",

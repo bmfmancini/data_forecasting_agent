@@ -13,9 +13,13 @@ Register these commands with the Flask application by calling
 
 from __future__ import annotations
 
+import re
+
 import click
 from flask import Flask
 from werkzeug.security import generate_password_hash
+
+from blueprints.auth.forms import PASSWORD_COMPLEXITY_MESSAGE, PASSWORD_COMPLEXITY_RE
 
 
 def register_commands(app: Flask) -> None:
@@ -47,11 +51,22 @@ def register_commands(app: Flask) -> None:
                 raise SystemExit(1)
 
             role_id = int(role_row["id"])
+            if len(password) < 8 or not re.match(PASSWORD_COMPLEXITY_RE, password):
+                click.echo(
+                    f"Password must be at least 8 characters. {PASSWORD_COMPLEXITY_MESSAGE}",
+                    err=True,
+                )
+                raise SystemExit(1)
+
             pw_hash = generate_password_hash(password)
 
             try:
                 execute_db(
-                    "INSERT INTO users (username, password_hash, role_id) VALUES (?, ?, ?)",
+                    """
+                    INSERT INTO users
+                        (username, password_hash, role_id, must_change_password)
+                    VALUES (?, ?, ?, 1)
+                    """,
                     (username, pw_hash, role_id),
                 )
                 click.echo(f"User '{username}' created with role '{role}'.")

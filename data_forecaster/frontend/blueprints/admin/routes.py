@@ -167,7 +167,11 @@ def user_force_reset(user_id: int) -> Response:
         return redirect(url_for(_ADMIN_USERS_ENDPOINT))
 
     execute_db(
-        "UPDATE users SET must_change_password = 1 WHERE id = ?",
+        """
+        UPDATE users
+        SET must_change_password = 1, session_version = session_version + 1
+        WHERE id = ?
+        """,
         (user_id,),
     )
     flash(
@@ -212,7 +216,11 @@ def user_new() -> str | Response:
 
         pw_hash = generate_password_hash(password)
         execute_db(
-            "INSERT INTO users (username, password_hash, role_id) VALUES (?, ?, ?)",
+            """
+            INSERT INTO users
+                (username, password_hash, role_id, must_change_password)
+            VALUES (?, ?, ?, 1)
+            """,
             (username, pw_hash, int(role_row["id"])),
         )
         flash(f"User '{username}' created successfully.", "success")
@@ -248,7 +256,9 @@ def _update_user(
         execute_db(
             """
             UPDATE users
-            SET password_hash = ?, role_id = ?, active = ?, must_change_password = ?
+            SET password_hash = ?, role_id = ?, active = ?,
+                must_change_password = ?,
+                session_version = session_version + 1
             WHERE id = ?
             """,
             (
@@ -263,10 +273,21 @@ def _update_user(
         execute_db(
             """
             UPDATE users
-            SET role_id = ?, active = ?, must_change_password = ?
+            SET role_id = ?, active = ?, must_change_password = ?,
+                session_version = CASE
+                    WHEN active != ? OR ? = 1 THEN session_version + 1
+                    ELSE session_version
+                END
             WHERE id = ?
             """,
-            (int(role_row["id"]), int(new_active), int(force_reset), user_id),
+            (
+                int(role_row["id"]),
+                int(new_active),
+                int(force_reset),
+                int(new_active),
+                int(force_reset),
+                user_id,
+            ),
         )
 
 

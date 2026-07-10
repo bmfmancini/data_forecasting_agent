@@ -107,6 +107,10 @@ def init_db() -> None:
     if "custom_settings_json" not in report_columns:
         db.execute("ALTER TABLE forecast_reports ADD COLUMN custom_settings_json TEXT")
 
+    user_columns = {row["name"] for row in db.execute("PRAGMA table_info(users)")}
+    if "session_version" not in user_columns:
+        db.execute("ALTER TABLE users ADD COLUMN session_version INTEGER NOT NULL DEFAULT 0")
+
     db.execute("INSERT OR IGNORE INTO roles (id, name) VALUES (1, 'admin')")
     db.execute("INSERT OR IGNORE INTO roles (id, name) VALUES (2, 'user')")
 

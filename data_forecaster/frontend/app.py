@@ -252,24 +252,35 @@ def _register_user_loader() -> None:
         """
         from db.db import query_db as _query
 
+        try:
+            user_pk = int(user_id)
+        except (TypeError, ValueError):
+            return None
+
         row = _query(
             """
             SELECT u.id, u.username, r.name AS role_name, u.active,
-                   u.must_change_password
+                   u.must_change_password, u.session_version
             FROM users u
             JOIN roles r ON r.id = u.role_id
             WHERE u.id = ?
             """,
-            (int(user_id),),
+            (user_pk,),
             one=True,
         )
         if row and isinstance(row, dict):
+            if not bool(row.get("active")):
+                return None
+            session_version = int(row.get("session_version", 0))
+            if session.get("user_session_version") != session_version:
+                return None
             return User(
                 user_id=int(row["id"]),
                 username=str(row["username"]),
                 role_name=str(row["role_name"]),
                 active=bool(row["active"]),
                 must_change_password=bool(row.get("must_change_password", 0)),
+                session_version=session_version,
             )
         return None
 

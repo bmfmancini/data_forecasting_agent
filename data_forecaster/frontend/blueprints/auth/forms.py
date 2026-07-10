@@ -6,7 +6,20 @@ from __future__ import annotations
 
 from flask_wtf import FlaskForm  # type: ignore[import-untyped]
 from wtforms import PasswordField, StringField, SubmitField
-from wtforms.validators import DataRequired, EqualTo, Length
+from wtforms.validators import DataRequired, EqualTo, Length, Regexp
+
+PASSWORD_COMPLEXITY_MESSAGE = (
+    "Password must include uppercase, lowercase, number, and special character."
+)
+PASSWORD_COMPLEXITY_RE = (
+    r"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)"
+    r"(?=.*[^A-Za-z0-9]).+$"
+)
+PASSWORD_VALIDATORS = [
+    DataRequired(),
+    Length(min=8),
+    Regexp(PASSWORD_COMPLEXITY_RE, message=PASSWORD_COMPLEXITY_MESSAGE),
+]
 
 
 class LoginForm(FlaskForm):  # type: ignore[misc]
@@ -45,7 +58,7 @@ class ChangePasswordForm(FlaskForm):  # type: ignore[misc]
     )
     new_password = PasswordField(
         "New Password",
-        validators=[DataRequired(), Length(min=8)],
+        validators=PASSWORD_VALIDATORS,
     )
     confirm_password = PasswordField(
         "Confirm New Password",
