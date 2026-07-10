@@ -1,584 +1,208 @@
-/**
- * Main application JavaScript.
- *
- * Handles file upload via AJAX, column selection changes, preflight
- * option persistence, and the Run Analysis submission.  All AJAX
- * requests include the CSRF token read from the page meta tag.
- */
-
+/** Forecast setup wizard, upload, preflight, and analysis submission. */
 (function () {
   "use strict";
 
-  /**
-   * Check LLM health and display a warning if the LLM is unreachable or not configured.
-   */
-  function checkLLMHealth() {
-    fetch("/api/llm-health")
-      .then(function (r) {
-        if (!r.ok) {
-          throw new Error("Network response was not ok");
-        }
-        return r.text();  // Read as text first to debug
-      })
-      .then(function (text) {
-        console.log("LLM Health Response:", text);  // Debug the raw response
-        try {
-          const data = JSON.parse(text);
-          if (!data.llm_configured || !data.llm_reachable) {
-            showLLMWarning(data.error || "LLM is not configured or unreachable.");
-          }
-        } catch (err) {
-          console.error("Failed to parse LLM health response:", err);
-          showLLMWarning("Failed to parse LLM health response: " + err);
-        }
-      })
-      .catch(function (err) {
-        console.error("Failed to check LLM connectivity:", err);
-        showLLMWarning("Failed to check LLM connectivity: " + err);
-      });
-  }
+  var wizardStep = 1;
+  var preflight = null;
+  var preflightOptions = {};
 
-  /**
-   * Display a warning message about LLM connectivity.
-   * @param {string} message - The warning message to display.
-   */
-  function showLLMWarning(message) {
-    var warningEl = document.querySelector(".llm-warning-msg");
-    if (!warningEl) {
-      warningEl = document.createElement("div");
-      warningEl.className = "alert alert-warning mt-2 py-1 px-2 small llm-warning-msg";
-      var sidebar = document.querySelector(".sidebar-inner");
-      if (sidebar) {
-        var hr = sidebar.querySelector(".sidebar-hr");
-        if (hr) {
-          sidebar.insertBefore(warningEl, hr.nextSibling);
-        } else {
-          sidebar.appendChild(warningEl);
-        }
-      }
-    }
-    warningEl.textContent = "⚠️ LLM: " + message;
-  }
-
-  // Check LLM health on page load
-  checkLLMHealth();
-
-  /** Read the CSRF token from the page meta tag. */
-  function getCsrfToken() {
-    const meta = document.querySelector('meta[name="csrf-token"]');
+  function csrfToken() {
+    var meta = document.querySelector('meta[name="csrf-token"]');
     return meta ? meta.getAttribute("content") : "";
   }
 
-  /**
-   * POST JSON to a URL with the CSRF token header.
-   *
-   * @param {string} url
-   * @param {object} body
-   * @returns {Promise<Response>}
-   */
   function postJSON(url, body) {
     return fetch(url, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-CSRFToken": getCsrfToken(),
-      },
-      body: JSON.stringify(body),
+      headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken() },
+      body: JSON.stringify(body)
     });
   }
 
-  /**
-   * POST a FormData object (for file uploads) with the CSRF token header.
-   *
-   * @param {string} url
-   * @param {FormData} formData
-   * @returns {Promise<Response>}
-   */
-  function postForm(url, formData) {
-    return fetch(url, {
-      method: "POST",
-      headers: { "X-CSRFToken": getCsrfToken() },
-      body: formData,
-    });
+  function escapeHtml(value) {
+    var node = document.createElement("div");
+    node.textContent = String(value || "");
+    return node.innerHTML;
   }
 
-  /** Display a short status message below the upload zone. */
+  function showStep(step) {
+    wizardStep = step;
+    document.querySelectorAll("[data-wizard-step]").forEach(function (panel) {
+      panel.classList.toggle("d-none", Number(panel.dataset.wizardStep) !== step);
+    });
+    document.querySelectorAll("#setup-stepper .stepper-step").forEach(function (item) {
+      var number = Number(item.dataset.step);
+      item.classList.toggle("active", number === step);
+      item.classList.toggle("completed", number < step);
+      if (number === step) item.setAttribute("aria-current", "step");
+      else item.removeAttribute("aria-current");
+    });
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
   function setUploadStatus(message, isError) {
-    const el = document.getElementById("upload-status");
-    if (!el) return;
-    el.textContent = message;
-    el.className = "mt-2 small " + (isError ? "text-danger" : "text-success");
+    var element = document.getElementById("upload-status");
+    if (!element) return;
+    element.textContent = message;
+    element.className = "mt-2 small " + (isError ? "text-danger" : "text-success");
   }
 
-  /**
-   * Update the column dropdowns after a successful upload.
-   *
-   * @param {object} info - Upload response from the backend.
-   */
+  function updateContinueState() {
+    var date = document.getElementById("sel-date");
+    var value = document.getElementById("sel-value");
+    var button = document.getElementById("btn-to-preflight");
+    if (button) button.disabled = !date || !value || date.disabled || !date.value || !value.value;
+  }
+
   function populateColumnSelectors(info) {
-    const dateSel = document.getElementById("sel-date");
-    const valueSel = document.getElementById("sel-value");
-    if (!dateSel || !valueSel) return;
-
-    [dateSel, valueSel].forEach(function (sel) {
-      sel.innerHTML = "";
-      sel.disabled = false;
+    var date = document.getElementById("sel-date");
+    var value = document.getElementById("sel-value");
+    if (!date || !value) return;
+    [date, value].forEach(function (select) {
+      select.innerHTML = "";
+      select.disabled = false;
     });
-
-    (info.columns || []).forEach(function (col) {
-      dateSel.options.add(new Option(col, col, false, col === info.detected_date_col));
-      valueSel.options.add(new Option(col, col, false, col === info.detected_value_col));
+    (info.columns || []).forEach(function (column) {
+      date.options.add(new Option(column, column, false, column === info.detected_date_col));
+      value.options.add(new Option(column, column, false, column === info.detected_value_col));
     });
-
-    const freqEl = document.querySelector("p.small.text-muted strong");
-    if (freqEl) freqEl.textContent = info.detected_frequency || "—";
-
-    enableControls();
+    var frequency = document.getElementById("detected-frequency");
+    if (frequency) frequency.textContent = info.detected_frequency || "—";
+    updateContinueState();
   }
 
-  /** Enable all forecast configuration controls that depend on an uploaded file. */
-  function enableControls() {
-    ["sel-model", "inp-horizon", "inp-prompt", "btn-run"].forEach(function (id) {
-      const el = document.getElementById(id);
-      if (el) el.disabled = false;
-    });
-    document.querySelectorAll(".stat-tuning-toggle").forEach(function (el) {
-      el.disabled = false;
+  function uploadFile(file) {
+    setUploadStatus("Uploading…", false);
+    var form = new FormData();
+    form.append("file", file);
+    fetch("/api/upload", { method: "POST", headers: { "X-CSRFToken": csrfToken() }, body: form })
+      .then(function (response) { return response.json(); })
+      .then(function (data) {
+        if (data.error) { setUploadStatus(data.error, true); return; }
+        preflight = null;
+        preflightOptions = {};
+        setUploadStatus("Uploaded — " + data.rows + " rows detected.", false);
+        populateColumnSelectors(data);
+      })
+      .catch(function (error) { setUploadStatus("Upload failed: " + error, true); });
+  }
+
+  function renderPreflight(result) {
+    var status = document.getElementById("preflight-status");
+    var decisions = document.getElementById("preflight-decisions");
+    if (!status || !decisions) return;
+    var messages = (result.issues || []).concat(result.warnings || [], result.errors || []);
+    var tone = result.status === "error" ? "danger" : result.status === "warning" ? "warning" : "success";
+    var title = result.status === "error" ? "Preflight issues found" : result.status === "warning" ? "Preflight cautions" : "Preflight ready";
+    status.innerHTML = '<div class="alert alert-' + tone + '"><strong>' + title + "</strong>" +
+      (result.detected_frequency ? '<p class="mb-0 mt-2 small">Detected frequency: <strong>' + escapeHtml(result.detected_frequency) + "</strong></p>" : "") +
+      (messages.length ? "<ul class=\"mb-0 mt-2\">" + messages.map(function (message) { return "<li>" + escapeHtml(message) + "</li>"; }).join("") + "</ul>" : "") + "</div>";
+    decisions.innerHTML = (result.decisions || []).map(function (decision) {
+      var current = preflightOptions[decision.key] || decision.default || "";
+      var options = (decision.options || []).map(function (option) {
+        return '<option value="' + escapeHtml(option) + '"' + (option === current ? " selected" : "") + ">" + escapeHtml(option) + "</option>";
+      }).join("");
+      return '<div class="card mb-3"><div class="card-body"><label class="form-label" for="pf-' + escapeHtml(decision.key) + '">' + escapeHtml(decision.label) + "</label>" +
+        '<p class="small text-muted">' + escapeHtml(decision.message) + '</p><select class="form-select preflight-choice" id="pf-' + escapeHtml(decision.key) + '" data-key="' + escapeHtml(decision.key) + '">' + options + "</select></div></div>";
+    }).join("");
+    updatePreflightContinue();
+  }
+
+  function currentPreflightChoices() {
+    var choices = {};
+    document.querySelectorAll(".preflight-choice").forEach(function (select) { choices[select.dataset.key] = select.value; });
+    return choices;
+  }
+
+  function updatePreflightContinue() {
+    var button = document.getElementById("btn-to-configure");
+    if (!button) return;
+    var choices = currentPreflightChoices();
+    var blocked = Object.keys(choices).some(function (key) { return choices[key] === "stop"; });
+    button.disabled = !preflight || preflight.status === "error" || blocked;
+  }
+
+  function triggerPreflight() {
+    var date = document.getElementById("sel-date");
+    var value = document.getElementById("sel-value");
+    if (!date || !value || !date.value || !value.value) return Promise.reject(new Error("Choose both columns first."));
+    return postJSON("/api/columns", { date_col: date.value, value_col: value.value })
+      .then(function (response) { return response.json(); })
+      .then(function (data) {
+        if (data.error) throw new Error(data.error);
+        preflight = data.preflight;
+        preflightOptions = {};
+        (preflight.decisions || []).forEach(function (decision) { preflightOptions[decision.key] = decision.default; });
+        renderPreflight(preflight);
+        return preflight;
+      });
+  }
+
+  function saveSetupState() {
+    var horizon = document.getElementById("inp-horizon");
+    var model = document.getElementById("sel-model");
+    var prompt = document.getElementById("inp-prompt");
+    return postJSON("/api/setup-state", {
+      forecast_horizon: horizon ? horizon.value : 12,
+      model_choice: model ? model.value : "Auto (AI selects)",
+      user_prompt: prompt ? prompt.value : ""
     });
   }
 
-  /**
-   * Collect advanced statistical choices for the current run only.
-   *
-   * @returns {object}
-   */
   function collectStatisticalTuning() {
-    const disabled = [];
-    document.querySelectorAll(".stat-tuning-toggle").forEach(function (el) {
-      if (!el.checked && el.dataset.statTest) {
-        disabled.push(el.dataset.statTest);
-      }
+    var disabled = [];
+    document.querySelectorAll(".stat-tuning-toggle").forEach(function (item) {
+      if (!item.checked && item.dataset.statTest) disabled.push(item.dataset.statTest);
     });
     return { disabled_tests: disabled };
   }
 
-  /** Reset advanced statistical tuning to the default all-enabled state. */
-  function resetStatisticalTuning() {
-    document.querySelectorAll(".stat-tuning-toggle").forEach(function (el) {
-      el.checked = true;
-    });
-  }
-
-  /**
-   * Handle a new file selection from the file input.
-   *
-   * @param {File} file
-   */
-  function uploadFile(file) {
-    setUploadStatus("Uploading...", false);
-    const formData = new FormData();
-    formData.append("file", file);
-
-    postForm("/api/upload", formData)
-      .then(function (r) { return r.json(); })
-      .then(function (data) {
-        if (data.error) {
-          setUploadStatus(data.error, true);
-        } else {
-          resetStatisticalTuning();
-          setUploadStatus(
-            "Uploaded — " + data.rows + " rows detected.",
-            false
-          );
-          populateColumnSelectors(data);
-          triggerPreflight();
-        }
-      })
-      .catch(function (err) {
-        setUploadStatus("Upload failed: " + err, true);
-      });
-  }
-
-  /** Call the preflight endpoint with the current column selection. */
-  function triggerPreflight() {
-    const dateSel = document.getElementById("sel-date");
-    const valueSel = document.getElementById("sel-value");
-    if (!dateSel || !valueSel || dateSel.disabled) return;
-
-    // Show a loading state for preflight
-    const statusEl = document.getElementById("preflight-status");
-    if(statusEl) {
-        statusEl.innerHTML = `<div class="alert alert-secondary">Running preflight checks...</div>`;
-    }
-
-    postJSON("/api/columns", {
-      date_col: dateSel.value,
-      value_col: valueSel.value,
-    })
-      .then(function (r) { return r.json(); })
-      .then(function (data) {
-        if (data.preflight) {
-          updatePreflightStatus(data.preflight);
-          checkPreflightBlocks(data.preflight);
-        } else if (data.error) {
-            updatePreflightStatus({ status: 'error', errors: [data.error]});
-        }
-      })
-      .catch(function (err) {
-        updatePreflightStatus({ status: 'error', errors: [`Connection error: ${err}`]});
-      });
-  }
-
-  /**
-   * Update the preflight status display on the setup page.
-   *
-   * @param {object} preflight
-   */
-  function updatePreflightStatus(preflight) {
-    const statusEl = document.getElementById("preflight-status");
-    if (!statusEl) return;
-
-    let alertClass = "alert-success";
-    let title = "Preflight Ready";
-    let messages = preflight.issues || [];
-
-    if (preflight.status === "warning") {
-        alertClass = "alert-warning";
-        title = "Preflight Cautions";
-        messages = messages.concat(preflight.warnings);
-    } else if (preflight.status === "error") {
-        alertClass = "alert-danger";
-        title = "Preflight Issues Found";
-        messages = messages.concat(preflight.errors);
-    }
-
-    let html = '<div class="alert ' + alertClass + '"><strong>' + title + '</strong>';
-    if (messages.length > 0) {
-        html += '<ul>';
-        messages.forEach(function (msg) { html += '<li>' + msg + '</li>'; });
-        html += '</ul>';
-    }
-
-    if (preflight.decisions && preflight.decisions.length > 0) {
-      html +=
-        '<button type="button" class="btn btn-outline-info btn-sm w-100 mt-2" ' +
-        'data-bs-toggle="modal" data-bs-target="#preflightModal">' +
-        "Review Preflight Options</button>";
-      populatePreflightModal(preflight);
-    }
-    html += '</div>';
-    statusEl.innerHTML = html;
-  }
-
-  /**
-   * Populate the preflight modal body from live preflight data returned by the
-   * server.
-   *
-   * @param {object} preflight  Preflight result object from /api/columns.
-   */
-  function populatePreflightModal(preflight) {
-    const body = document.getElementById("preflight-modal-body");
-    if (!body) return;
-
-    let html = "";
-
-    if (preflight.detected_frequency) {
-      html += '<p class="text-muted small">Detected frequency: <strong>' +
-        preflight.detected_frequency + "</strong></p>";
-    }
-
-    (preflight.issues || []).forEach(function (msg) {
-      html += '<div class="alert alert-info py-1 px-2 small">' + msg + "</div>";
-    });
-    (preflight.warnings || []).forEach(function (msg) {
-      html += '<div class="alert alert-warning py-1 px-2 small">' + msg + "</div>";
-    });
-
-    const saved = App._preflightOptions || {};
-    (preflight.decisions || []).forEach(function (d) {
-      const current = saved[d.key] || d.default || "";
-      let opts = "";
-      (d.options || []).forEach(function (opt) {
-        const sel = opt === current ? " selected" : "";
-        opts += '<option value="' + opt + '"' + sel + '>' +
-          opt.charAt(0).toUpperCase() + opt.slice(1) + "</option>";
-      });
-      html +=
-        '<div class="mb-3">' +
-        '<label class="form-label" for="pf-' + d.key + '">' + d.label + "</label>" +
-        '<p class="text-muted small">' + d.message + "</p>" +
-        '<select class="form-select form-select-sm preflight-choice" id="pf-' +
-        d.key + '" data-key="' + d.key + '">' +
-        opts +
-        "</select></div>";
-    });
-
-    body.innerHTML = html;
-  }
-
-  /**
-   * Disable the Run Analysis button when a preflight decision blocks the run.
-   *
-   * @param {object} preflight
-   */
-  function checkPreflightBlocks(preflight) {
-    const runBtn = document.getElementById("btn-run");
-    if (!runBtn) return;
-    const opts = App._preflightOptions || {};
-    const blocks =
-      preflight.decisions &&
-      preflight.decisions.some(function (d) {
-        return (opts[d.key] || d.default) === "stop";
-      });
-    runBtn.disabled = blocks;
-  }
-
-  /** Submit the analysis job via AJAX and start the polling loop. */
-  function runAnalysis() {
-    const dateSel = document.getElementById("sel-date");
-    const valueSel = document.getElementById("sel-value");
-    const horizonEl = document.getElementById("inp-horizon");
-    const modelEl = document.getElementById("sel-model");
-    const promptEl = document.getElementById("inp-prompt");
-    const runBtn = document.getElementById("btn-run");
-
-    if (!dateSel || !valueSel) return;
-
-    const preflightOptions = Object.assign(
-      {},
-      App._preflightOptions || {},
-      { statistical_tuning: collectStatisticalTuning() }
-    );
-
-    const payload = {
-      date_col: dateSel.value,
-      value_col: valueSel.value,
-      forecast_horizon: horizonEl ? parseInt(horizonEl.value, 10) : 12,
-      model_choice: modelEl ? modelEl.value : "Auto (AI selects)",
-      user_prompt: promptEl ? promptEl.value : "",
-      preflight_options: preflightOptions,
-    };
-
-    if (runBtn) {
-      runBtn.disabled = true;
-      runBtn.textContent = "Running...";
-    }
-
-    const progressContainer = document.getElementById("progress-area-container");
-    if (progressContainer) progressContainer.style.display = "block";
-    const sidebarProgress = document.getElementById("progress-area");
-    if(sidebarProgress) sidebarProgress.classList.remove("d-none");
-
-
-    postJSON("/api/analyze", payload)
-      .then(function (r) {
-        if (r.status === 202) {
-          Polling.start();
-        } else {
-          return r.json().then(function (data) {
-            showRunError(data.error || "Failed to submit job.");
-          });
-        }
-      })
-      .catch(function (err) {
-        showRunError("Connection error: " + err);
-      });
-  }
-
-  /**
-   * Display an inline error from the analysis submission.
-   *
-   * @param {string} message
-   */
   function showRunError(message) {
-    const runBtn = document.getElementById("btn-run");
-    if (runBtn) {
-      runBtn.disabled = false;
-      runBtn.textContent = "Run Analysis";
-    }
-
-    const progressContainer = document.getElementById("progress-area-container");
-    if (progressContainer) progressContainer.style.display = "none";
-    const sidebarProgress = document.getElementById("progress-area");
-    if(sidebarProgress) sidebarProgress.classList.add("d-none");
-
-
-    let errEl = document.getElementById("run-error-message");
-    if (!errEl) {
-      errEl = document.createElement("div");
-      errEl.id = "run-error-message";
-      errEl.className = "alert alert-danger mt-3";
-      const container = document.querySelector("#progress-area-container");
-      if(container) container.insertAdjacentElement('beforebegin', errEl);
-    }
-    errEl.textContent = message;
-    errEl.style.display = "block";
+    var element = document.getElementById("run-error-message");
+    var button = document.getElementById("btn-run");
+    if (button) { button.disabled = false; button.textContent = "Run forecast"; }
+    if (element) { element.textContent = message; element.className = "alert alert-danger mt-3"; element.style.display = "block"; }
   }
 
-  /**
-   * Collect preflight decision choices from the modal selects and POST them.
-   */
-  function savePreflightChoices() {
-    const selects = document.querySelectorAll(".preflight-choice");
-    const choices = {};
-    selects.forEach(function (sel) {
-      choices[sel.dataset.key] = sel.value;
-    });
-
-    postJSON("/api/preflight-choices", { choices: choices })
-      .then(function (r) { return r.json(); })
-      .then(function () {
-        // Store the choices for later use
-        App._preflightOptions = choices;
-
-        // Hide the modal (do NOT dispose — it needs to be reopenable)
-        const modalEl = document.getElementById("preflightModal");
-        const modal = bootstrap.Modal.getInstance(modalEl);
-        if (modal) modal.hide();
-
-        // Clean up any leftover backdrop that would block clicks
-        cleanupModalBackdrop();
-
-        // Disable Run if any choice is "stop"
-        const blocks = Object.values(choices).some(function (v) {
-          return v === "stop";
-        });
-        const runBtn = document.getElementById("btn-run");
-        if (runBtn) runBtn.disabled = blocks;
-
-        // Refresh preflight status to reflect new choices
-        triggerPreflight();
+  function runAnalysis() {
+    var date = document.getElementById("sel-date");
+    var value = document.getElementById("sel-value");
+    var horizon = document.getElementById("inp-horizon");
+    var model = document.getElementById("sel-model");
+    var prompt = document.getElementById("inp-prompt");
+    var button = document.getElementById("btn-run");
+    if (!date || !value) return;
+    if (button) { button.disabled = true; button.textContent = "Starting forecast…"; }
+    var options = Object.assign({}, preflightOptions, currentPreflightChoices(), { statistical_tuning: collectStatisticalTuning() });
+    postJSON("/api/analyze", { date_col: date.value, value_col: value.value, forecast_horizon: Number(horizon.value), model_choice: model.value, user_prompt: prompt.value, preflight_options: options })
+      .then(function (response) {
+        if (response.status === 202) { window.location.assign("/forecast-progress"); return; }
+        return response.json().then(function (data) { throw new Error(data.error || "Failed to submit forecast."); });
       })
-      .catch(function (err) {
-        console.error("Failed to save preflight choices:", err);
-      });
-  }
-
-  /** Wire up the forecast horizon range slider display. */
-  function initHorizonSlider() {
-    const slider = document.getElementById("inp-horizon");
-    const label = document.getElementById("horizon-val");
-    if (!slider || !label) return;
-    slider.addEventListener("input", function () {
-      label.textContent = slider.value;
-    });
-  }
-
-  /** Clean up leftover Bootstrap modal backdrops that block page interaction. */
-  function cleanupModalBackdrop() {
-    var backdrops = document.querySelectorAll(".modal-backdrop");
-    backdrops.forEach(function (b) { b.remove(); });
-    document.body.classList.remove("modal-open");
-    document.body.style.removeProperty("overflow");
-    document.body.style.removeProperty("padding-right");
-  }
-
-  /** Wire up the file input change event. */
-  function initFileInput() {
-    const input = document.getElementById("file-input");
-    if (!input) return;
-    input.addEventListener("change", function () {
-      if (input.files && input.files[0]) {
-        uploadFile(input.files[0]);
-      }
-    });
-  }
-
-  /** Wire up column selector change events to trigger preflight. */
-  function initColumnSelectors() {
-    ["sel-date", "sel-value"].forEach(function (id) {
-      const el = document.getElementById(id);
-      if (el) {
-        el.addEventListener("change", function () {
-          triggerPreflight();
-        });
-      }
-    });
-  }
-
-  /** Wire up the Run Analysis button. */
-  function initRunButton() {
-    const runBtn = document.getElementById("btn-run");
-    if (runBtn) {
-      runBtn.addEventListener("click", function () {
-        runAnalysis();
-      });
-    }
-  }
-
-  /**
-   * Advance the setup stepper to a given step number.
-   *
-   * Marks all steps before ``stepNum`` as completed and the current step
-   * as active.  Steps after ``stepNum`` are reset to their default state.
-   *
-   * @param {number} stepNum  The step to activate (1-based).
-   */
-  function advanceStepper(stepNum) {
-    var steps = document.querySelectorAll("#setup-stepper .stepper-step");
-    steps.forEach(function (step) {
-      var num = parseInt(step.dataset.step, 10);
-      step.classList.remove("active", "completed");
-      if (num < stepNum) {
-        step.classList.add("completed");
-      } else if (num === stepNum) {
-        step.classList.add("active");
-      }
-    });
-  }
-
-  /** Wire up stepper advancement based on upload/column/preflight events. */
-  function initStepper() {
-    var stepper = document.getElementById("setup-stepper");
-    if (!stepper) return;
-
-    // Step 1 → 2: when columns are populated (upload complete)
-    var origPopulate = populateColumnSelectors;
-    populateColumnSelectors = function (info) {
-      origPopulate(info);
-      advanceStepper(2);
-    };
-
-    // Step 2 → 3: when preflight runs
-    var origPreflight = triggerPreflight;
-    triggerPreflight = function () {
-      origPreflight();
-      advanceStepper(3);
-    };
-
-    // Step 3 → 4: when controls are enabled (after preflight)
-    var origEnable = enableControls;
-    enableControls = function () {
-      origEnable();
-      advanceStepper(4);
-    };
+      .catch(function (error) { showRunError(error.message || String(error)); });
   }
 
   function init() {
-    // Only run initializers if the relevant elements are on the page
-    if (document.getElementById('inp-horizon')) initHorizonSlider();
-    if (document.getElementById('file-input')) initFileInput();
-    if (document.getElementById('sel-date')) initColumnSelectors();
-    if (document.getElementById('btn-run')) initRunButton();
-    if (document.getElementById('setup-stepper')) initStepper();
-
-    // Clean up modal backdrop whenever the preflight modal is hidden
-    var modalEl = document.getElementById("preflightModal");
-    if (modalEl) {
-      modalEl.addEventListener("hidden.bs.modal", cleanupModalBackdrop);
-    }
+    var input = document.getElementById("file-input");
+    if (input) input.addEventListener("change", function () { if (input.files && input.files[0]) uploadFile(input.files[0]); });
+    ["sel-date", "sel-value"].forEach(function (id) { var select = document.getElementById(id); if (select) select.addEventListener("change", updateContinueState); });
+    document.getElementById("btn-to-preflight").addEventListener("click", function () {
+      this.disabled = true; this.textContent = "Running checks…";
+      triggerPreflight().then(function () { showStep(2); }).catch(function (error) { alert(error.message || String(error)); }).finally(function () { var button = document.getElementById("btn-to-preflight"); button.textContent = "Continue to preflight"; updateContinueState(); });
+    });
+    document.getElementById("btn-to-configure").addEventListener("click", function () {
+      preflightOptions = currentPreflightChoices();
+      postJSON("/api/preflight-choices", { choices: preflightOptions }).then(function () { showStep(3); });
+    });
+    document.querySelectorAll("[data-wizard-back]").forEach(function (button) { button.addEventListener("click", function () { showStep(Number(button.dataset.wizardBack)); }); });
+    document.addEventListener("change", function (event) { if (event.target.classList.contains("preflight-choice")) updatePreflightContinue(); });
+    var horizon = document.getElementById("inp-horizon");
+    if (horizon) horizon.addEventListener("input", function () { document.getElementById("horizon-val").textContent = horizon.value; });
+    ["inp-prompt", "inp-horizon", "sel-model"].forEach(function (id) { var field = document.getElementById(id); if (field) field.addEventListener(id === "inp-prompt" ? "blur" : "change", function () { saveSetupState(); }); });
+    document.getElementById("btn-run").addEventListener("click", runAnalysis);
+    if (window.forecastUploadInfo) { populateColumnSelectors(window.forecastUploadInfo); setUploadStatus(window.forecastUploadInfo.rows + " rows ready.", false); }
   }
 
   document.addEventListener("DOMContentLoaded", init);
-
-  window.App = {
-    runAnalysis: runAnalysis,
-    savePreflightChoices: savePreflightChoices,
-    triggerPreflight: triggerPreflight,
-    populatePreflightModal: populatePreflightModal,
-    populateColumnSelectors: populateColumnSelectors,
-    enableControls: enableControls,
-    updateUploadStatus: setUploadStatus, // Renamed for clarity in template
-    _preflightOptions: {},
-  };
+  window.App = { triggerPreflight: triggerPreflight, populateColumnSelectors: populateColumnSelectors };
 }());

@@ -290,7 +290,27 @@ def forecast_setup() -> str:
         Rendered HTML for the forecast setup page.
     """
     upload_info: dict[str, Any] = session.get("upload_info") or {}
-    return render_template("main/forecast_setup.html", upload_info=upload_info)
+    setup_state = {
+        "forecast_horizon": int(session.get("forecast_horizon") or 12),
+        "model_choice": str(session.get("model_choice") or "Auto (AI selects)"),
+        "user_prompt": str(session.get("user_prompt") or ""),
+    }
+    return render_template(
+        "main/forecast_setup.html",
+        upload_info=upload_info,
+        setup_state=setup_state,
+        setup_error=session.pop("analysis_error", None),
+    )
+
+
+@main_bp.route("/forecast-progress")
+@_login_required
+def forecast_progress() -> Response | str:
+    """Render the dedicated progress screen for an active forecast job."""
+    if not session.get("job_running") or not session.get("job_id"):
+        flash("There is no forecast currently running.", "warning")
+        return redirect(url_for(_FORECAST_SETUP_ENDPOINT))
+    return render_template("main/forecast_progress.html")
 
 
 @main_bp.route("/started")
@@ -751,6 +771,24 @@ def api_preflight_choices() -> Response:
     data: dict[str, Any] = request.get_json(silent=True) or {}
     choices: dict[str, Any] = data.get("choices", {})
     session["preflight_options"] = choices
+    return jsonify({"ok": True})
+
+
+@main_bp.route("/api/setup-state", methods=["POST"])
+@_login_required
+def api_setup_state() -> Response:
+    """Persist non-sensitive wizard configuration while the user works."""
+    data: dict[str, Any] = request.get_json(silent=True) or {}
+    horizon = data.get("forecast_horizon")
+    if horizon is not None:
+        try:
+            session["forecast_horizon"] = max(1, min(100, int(horizon)))
+        except (TypeError, ValueError):
+            return make_response(jsonify({"error": "Invalid forecast horizon"}), 400)
+    if "model_choice" in data:
+        session["model_choice"] = str(data["model_choice"])
+    if "user_prompt" in data:
+        session["user_prompt"] = str(data["user_prompt"]).strip()
     return jsonify({"ok": True})
 
 

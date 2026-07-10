@@ -61,6 +61,13 @@
       runBtn.textContent = "Run Analysis";
     }
 
+    // The dedicated progress screen has no controls to retry from. The
+    // server has retained the setup state, so return the user there.
+    if (window.location.pathname === "/forecast-progress") {
+      window.location.assign("/forecast-setup");
+      return;
+    }
+
     var errEl = document.querySelector(".polling-error-msg");
     if (!errEl) {
       errEl = document.createElement("div");
