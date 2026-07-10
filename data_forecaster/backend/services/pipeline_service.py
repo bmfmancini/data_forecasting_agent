@@ -278,7 +278,7 @@ def run_pipeline(
             stat_result,
             forecast_horizon,
             freq,
-            all_metrics=all_metrics,  # Pass existing metrics
+            existing_metrics=all_metrics,  # Pass existing metrics
         )
         # Re-run statistical review on the new outputs
         _progress(87, "Re-running statistical review…")
