@@ -164,6 +164,17 @@ def delete_report_for_user(report_id: int, user_id: int) -> bool:
     return cursor.rowcount == 1
 
 
+def rename_report_for_user(report_id: int, user_id: int, title: str) -> bool:
+    """Rename one report only when it belongs to the requesting user."""
+    connection = get_db()
+    cursor = connection.execute(
+        "UPDATE forecast_reports SET title = ? WHERE id = ? AND user_id = ?",
+        (title, report_id, user_id),
+    )
+    connection.commit()
+    return cursor.rowcount == 1
+
+
 def list_report_owners() -> list[dict[str, Any]]:
     """List application users who currently own at least one report."""
     rows = query_db(

@@ -42,6 +42,7 @@ from services.report_service import (
     delete_report_for_user,
     get_report_for_user,
     list_reports_for_user,
+    rename_report_for_user,
     report_usage_for_user,
     save_report,
 )
@@ -573,6 +574,20 @@ def saved_report_delete(report_id: int) -> Response:
     if not delete_report_for_user(report_id, int(current_user.id)):
         abort(404)
     flash("Report deleted.", "success")
+    return redirect(url_for("main.reports"))
+
+
+@main_bp.route("/reports/<int:report_id>/rename", methods=["POST"])
+@_login_required
+def saved_report_rename(report_id: int) -> Response:
+    """Rename one owner-scoped saved report."""
+    title = str(request.form.get("title", "")).strip()
+    if not title or len(title) > 200:
+        flash("Report names must be between 1 and 200 characters.", "danger")
+        return redirect(url_for("main.reports"))
+    if not rename_report_for_user(report_id, int(current_user.id), title):
+        abort(404)
+    flash("Report renamed.", "success")
     return redirect(url_for("main.reports"))
 
 

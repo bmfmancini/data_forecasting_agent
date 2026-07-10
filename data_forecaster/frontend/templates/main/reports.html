@@ -18,7 +18,19 @@
                 <tbody>
                     {% for report in reports %}
                     <tr>
-                        <td><div class="fw-semibold">{{ report.title }}</div><small class="text-secondary">{{ report.source_filename }}</small></td>
+                        <td>
+                            <div class="d-flex gap-2 align-items-center" id="report-title-display-{{ report.id }}">
+                                <span class="fw-semibold">{{ report.title }}</span>
+                                <button class="btn btn-outline-secondary btn-sm report-rename-toggle" data-report-id="{{ report.id }}" type="button">Rename</button>
+                            </div>
+                            <form action="{{ url_for('main.saved_report_rename', report_id=report.id) }}" class="d-none gap-2 align-items-center" id="report-title-edit-{{ report.id }}" method="post">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <input aria-label="Report name" class="form-control form-control-sm" maxlength="200" name="title" required type="text" value="{{ report.title }}">
+                                <button class="btn btn-primary btn-sm" type="submit">Save</button>
+                                <button class="btn btn-outline-secondary btn-sm report-rename-cancel" data-report-id="{{ report.id }}" type="button">Cancel</button>
+                            </form>
+                            <small class="text-secondary">{{ report.source_filename }}</small>
+                        </td>
                         <td>{{ report.model_used or '—' }}</td>
                         <td>{{ report.forecast_horizon or '—' }}</td>
                         <td class="text-secondary">{{ report.created_at }}</td>
@@ -43,4 +55,35 @@
     <a href="{{ url_for('main.forecast_setup') }}" class="btn btn-primary">Run a Forecast</a>
 </div></div>
 {% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+(function() {
+    function setEditing(reportId, editing) {
+        var display = document.getElementById("report-title-display-" + reportId);
+        var edit = document.getElementById("report-title-edit-" + reportId);
+        if (!display || !edit) return;
+        display.classList.toggle("d-none", editing);
+        edit.classList.toggle("d-none", !editing);
+        if (editing) {
+            var input = edit.querySelector("input[name='title']");
+            if (input) {
+                input.focus();
+                input.select();
+            }
+        }
+    }
+
+    document.querySelectorAll(".report-rename-toggle").forEach(function(button) {
+        button.addEventListener("click", function() {
+            setEditing(button.dataset.reportId, true);
+        });
+    });
+    document.querySelectorAll(".report-rename-cancel").forEach(function(button) {
+        button.addEventListener("click", function() {
+            setEditing(button.dataset.reportId, false);
+        });
+    });
+}());
+</script>
 {% endblock %}
