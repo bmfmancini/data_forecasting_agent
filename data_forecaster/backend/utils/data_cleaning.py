@@ -321,7 +321,7 @@ def treat_outliers(
 
 def resolve_duplicates(
     series: pd.Series,
-    strategy: Literal["keep-first", "mean", "latest"],
+    strategy: Literal["keep-first", "mean", "sum", "latest"],
 ) -> pd.Series:
     """Resolve duplicate timestamps.
 
@@ -340,6 +340,8 @@ def resolve_duplicates(
         return series[~series.index.duplicated(keep="last")]
     if strategy == "mean":
         return series.groupby(level=0).mean()
+    if strategy == "sum":
+        return series.groupby(level=0).sum()
     raise ValueError(f"Unsupported duplicate strategy: {strategy}")
 
 
@@ -365,10 +367,18 @@ def smooth_series(
         adjust = params.get("adjust", False)
         return series.ewm(span=span, adjust=adjust).mean()
     if method == "savgol":
-        window = params.get("window", 11)
+        if len(series) < 3:
+            logger.warning("Series too short for Savitzky-Golay smoothing; skipping.")
+            return series
+        window = min(params.get("window", 11), len(series))
         polyorder = params.get("polyorder", 2)
         if window % 2 == 0:
             window += 1
+        if window > len(series):
+            window -= 2
+        if window <= polyorder:
+            logger.warning("Series too short for Savitzky-Golay smoothing; skipping.")
+            return series
         filtered = savgol_filter(
             series.values, window_length=window, polyorder=polyorder
         )

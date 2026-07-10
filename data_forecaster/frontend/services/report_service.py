@@ -49,6 +49,7 @@ def save_report(
     result: dict[str, Any],
     source_filename: str,
     forecast_horizon: int | None,
+    custom_settings: list[dict[str, str]] | None = None,
 ) -> int:
     """Atomically save a final report if its owner remains below the cap.
 
@@ -82,8 +83,8 @@ def save_report(
             INSERT INTO forecast_reports (
                 user_id, title, source_filename, model_used, forecast_horizon,
                 report_markdown, executive_report_json, visual_assets_json,
-                llm_fallback
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                custom_settings_json, llm_fallback
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 user_id,
@@ -94,6 +95,7 @@ def save_report(
                 str(result.get("report") or "Report not available."),
                 json.dumps(executive_report) if executive_report is not None else None,
                 json.dumps(visual_assets),
+                json.dumps(custom_settings or []),
                 int(bool(result.get("llm_fallback", False))),
             ),
         )
@@ -110,7 +112,7 @@ def get_report_for_user(report_id: int, user_id: int) -> dict[str, Any] | None:
         """
         SELECT id, title, source_filename, model_used, forecast_horizon,
                report_markdown, executive_report_json, visual_assets_json,
-               llm_fallback, created_at
+               custom_settings_json, llm_fallback, created_at
         FROM forecast_reports WHERE id = ? AND user_id = ?
         """,
         (report_id, user_id),
@@ -128,6 +130,11 @@ def _decode_report(row: dict[str, Any]) -> dict[str, Any]:
         else None
     )
     report.update(json.loads(report.pop("visual_assets_json")))
+    report["custom_settings"] = (
+        json.loads(report.pop("custom_settings_json"))
+        if report.get("custom_settings_json")
+        else []
+    )
     report["report"] = report.pop("report_markdown")
     return report
 

@@ -1171,6 +1171,17 @@ textarea.form-control {
   padding-top: 1.25rem;
 }
 
+.advanced-statistical-button {
+  margin-top: 10px;
+}
+
+.advanced-options-box {
+  border: 1px solid var(--border-color);
+  border-radius: 0.5rem;
+  margin-top: 1.5rem;
+  padding: 1rem;
+}
+
 .forecast-progress-page {
   align-items: center;
   display: flex;

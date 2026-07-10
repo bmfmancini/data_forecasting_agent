@@ -99,6 +99,14 @@ def init_db() -> None:
     with open(schema_path, encoding="utf-8") as f:
         db.executescript(f.read())
 
+    # ``CREATE TABLE IF NOT EXISTS`` does not add columns to installations
+    # created by earlier releases, so apply this additive migration here.
+    report_columns = {
+        row["name"] for row in db.execute("PRAGMA table_info(forecast_reports)")
+    }
+    if "custom_settings_json" not in report_columns:
+        db.execute("ALTER TABLE forecast_reports ADD COLUMN custom_settings_json TEXT")
+
     db.execute("INSERT OR IGNORE INTO roles (id, name) VALUES (1, 'admin')")
     db.execute("INSERT OR IGNORE INTO roles (id, name) VALUES (2, 'user')")
 

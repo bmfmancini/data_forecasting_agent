@@ -234,6 +234,7 @@ def _render_report(
     result: dict[str, Any],
     source_filename: str,
     export_url: str,
+    custom_settings: list[dict[str, str]] | None = None,
 ) -> str:
     """Render a current or persisted final report using shared presentation."""
     executive_report: dict[str, Any] | None = result.get("executive_report")
@@ -252,7 +253,62 @@ def _render_report(
         er=executive_report,
         llm_fallback=bool(result.get("llm_fallback", False)),
         export_url=export_url,
+        custom_settings=custom_settings or [],
     )
+
+
+_SETTING_LABELS: dict[str, str] = {
+    "frequency": "Frequency alignment",
+    "duplicate_strategy": "Duplicate timestamps",
+    "missing_strategy": "Missing values",
+    "outlier_strategy": "Outlier treatment",
+    "smoothing": "Smoothing",
+    "data_domain": "Data domain",
+}
+
+_DEFAULT_SETTING_VALUES = {
+    "",
+    "Let AI Decide",
+    "Skip / Let AI Guess",
+    "None",
+    "none",
+    "continue",
+}
+
+
+def _custom_settings_from_session() -> list[dict[str, str]]:
+    """Return explicit setup choices formatted for the final report."""
+    settings: list[dict[str, str]] = []
+    horizon = int(session.get("forecast_horizon") or 12)
+    settings.append({"label": "Forecast horizon", "value": f"{horizon} periods"})
+
+    model = str(session.get("model_choice") or "Auto (AI selects)")
+    if model != "Auto (AI selects)":
+        settings.append({"label": "Requested model", "value": model})
+
+    context = str(session.get("user_prompt") or "").strip()
+    if context:
+        settings.append({"label": "Data context", "value": context})
+
+    options: dict[str, Any] = session.get("preflight_options") or {}
+    for key, label in _SETTING_LABELS.items():
+        value = str(options.get(key) or "")
+        if value not in _DEFAULT_SETTING_VALUES:
+            settings.append({"label": label, "value": value})
+
+    disabled_tests = (options.get("statistical_tuning") or {}).get(
+        "disabled_tests", []
+    )
+    if isinstance(disabled_tests, list) and disabled_tests:
+        settings.append(
+            {
+                "label": "Disabled statistical checks",
+                "value": ", ".join(
+                    str(test).replace("_", " ") for test in disabled_tests
+                ),
+            }
+        )
+    return settings
 
 
 @main_bp.route("/")
@@ -513,6 +569,7 @@ def report() -> str:
         result,
         str(upload_info.get("filename", "data")),
         url_for("main.report_export"),
+        _custom_settings_from_session(),
     )
 
 
@@ -574,6 +631,7 @@ def saved_report(report_id: int) -> str:
         stored,
         str(stored["source_filename"]),
         url_for("main.saved_report_export", report_id=report_id),
+        stored.get("custom_settings") or [],
     )
 
 
@@ -811,6 +869,7 @@ def _build_analyze_payload(data: dict[str, Any]) -> dict[str, Any]:
     session["forecast_horizon"] = horizon
     session["model_choice"] = model_choice
     session["user_prompt"] = user_prompt
+    session["preflight_options"] = preflight_options
 
     forced_model: str | None = (
         None if model_choice == "Auto (AI selects)" else model_choice
@@ -888,6 +947,7 @@ def _handle_done_job(
             result=result_data,
             source_filename=str(upload_info.get("filename", "data")),
             forecast_horizon=int(session.get("forecast_horizon") or 12),
+            custom_settings=_custom_settings_from_session(),
         )
     except ReportLimitError:
         flash(

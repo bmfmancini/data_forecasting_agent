@@ -157,6 +157,25 @@
     return { disabled_tests: disabled };
   }
 
+  /** Return only explicit cleaning overrides, preserving preflight choices otherwise. */
+  function collectCleaningOptions() {
+    var fields = {
+      "clean-frequency": "frequency",
+      "clean-duplicates": "duplicate_strategy",
+      "clean-missing": "missing_strategy",
+      "clean-outliers": "outlier_strategy",
+      "clean-smoothing": "smoothing"
+    };
+    var options = {};
+    Object.keys(fields).forEach(function (id) {
+      var field = document.getElementById(id);
+      if (!field) return;
+      // "Let AI Decide" deliberately defers to the preflight selection.
+      if (field.value !== "Let AI Decide") options[fields[id]] = field.value;
+    });
+    return options;
+  }
+
   function showRunError(message) {
     var element = document.getElementById("run-error-message");
     var button = document.getElementById("btn-run");
@@ -173,7 +192,10 @@
     var button = document.getElementById("btn-run");
     if (!date || !value) return;
     if (button) { button.disabled = true; button.textContent = "Starting forecast…"; }
-    var options = Object.assign({}, preflightOptions, currentPreflightChoices(), { statistical_tuning: collectStatisticalTuning() });
+    var options = Object.assign(
+      {}, preflightOptions, currentPreflightChoices(), collectCleaningOptions(),
+      { statistical_tuning: collectStatisticalTuning() }
+    );
     postJSON("/api/analyze", { date_col: date.value, value_col: value.value, forecast_horizon: Number(horizon.value), model_choice: model.value, user_prompt: prompt.value, preflight_options: options })
       .then(function (response) {
         if (response.status === 202) { window.location.assign("/forecast-progress"); return; }
