@@ -18,6 +18,7 @@
     var bar = document.getElementById(elementId);
     if (bar) {
       bar.style.width = progress + "%";
+      bar.setAttribute("aria-valuenow", progress);
       bar.classList.add("active-polling");
       if (elementId === "progress-bar-main") bar.textContent = progress + "%";
     }
