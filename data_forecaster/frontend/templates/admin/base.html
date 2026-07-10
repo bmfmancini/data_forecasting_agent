@@ -20,6 +20,7 @@
                 <li class="nav-item"><a class="nav-link {{ 'active' if request.endpoint == 'admin.api_config' }}" href="{{ url_for('admin.api_config') }}">API Config</a></li>
                 <li class="nav-item"><a class="nav-link {{ 'active' if request.endpoint == 'admin.api_keys' }}" href="{{ url_for('admin.api_keys') }}">API Keys</a></li>
                 <li class="nav-item"><a class="nav-link {{ 'active' if request.endpoint == 'admin.job_queue' }}" href="{{ url_for('admin.job_queue') }}">Job Queue</a></li>
+                <li class="nav-item"><a class="nav-link {{ 'active' if request.endpoint in ('admin.report_management', 'admin.user_reports') }}" href="{{ url_for('admin.report_management') }}">Report Management</a></li>
                 <li class="nav-item"><a class="nav-link {{ 'active' if request.endpoint == 'admin.settings' }}" href="{{ url_for('admin.settings') }}">Settings</a></li>
                 <li class="nav-item"><a class="nav-link" href="{{ url_for('main.index') }}">Back to App</a></li>
             </ul>

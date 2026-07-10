@@ -168,6 +168,10 @@ def init_db() -> None:
         INSERT OR IGNORE INTO app_config (key, value)
         VALUES ('app_name', 'Time Series Data Forecaster Agent')
         """)
+    db.execute("""
+        INSERT OR IGNORE INTO app_config (key, value)
+        VALUES ('max_reports_per_user', '10')
+        """)
 
     db.commit()
 

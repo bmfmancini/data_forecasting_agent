@@ -1,0 +1,17 @@
+{% extends "admin/base.html" %}
+{% block title %}Report Management — Admin{% endblock %}
+{% block header %}Report Management{% endblock %}
+{% block content %}
+<h4 class="mb-3">Users with Stored Reports</h4>
+{% if owners %}
+<div class="card"><div class="card-body"><div class="table-responsive">
+    <table class="table table-dark table-hover align-middle mb-0">
+        <thead><tr><th>Username</th><th>Stored reports</th><th class="text-end">Action</th></tr></thead>
+        <tbody>{% for owner in owners %}<tr>
+            <td class="fw-semibold">{{ owner.username }}</td><td>{{ owner.report_count }}</td>
+            <td class="text-end"><a class="btn btn-outline-light btn-sm" href="{{ url_for('admin.user_reports', user_id=owner.id) }}">View Reports</a></td>
+        </tr>{% endfor %}</tbody>
+    </table>
+</div></div></div>
+{% else %}<div class="alert alert-info">No users currently have stored reports.</div>{% endif %}
+{% endblock %}

@@ -19,6 +19,7 @@ import bleach
 import markdown as md_lib
 import pandas
 from flask import (
+    abort,
     current_app,
     flash,
     jsonify,
@@ -36,6 +37,14 @@ from werkzeug.wrappers import Response
 from blueprints.decorators import password_change_required
 from blueprints.main import main_bp
 from services.api_client import get_api_client
+from services.report_service import (
+    ReportLimitError,
+    delete_report_for_user,
+    get_report_for_user,
+    list_reports_for_user,
+    report_usage_for_user,
+    save_report,
+)
 
 _F = TypeVar("_F", bound=Callable[..., Any])
 
@@ -218,6 +227,31 @@ def _remove_web_dashboard_section(report_text: str) -> str:
         if not section.lstrip().startswith("## 1. Executive Dashboard")
     ]
     return "\n\n---\n\n".join(filtered)
+
+
+def _render_report(
+    result: dict[str, Any],
+    source_filename: str,
+    export_url: str,
+) -> str:
+    """Render a current or persisted final report using shared presentation."""
+    executive_report: dict[str, Any] | None = result.get("executive_report")
+    report_md: str = result.get("report", "Report not available.")
+    web_report_md = _remove_web_dashboard_section(report_md)
+    base_name = (
+        source_filename.rsplit(".", 1)[0]
+        if "." in source_filename
+        else source_filename
+    )
+    pdf_filename = f"forecast_report_{base_name or 'data'}.pdf"
+    return render_template(
+        "main/report.html",
+        segments=_parse_report_segments(web_report_md, result),
+        pdf_filename=pdf_filename,
+        er=executive_report,
+        llm_fallback=bool(result.get("llm_fallback", False)),
+        export_url=export_url,
+    )
 
 
 @main_bp.route("/")
@@ -454,20 +488,10 @@ def report() -> str:
     """
     result: dict[str, Any] = session.get("analysis_result") or {}
     upload_info: dict[str, Any] = session.get("upload_info") or {}
-    executive_report: dict[str, Any] | None = result.get("executive_report")
-    # The segment parser expects markdown (it converts markdown → HTML and
-    # splits on ``[VISUAL:TAG]`` tokens).  Using the pre-rendered HTML here
-    # would cause double-processing and bleach stripping of the visual tags.
-    report_md: str = result.get("report", "Report not available.")
-    web_report_md = _remove_web_dashboard_section(report_md)
-    filename: str = upload_info.get("filename", "data")
-    base_name = filename.rsplit(".", 1)[0] if "." in filename else filename
-    pdf_filename = f"forecast_report_{base_name}.pdf"
-    return render_template(
-        "main/report.html",
-        segments=_parse_report_segments(web_report_md, result),
-        pdf_filename=pdf_filename,
-        er=executive_report,
+    return _render_report(
+        result,
+        str(upload_info.get("filename", "data")),
+        url_for("main.report_export"),
     )
 
 
@@ -480,16 +504,18 @@ def report_export() -> Response:
     Returns:
         A file download response containing the PDF bytes.
     """
-    from services.pdf_service import report_to_pdf
-
     result: dict[str, Any] = session.get("analysis_result") or {}
     upload_info: dict[str, Any] = session.get("upload_info") or {}
-    report_text: str = result.get("report", "Report not available.") # For PDF
+    return _send_report_pdf(result, str(upload_info.get("filename", "data")))
 
-    filename: str = upload_info.get("filename", "data")
+
+def _send_report_pdf(result: dict[str, Any], filename: str) -> Response:
+    """Generate a PDF response from a current or persisted final report."""
+    from services.pdf_service import report_to_pdf
+
+    report_text: str = result.get("report", "Report not available.")
     base_name = filename.rsplit(".", 1)[0] if "." in filename else filename
-    pdf_filename = f"forecast_report_{base_name}.pdf"
-
+    pdf_filename = f"forecast_report_{base_name or 'data'}.pdf"
     pdf_bytes = report_to_pdf(
         report_text,
         title=pdf_filename.replace("_", " ").replace(".pdf", ""),
@@ -501,6 +527,53 @@ def report_export() -> Response:
         as_attachment=True,
         download_name=pdf_filename,
     )
+
+
+@main_bp.route("/reports")
+@_login_required
+def reports() -> str:
+    """Render the authenticated user's saved-report list."""
+    count, limit = report_usage_for_user(int(current_user.id))
+    return render_template(
+        "main/reports.html",
+        reports=list_reports_for_user(int(current_user.id)),
+        report_count=count,
+        report_limit=limit,
+    )
+
+
+@main_bp.route("/reports/<int:report_id>")
+@_login_required
+def saved_report(report_id: int) -> str:
+    """Render one owner-scoped saved report."""
+    stored = get_report_for_user(report_id, int(current_user.id))
+    if stored is None:
+        abort(404)
+    return _render_report(
+        stored,
+        str(stored["source_filename"]),
+        url_for("main.saved_report_export", report_id=report_id),
+    )
+
+
+@main_bp.route("/reports/<int:report_id>/export", methods=["POST"])
+@_login_required
+def saved_report_export(report_id: int) -> Response:
+    """Export one owner-scoped saved report as PDF."""
+    stored = get_report_for_user(report_id, int(current_user.id))
+    if stored is None:
+        abort(404)
+    return _send_report_pdf(stored, str(stored["source_filename"]))
+
+
+@main_bp.route("/reports/<int:report_id>/delete", methods=["POST"])
+@_login_required
+def saved_report_delete(report_id: int) -> Response:
+    """Delete one owner-scoped saved report."""
+    if not delete_report_for_user(report_id, int(current_user.id)):
+        abort(404)
+    flash("Report deleted.", "success")
+    return redirect(url_for("main.reports"))
 
 
 @main_bp.route("/load-demo", methods=["GET", "POST"])
@@ -755,6 +828,25 @@ def _handle_done_job(
     session["job_running"] = False
     session["job_id"] = None
     session["analysis_error"] = None
+    upload_info: dict[str, Any] = session.get("upload_info") or {}
+    try:
+        save_report(
+            user_id=int(current_user.id),
+            result=result_data,
+            source_filename=str(upload_info.get("filename", "data")),
+            forecast_horizon=int(session.get("forecast_horizon") or 12),
+        )
+    except ReportLimitError:
+        flash(
+            "This report was not saved because you reached your report limit. "
+            "Delete a saved report before running another forecast.",
+            "warning",
+        )
+    except Exception:  # pylint: disable=broad-exception-caught
+        logger.exception(
+            "Failed to persist completed report for user_id=%s", current_user.id
+        )
+        flash("The report was generated but could not be saved.", "warning")
     return jsonify(
         {
             "status": status_data.get("status", ""),

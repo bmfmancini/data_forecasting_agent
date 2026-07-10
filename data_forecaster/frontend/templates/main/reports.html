@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Reports — Forecaster{% endblock %}
+{% block header %}📚 Reports{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+        <h4 class="mb-1">Saved Forecast Reports</h4>
+        <p class="text-secondary mb-0">{{ report_count }} of {{ report_limit }} report{{ '' if report_limit == 1 else 's' }} stored.</p>
+    </div>
+    <a href="{{ url_for('main.forecast_setup') }}" class="btn btn-primary btn-sm">New Forecast</a>
+</div>
+{% if reports %}
+<div class="card">
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-dark table-hover align-middle mb-0">
+                <thead><tr><th>Report</th><th>Model</th><th>Horizon</th><th>Generated</th><th class="text-end">Actions</th></tr></thead>
+                <tbody>
+                    {% for report in reports %}
+                    <tr>
+                        <td><div class="fw-semibold">{{ report.title }}</div><small class="text-secondary">{{ report.source_filename }}</small></td>
+                        <td>{{ report.model_used or '—' }}</td>
+                        <td>{{ report.forecast_horizon or '—' }}</td>
+                        <td class="text-secondary">{{ report.created_at }}</td>
+                        <td class="text-end">
+                            <a class="btn btn-outline-light btn-sm" href="{{ url_for('main.saved_report', report_id=report.id) }}">View</a>
+                            <form action="{{ url_for('main.saved_report_delete', report_id=report.id) }}" class="d-inline" method="post" onsubmit="return confirm('Delete this report?');">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button class="btn btn-outline-danger btn-sm" type="submit">Delete</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% else %}
+<div class="card"><div class="card-body text-center py-5">
+    <h5>No saved reports yet</h5>
+    <p class="text-secondary mb-3">Completed forecasts will be saved here automatically while you have capacity.</p>
+    <a href="{{ url_for('main.forecast_setup') }}" class="btn btn-primary">Run a Forecast</a>
+</div></div>
+{% endif %}
+{% endblock %}

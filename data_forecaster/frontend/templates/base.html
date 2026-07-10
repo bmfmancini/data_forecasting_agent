@@ -19,6 +19,7 @@
                 <li class="nav-item"><a class="nav-link {{ 'active' if request.endpoint == 'main.chat' }}" href="{{ url_for('main.chat') }}">💬 Chat</a></li>
                 <li class="nav-item"><a class="nav-link {{ 'active' if request.endpoint == 'main.started' }}" href="{{ url_for('main.started') }}">ℹ️ Get Started</a></li>
                 <li class="nav-item"><a class="nav-link {{ 'active' if request.endpoint == 'main.forecast_setup' }}" href="{{ url_for('main.forecast_setup') }}">🚀 Forecast Setup</a></li>
+                <li class="nav-item"><a class="nav-link {{ 'active' if request.endpoint in ('main.reports', 'main.saved_report') }}" href="{{ url_for('main.reports') }}">📚 Reports</a></li>
                 {% if session.get('analysis_result') %}
                 <li class="nav-item"><a class="nav-link {{ 'active' if request.endpoint == 'main.report' }}" href="{{ url_for('main.report') }}">📄 Report</a></li>
                 <li class="nav-item"><a class="nav-link {{ 'active' if request.endpoint == 'main.overview' }}" href="{{ url_for('main.overview') }}">📊 Overview</a></li>

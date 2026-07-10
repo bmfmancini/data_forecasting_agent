@@ -32,6 +32,12 @@ from blueprints.admin.forms import (
     UserEditForm,
 )
 from db.db import execute_db, query_db
+from services.report_service import (
+    delete_all_reports_for_admin,
+    delete_report_for_admin,
+    list_report_owners,
+    list_reports_for_user,
+)
 
 _F = TypeVar("_F", bound=Callable[..., Any])
 
@@ -338,9 +344,15 @@ def settings() -> str | Response:
     Returns:
         Rendered settings template on GET; redirect on successful POST.
     """
-    known_keys: list[str] = ["app_name"]
+    known_keys: list[str] = ["app_name", "max_reports_per_user"]
 
     if request.method == "POST":
+        try:
+            if int(request.form.get("max_reports_per_user", "")) < 1:
+                raise ValueError
+        except ValueError:
+            flash("Enter a report limit of at least 1.", "danger")
+            return redirect(url_for("admin.settings"))
         for key in known_keys:
             value: str = str(request.form.get(key, "")).strip()
             if value:
@@ -383,7 +395,8 @@ def settings() -> str | Response:
         return redirect(url_for("admin.settings"))
 
     config_rows = query_db(
-        "SELECT key, value FROM app_config WHERE key IN (?)", (known_keys[0],)
+        "SELECT key, value FROM app_config WHERE key IN (?, ?)",
+        (known_keys[0], known_keys[1]),
     )
     config_map: dict[str, str] = {}
     if isinstance(config_rows, list):
@@ -398,6 +411,59 @@ def settings() -> str | Response:
         job_settings=job_settings,
         retention_option=_retention_option(job_settings),
     )
+
+
+@admin_bp.route("/reports")
+@admin_required
+def report_management() -> str:
+    """List users who currently own one or more saved reports."""
+    return render_template("admin/report_management.html", owners=list_report_owners())
+
+
+@admin_bp.route("/reports/users/<int:user_id>")
+@admin_required
+def user_reports(user_id: int) -> str | Response:
+    """List every saved report owned by the selected application user."""
+    target_user = query_db(
+        "SELECT id, username FROM users WHERE id = ?", (user_id,), one=True
+    )
+    if not isinstance(target_user, dict):
+        flash("User not found.", "danger")
+        return redirect(url_for("admin.report_management"))
+    return render_template(
+        "admin/user_reports.html",
+        target_user=target_user,
+        reports=list_reports_for_user(user_id),
+    )
+
+
+@admin_bp.route("/reports/<int:report_id>/delete", methods=["POST"])
+@admin_required
+def report_delete(report_id: int) -> Response:
+    """Delete one saved report as an administrator."""
+    if not delete_report_for_admin(report_id):
+        flash("Report not found.", "danger")
+        return redirect(url_for("admin.report_management"))
+    flash("Report deleted.", "success")
+    return redirect(url_for("admin.report_management"))
+
+
+@admin_bp.route("/reports/users/<int:user_id>/delete-all", methods=["POST"])
+@admin_required
+def user_reports_delete_all(user_id: int) -> Response:
+    """Delete every saved report owned by one application user."""
+    target_user = query_db(
+        "SELECT id, username FROM users WHERE id = ?", (user_id,), one=True
+    )
+    if not isinstance(target_user, dict):
+        flash("User not found.", "danger")
+        return redirect(url_for("admin.report_management"))
+    deleted_count = delete_all_reports_for_admin(user_id)
+    flash(
+        f"Deleted {deleted_count} report(s) for '{target_user['username']}'.",
+        "success",
+    )
+    return redirect(url_for("admin.report_management"))
 
 
 def _load_forecast_job_settings() -> dict[str, Any]:

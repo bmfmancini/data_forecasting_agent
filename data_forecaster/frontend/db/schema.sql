@@ -20,6 +20,24 @@ CREATE TABLE IF NOT EXISTS app_config (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS forecast_reports (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id               INTEGER NOT NULL,
+    title                 TEXT    NOT NULL,
+    source_filename       TEXT    NOT NULL,
+    model_used            TEXT,
+    forecast_horizon      INTEGER,
+    report_markdown       TEXT    NOT NULL,
+    executive_report_json TEXT,
+    visual_assets_json    TEXT    NOT NULL,
+    llm_fallback          INTEGER NOT NULL DEFAULT 0,
+    created_at            TEXT    NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS forecast_reports_user_created_idx
+ON forecast_reports(user_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS api_credentials (
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
     label              TEXT    NOT NULL UNIQUE,
