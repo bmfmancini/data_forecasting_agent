@@ -32,6 +32,12 @@ from blueprints.admin.forms import (
     UserEditForm,
 )
 from db.db import execute_db, query_db
+from services.report_service import (
+    delete_all_reports_for_admin,
+    delete_report_for_admin,
+    list_report_owners,
+    list_reports_for_user,
+)
 
 _F = TypeVar("_F", bound=Callable[..., Any])
 
@@ -41,6 +47,18 @@ _ADMIN_USERS_ENDPOINT: str = "admin.users"
 _ADMIN_USER_FORM_TEMPLATE: str = "admin/user_form.html"
 _ADMIN_API_CONFIG_ENDPOINT: str = "admin.api_config"
 _ADMIN_API_KEYS_ENDPOINT: str = "admin.api_keys"
+_ADMIN_JOB_QUEUE_ENDPOINT: str = "admin.job_queue"
+
+_RETENTION_OPTIONS: dict[str, tuple[int | None, bool]] = {
+    "1": (1, True),
+    "7": (7, True),
+    "14": (14, True),
+    "30": (30, True),
+    "90": (90, True),
+    "180": (180, True),
+    "indefinite": (None, True),
+    "disabled": (None, False),
+}
 
 
 def admin_required(f: _F) -> _F:
@@ -149,7 +167,11 @@ def user_force_reset(user_id: int) -> Response:
         return redirect(url_for(_ADMIN_USERS_ENDPOINT))
 
     execute_db(
-        "UPDATE users SET must_change_password = 1 WHERE id = ?",
+        """
+        UPDATE users
+        SET must_change_password = 1, session_version = session_version + 1
+        WHERE id = ?
+        """,
         (user_id,),
     )
     flash(
@@ -194,7 +216,11 @@ def user_new() -> str | Response:
 
         pw_hash = generate_password_hash(password)
         execute_db(
-            "INSERT INTO users (username, password_hash, role_id) VALUES (?, ?, ?)",
+            """
+            INSERT INTO users
+                (username, password_hash, role_id, must_change_password)
+            VALUES (?, ?, ?, 1)
+            """,
             (username, pw_hash, int(role_row["id"])),
         )
         flash(f"User '{username}' created successfully.", "success")
@@ -230,7 +256,9 @@ def _update_user(
         execute_db(
             """
             UPDATE users
-            SET password_hash = ?, role_id = ?, active = ?, must_change_password = ?
+            SET password_hash = ?, role_id = ?, active = ?,
+                must_change_password = ?,
+                session_version = session_version + 1
             WHERE id = ?
             """,
             (
@@ -245,10 +273,21 @@ def _update_user(
         execute_db(
             """
             UPDATE users
-            SET role_id = ?, active = ?, must_change_password = ?
+            SET role_id = ?, active = ?, must_change_password = ?,
+                session_version = CASE
+                    WHEN active != ? OR ? = 1 THEN session_version + 1
+                    ELSE session_version
+                END
             WHERE id = ?
             """,
-            (int(role_row["id"]), int(new_active), int(force_reset), user_id),
+            (
+                int(role_row["id"]),
+                int(new_active),
+                int(force_reset),
+                int(new_active),
+                int(force_reset),
+                user_id,
+            ),
         )
 
 
@@ -326,9 +365,15 @@ def settings() -> str | Response:
     Returns:
         Rendered settings template on GET; redirect on successful POST.
     """
-    known_keys: list[str] = ["app_name"]
+    known_keys: list[str] = ["app_name", "max_reports_per_user"]
 
     if request.method == "POST":
+        try:
+            if int(request.form.get("max_reports_per_user", "")) < 1:
+                raise ValueError
+        except ValueError:
+            flash("Enter a report limit of at least 1.", "danger")
+            return redirect(url_for("admin.settings"))
         for key in known_keys:
             value: str = str(request.form.get(key, "")).strip()
             if value:
@@ -341,11 +386,38 @@ def settings() -> str | Response:
                     """,
                     (key, value),
                 )
+        try:
+            max_running_jobs = int(request.form.get("max_running_jobs_per_user", ""))
+            retention_option = str(request.form.get("job_retention", "30"))
+            retention_days, cleanup_enabled = _RETENTION_OPTIONS[retention_option]
+            if max_running_jobs < 1:
+                raise ValueError
+        except (KeyError, ValueError):
+            flash("Enter a job limit of at least 1 and select a valid retention option.", "danger")
+            return redirect(url_for("admin.settings"))
+        try:
+            from services.api_client import get_api_client
+
+            response = get_api_client().update_job_settings(
+                {
+                    "max_running_jobs_per_user": max_running_jobs,
+                    "retention_days": retention_days,
+                    "cleanup_enabled": cleanup_enabled,
+                }
+            )
+            if response.status_code != 200:
+                flash("Forecast job settings could not be saved.", "danger")
+                return redirect(url_for("admin.settings"))
+        except Exception:
+            logger.exception("Failed to save forecast job settings")
+            flash("The backend is unavailable; forecast job settings were not saved.", "danger")
+            return redirect(url_for("admin.settings"))
         flash("Settings saved.", "success")
         return redirect(url_for("admin.settings"))
 
     config_rows = query_db(
-        "SELECT key, value FROM app_config WHERE key IN (?)", (known_keys[0],)
+        "SELECT key, value FROM app_config WHERE key IN (?, ?)",
+        (known_keys[0], known_keys[1]),
     )
     config_map: dict[str, str] = {}
     if isinstance(config_rows, list):
@@ -353,7 +425,131 @@ def settings() -> str | Response:
             if isinstance(r, dict):
                 config_map[str(r["key"])] = str(r["value"])
 
-    return render_template("admin/settings.html", config=config_map)
+    job_settings = _load_forecast_job_settings()
+    return render_template(
+        "admin/settings.html",
+        config=config_map,
+        job_settings=job_settings,
+        retention_option=_retention_option(job_settings),
+    )
+
+
+@admin_bp.route("/reports")
+@admin_required
+def report_management() -> str:
+    """List users who currently own one or more saved reports."""
+    return render_template("admin/report_management.html", owners=list_report_owners())
+
+
+@admin_bp.route("/reports/users/<int:user_id>")
+@admin_required
+def user_reports(user_id: int) -> str | Response:
+    """List every saved report owned by the selected application user."""
+    target_user = query_db(
+        "SELECT id, username FROM users WHERE id = ?", (user_id,), one=True
+    )
+    if not isinstance(target_user, dict):
+        flash("User not found.", "danger")
+        return redirect(url_for("admin.report_management"))
+    return render_template(
+        "admin/user_reports.html",
+        target_user=target_user,
+        reports=list_reports_for_user(user_id),
+    )
+
+
+@admin_bp.route("/reports/<int:report_id>/delete", methods=["POST"])
+@admin_required
+def report_delete(report_id: int) -> Response:
+    """Delete one saved report as an administrator."""
+    if not delete_report_for_admin(report_id):
+        flash("Report not found.", "danger")
+        return redirect(url_for("admin.report_management"))
+    flash("Report deleted.", "success")
+    return redirect(url_for("admin.report_management"))
+
+
+@admin_bp.route("/reports/users/<int:user_id>/delete-all", methods=["POST"])
+@admin_required
+def user_reports_delete_all(user_id: int) -> Response:
+    """Delete every saved report owned by one application user."""
+    target_user = query_db(
+        "SELECT id, username FROM users WHERE id = ?", (user_id,), one=True
+    )
+    if not isinstance(target_user, dict):
+        flash("User not found.", "danger")
+        return redirect(url_for("admin.report_management"))
+    deleted_count = delete_all_reports_for_admin(user_id)
+    flash(
+        f"Deleted {deleted_count} report(s) for '{target_user['username']}'.",
+        "success",
+    )
+    return redirect(url_for("admin.report_management"))
+
+
+def _load_forecast_job_settings() -> dict[str, Any]:
+    """Load backend-managed forecast job settings with safe defaults."""
+    defaults: dict[str, Any] = {
+        "max_running_jobs_per_user": 1,
+        "retention_days": 30,
+        "cleanup_enabled": True,
+    }
+    try:
+        from services.api_client import get_api_client
+
+        response = get_api_client().get_job_settings()
+        if response.status_code == 200:
+            return response.json()
+    except Exception:
+        logger.exception("Failed to load forecast job settings")
+    return defaults
+
+
+def _retention_option(job_settings: dict[str, Any]) -> str:
+    """Map backend retention fields to the settings form option value."""
+    if not job_settings.get("cleanup_enabled", True):
+        return "disabled"
+    retention_days = job_settings.get("retention_days")
+    return "indefinite" if retention_days is None else str(retention_days)
+
+
+@admin_bp.route("/job-queue")
+@admin_required
+def job_queue() -> str:
+    """Render the 25 most recent forecast jobs for administrators."""
+    jobs: list[dict[str, Any]] = []
+    queue_error: str | None = None
+    try:
+        from services.api_client import get_api_client
+
+        response = get_api_client().list_recent_jobs()
+        if response.status_code == 200:
+            jobs = response.json()
+        else:
+            queue_error = "The backend could not provide job history."
+    except Exception:
+        logger.exception("Failed to fetch forecast job queue")
+        queue_error = "The backend is unavailable. Try again once it is online."
+    return render_template("admin/job_queue.html", jobs=jobs, queue_error=queue_error)
+
+
+@admin_bp.route("/job-queue/clear-terminal", methods=["POST"])
+@admin_required
+def clear_terminal_jobs() -> Response:
+    """Clear all completed and failed jobs through the protected backend API."""
+    try:
+        from services.api_client import get_api_client
+
+        response = get_api_client().clear_terminal_jobs()
+        if response.status_code == 200:
+            deleted_count = int(response.json().get("deleted_count", 0))
+            flash(f"Cleared {deleted_count} completed or failed job(s).", "success")
+        else:
+            flash("Completed and failed jobs could not be cleared.", "danger")
+    except Exception:
+        logger.exception("Failed to clear terminal forecast jobs")
+        flash("The backend is unavailable; terminal jobs were not cleared.", "danger")
+    return redirect(url_for(_ADMIN_JOB_QUEUE_ENDPOINT))
 
 
 def _load_api_config_form(form: APIConfigForm) -> None:

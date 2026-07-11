@@ -63,9 +63,7 @@ class HTMLRenderer:
             )
         grid = (
             '<div class="row row-cols-1 row-cols-md-3 g-3">'
-            + "".join(
-                f'<div class="col">{card}</div>' for card in cards
-            )
+            + "".join(f'<div class="col">{card}</div>' for card in cards)
             + "</div>"
         )
         return f'<section class="report-dashboard">{grid}</section>'
@@ -75,9 +73,7 @@ class HTMLRenderer:
     def _render_executive_summary(self, report: ExecutiveReport) -> str:
         """Render the executive summary section."""
         s = report.executive_summary
-        narrative = (
-            f"<p>{escape(s.narrative)}</p>" if s.narrative else ""
-        )
+        narrative = f"<p>{escape(s.narrative)}</p>" if s.narrative else ""
         return (
             '<section class="report-summary mb-3">'
             "<h5>Executive Summary</h5>"
@@ -98,7 +94,8 @@ class HTMLRenderer:
         color = self._rating_color(dq.rating)
         issues = (
             "<ul>" + "".join(f"<li>{escape(i)}</li>" for i in dq.issues) + "</ul>"
-            if dq.issues else ""
+            if dq.issues
+            else ""
         )
         narrative = f"<p>{escape(dq.narrative)}</p>" if dq.narrative else ""
         return (
@@ -113,7 +110,7 @@ class HTMLRenderer:
             f"{issues}"
             "</section>"
         )
-        
+
     # ── Historical Analysis ───────────────────────────────────────────────
 
     def _render_historical_analysis(self, report: ExecutiveReport) -> str:
@@ -140,9 +137,9 @@ class HTMLRenderer:
         color = self._label_color(c.label)
         confidence_html = (
             f'<span class="badge bg-{color} fs-6">'
-            f"Confidence Score: {c.score}/100 — {escape(c.label)}"
+            f"Forecast Confidence: {c.score}/100 — {escape(c.label)}"
             f"</span>"
-            f"<p class=\"mt-2 text-muted\">{escape(c.explanation)}</p>"
+            f'<p class="mt-2 text-muted">{escape(c.explanation)}</p>'
         )
 
         health_rows = "".join(
@@ -152,7 +149,7 @@ class HTMLRenderer:
             for hi in report.health_indicators
         )
         health_table = (
-            '<h6>Forecast Health Indicators</h6>'
+            "<h6>Forecast Health Indicators</h6>"
             '<table class="table table-sm table-striped">'
             "<thead><tr><th>Indicator</th><th>Status</th>"
             "<th>Detail</th></tr></thead>"
@@ -167,7 +164,6 @@ class HTMLRenderer:
             "<p>[VISUAL:COMPARISON]</p>"
             "</section>"
         )
-
 
     # ── Forecast Outlook ──────────────────────────────────────────────────
 
@@ -265,7 +261,11 @@ class HTMLRenderer:
         blocks: list[str] = []
         for risk in report.risks:
             evidence_items = "".join(f"<li>{escape(ev)}</li>" for ev in risk.evidence)
-            evidence = f'<ul class="small text-muted">{evidence_items}</ul>' if evidence_items else ""
+            evidence = (
+                f'<ul class="small text-muted">{evidence_items}</ul>'
+                if evidence_items
+                else ""
+            )
             blocks.append(
                 f'<div class="risk-block mb-2">'
                 f"<h6>{escape(risk.category)} — {escape(risk.severity)}</h6>"
@@ -341,7 +341,8 @@ class HTMLRenderer:
             )
             evidence = (
                 f'<ul class="small text-muted">{evidence_items}</ul>'
-                if evidence_items else ""
+                if evidence_items
+                else ""
             )
             text = rec.narrative if rec.narrative else rec.recommendation
             blocks.append(
@@ -356,9 +357,7 @@ class HTMLRenderer:
             )
         return (
             '<section class="report-recommendations mb-3">'
-            "<h5>Executive Recommendations</h5>"
-            + "".join(blocks)
-            + "</section>"
+            "<h5>Executive Recommendations</h5>" + "".join(blocks) + "</section>"
         )
 
     # ── Metadata ──────────────────────────────────────────────────────────

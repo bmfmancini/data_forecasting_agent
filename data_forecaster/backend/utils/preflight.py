@@ -263,7 +263,8 @@ def prepare_series_frame(
         )
         series = treat_outliers(series, internal_strategy)
 
-    series = impute_missing(series, missing_strategy)
+    if missing_strategy != "drop":
+        series = impute_missing(series, missing_strategy)
     series = series.dropna()
 
     smoothing = options.get("smoothing", "none")

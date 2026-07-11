@@ -367,10 +367,10 @@ class ExecutiveReportBuilder:
 
         # Residual Diagnostics
         diag = forecast.residual_diagnostics
-        if diag and not diag.is_uncorrelated:
+        if diag and diag.is_uncorrelated is False:
             resid_status = HEALTH_STATUS["residual_diagnostics"]["concerning"]
             resid_detail = "Residuals are autocorrelated, indicating the model has not captured all predictable patterns."
-        elif diag and not diag.is_normal:
+        elif diag and diag.is_normal is False:
             resid_status = HEALTH_STATUS["residual_diagnostics"]["concerning"]
             resid_detail = "Residuals are not normally distributed, which may affect the reliability of prediction intervals."
         elif statistical.is_white_noise or forecast.mape > 20:

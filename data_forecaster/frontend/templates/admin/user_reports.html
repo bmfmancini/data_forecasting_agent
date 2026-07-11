@@ -1,0 +1,23 @@
+{% extends "admin/base.html" %}
+{% block title %}{{ target_user.username }} Reports — Admin{% endblock %}
+{% block header %}Reports: {{ target_user.username }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div><h4 class="mb-0">{{ target_user.username }}</h4><p class="text-secondary mb-0">{{ reports|length }} stored report{{ '' if reports|length == 1 else 's' }}</p></div>
+    <form action="{{ url_for('admin.user_reports_delete_all', user_id=target_user.id) }}" method="post" onsubmit="return confirm('Delete all reports for ' + {{ target_user.username|tojson }} + '?');">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="btn btn-danger btn-sm" type="submit">Delete All Reports</button>
+    </form>
+</div>
+<div class="card"><div class="card-body"><div class="table-responsive">
+    <table class="table table-dark table-hover align-middle mb-0">
+        <thead><tr><th>Report</th><th>Model</th><th>Horizon</th><th>Generated</th><th class="text-end">Action</th></tr></thead>
+        <tbody>{% for report in reports %}<tr>
+            <td><div class="fw-semibold">{{ report.title }}</div><small class="text-secondary">{{ report.source_filename }}</small></td>
+            <td>{{ report.model_used or '—' }}</td><td>{{ report.forecast_horizon or '—' }}</td><td class="text-secondary">{{ report.created_at }}</td>
+            <td class="text-end"><form action="{{ url_for('admin.report_delete', report_id=report.id) }}" method="post" onsubmit="return confirm('Delete this report?');"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-outline-danger btn-sm" type="submit">Delete</button></form></td>
+        </tr>{% endfor %}</tbody>
+    </table>
+</div></div></div>
+<a class="btn btn-link mt-3" href="{{ url_for('admin.report_management') }}">← Back to Report Management</a>
+{% endblock %}

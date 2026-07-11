@@ -15,10 +15,10 @@ import re
 from functools import wraps
 from typing import Any, Callable, TypeVar
 
-import bleach
-import markdown as md_lib
 import pandas
+import requests
 from flask import (
+    abort,
     current_app,
     flash,
     jsonify,
@@ -36,6 +36,16 @@ from werkzeug.wrappers import Response
 from blueprints.decorators import password_change_required
 from blueprints.main import main_bp
 from services.api_client import get_api_client
+from services.markdown_service import markdown_to_safe_html
+from services.report_service import (
+    ReportLimitError,
+    delete_report_for_user,
+    get_report_for_user,
+    list_reports_for_user,
+    rename_report_for_user,
+    report_usage_for_user,
+    save_report,
+)
 
 _F = TypeVar("_F", bound=Callable[..., Any])
 
@@ -47,6 +57,10 @@ _login_required: Callable[[_F], _F] = login_required  # type: ignore[assignment]
 
 _FORECAST_SETUP_ENDPOINT: str = "main.forecast_setup"
 _BACKEND_CONN_ERROR: str = "Backend connection error."
+_JOB_STATUS_TIMEOUT_ERROR: str = (
+    "The forecast status check timed out. The backend may still be busy; "
+    "please try running the forecast again in a moment."
+)
 
 
 def _safe_error_detail(resp: Any, fallback: str = "Request failed.") -> str:
@@ -77,40 +91,6 @@ _CHART_FIELD_BY_TAG: dict[str, str] = {
     "COMPARISON": "chart_model_comparison",
 }
 
-_BLEACH_ALLOWED_TAGS: list[str] = [
-    "p",
-    "h1",
-    "h2",
-    "h3",
-    "h4",
-    "h5",
-    "h6",
-    "ul",
-    "ol",
-    "li",
-    "strong",
-    "em",
-    "code",
-    "pre",
-    "blockquote",
-    "hr",
-    "a",
-    "br",
-    "table",
-    "thead",
-    "tbody",
-    "tr",
-    "th",
-    "td",
-]
-
-_BLEACH_ALLOWED_ATTRS: dict[str, list[str]] = {
-    "a": ["href", "title", "rel"],
-    "th": ["scope"],
-    "td": ["colspan", "rowspan"],
-}
-
-
 def analysis_required(f: _F) -> _F:
     """Decorator that redirects to the chat page when no analysis result exists.
 
@@ -132,32 +112,6 @@ def analysis_required(f: _F) -> _F:
         return f(*args, **kwargs)
 
     return wrapper  # type: ignore[return-value]
-
-
-def _markdown_to_html(text: str) -> str:
-    """Convert a markdown string to sanitised HTML.
-
-    Uses the ``markdown`` library with the ``tables`` and ``fenced_code``
-    extensions, then passes the result through ``bleach`` to remove any
-    potentially unsafe markup.
-
-    Args:
-        text: Markdown-formatted string.
-
-    Returns:
-        Safe HTML string.
-    """
-    raw_html: str = md_lib.markdown(
-        text,
-        extensions=["tables", "fenced_code", "nl2br"],
-    )
-    return bleach.clean(
-        raw_html,
-        tags=_BLEACH_ALLOWED_TAGS,
-        attributes=_BLEACH_ALLOWED_ATTRS,
-        strip=True,
-    )
-
 
 def _build_chart_segment(tag: str, result: dict[str, Any]) -> dict[str, Any]:
     """Return a chart segment descriptor for the given visual tag."""
@@ -197,7 +151,9 @@ def _parse_report_segments(
     for idx, segment in enumerate(parts):
         if idx % 2 == 0:
             if segment.strip():
-                segments.append({"type": "text", "html": _markdown_to_html(segment)})
+                segments.append(
+                    {"type": "text", "html": markdown_to_safe_html(segment)}
+                )
         else:
             segments.append(_build_chart_segment(segment, result))
 
@@ -218,6 +174,87 @@ def _remove_web_dashboard_section(report_text: str) -> str:
         if not section.lstrip().startswith("## 1. Executive Dashboard")
     ]
     return "\n\n---\n\n".join(filtered)
+
+
+def _render_report(
+    result: dict[str, Any],
+    source_filename: str,
+    export_url: str,
+    custom_settings: list[dict[str, str]] | None = None,
+) -> str:
+    """Render a current or persisted final report using shared presentation."""
+    executive_report: dict[str, Any] | None = result.get("executive_report")
+    report_md: str = result.get("report", "Report not available.")
+    web_report_md = _remove_web_dashboard_section(report_md)
+    base_name = (
+        source_filename.rsplit(".", 1)[0]
+        if "." in source_filename
+        else source_filename
+    )
+    pdf_filename = f"forecast_report_{base_name or 'data'}.pdf"
+    return render_template(
+        "main/report.html",
+        segments=_parse_report_segments(web_report_md, result),
+        pdf_filename=pdf_filename,
+        er=executive_report,
+        llm_fallback=bool(result.get("llm_fallback", False)),
+        export_url=export_url,
+        custom_settings=custom_settings or [],
+    )
+
+
+_SETTING_LABELS: dict[str, str] = {
+    "frequency": "Frequency alignment",
+    "duplicate_strategy": "Duplicate timestamps",
+    "missing_strategy": "Missing values",
+    "outlier_strategy": "Outlier treatment",
+    "smoothing": "Smoothing",
+    "data_domain": "Data domain",
+}
+
+_DEFAULT_SETTING_VALUES = {
+    "",
+    "Let AI Decide",
+    "Skip / Let AI Guess",
+    "None",
+    "none",
+    "continue",
+}
+
+
+def _custom_settings_from_session() -> list[dict[str, str]]:
+    """Return explicit setup choices formatted for the final report."""
+    settings: list[dict[str, str]] = []
+    horizon = int(session.get("forecast_horizon") or 12)
+    settings.append({"label": "Forecast horizon", "value": f"{horizon} periods"})
+
+    model = str(session.get("model_choice") or "Auto (AI selects)")
+    if model != "Auto (AI selects)":
+        settings.append({"label": "Requested model", "value": model})
+
+    context = str(session.get("user_prompt") or "").strip()
+    if context:
+        settings.append({"label": "Data context", "value": context})
+
+    options: dict[str, Any] = session.get("preflight_options") or {}
+    for key, label in _SETTING_LABELS.items():
+        value = str(options.get(key) or "")
+        if value not in _DEFAULT_SETTING_VALUES:
+            settings.append({"label": label, "value": value})
+
+    disabled_tests = (options.get("statistical_tuning") or {}).get(
+        "disabled_tests", []
+    )
+    if isinstance(disabled_tests, list) and disabled_tests:
+        settings.append(
+            {
+                "label": "Disabled statistical checks",
+                "value": ", ".join(
+                    str(test).replace("_", " ") for test in disabled_tests
+                ),
+            }
+        )
+    return settings
 
 
 @main_bp.route("/")
@@ -255,7 +292,27 @@ def forecast_setup() -> str:
         Rendered HTML for the forecast setup page.
     """
     upload_info: dict[str, Any] = session.get("upload_info") or {}
-    return render_template("main/forecast_setup.html", upload_info=upload_info)
+    setup_state = {
+        "forecast_horizon": int(session.get("forecast_horizon") or 12),
+        "model_choice": str(session.get("model_choice") or "Auto (AI selects)"),
+        "user_prompt": str(session.get("user_prompt") or ""),
+    }
+    return render_template(
+        "main/forecast_setup.html",
+        upload_info=upload_info,
+        setup_state=setup_state,
+        setup_error=session.pop("analysis_error", None),
+    )
+
+
+@main_bp.route("/forecast-progress")
+@_login_required
+def forecast_progress() -> Response | str:
+    """Render the dedicated progress screen for an active forecast job."""
+    if not session.get("job_running") or not session.get("job_id"):
+        flash("There is no forecast currently running.", "warning")
+        return redirect(url_for(_FORECAST_SETUP_ENDPOINT))
+    return render_template("main/forecast_progress.html")
 
 
 @main_bp.route("/started")
@@ -454,20 +511,11 @@ def report() -> str:
     """
     result: dict[str, Any] = session.get("analysis_result") or {}
     upload_info: dict[str, Any] = session.get("upload_info") or {}
-    executive_report: dict[str, Any] | None = result.get("executive_report")
-    # The segment parser expects markdown (it converts markdown → HTML and
-    # splits on ``[VISUAL:TAG]`` tokens).  Using the pre-rendered HTML here
-    # would cause double-processing and bleach stripping of the visual tags.
-    report_md: str = result.get("report", "Report not available.")
-    web_report_md = _remove_web_dashboard_section(report_md)
-    filename: str = upload_info.get("filename", "data")
-    base_name = filename.rsplit(".", 1)[0] if "." in filename else filename
-    pdf_filename = f"forecast_report_{base_name}.pdf"
-    return render_template(
-        "main/report.html",
-        segments=_parse_report_segments(web_report_md, result),
-        pdf_filename=pdf_filename,
-        er=executive_report,
+    return _render_report(
+        result,
+        str(upload_info.get("filename", "data")),
+        url_for("main.report_export"),
+        _custom_settings_from_session(),
     )
 
 
@@ -480,16 +528,18 @@ def report_export() -> Response:
     Returns:
         A file download response containing the PDF bytes.
     """
-    from services.pdf_service import report_to_pdf
-
     result: dict[str, Any] = session.get("analysis_result") or {}
     upload_info: dict[str, Any] = session.get("upload_info") or {}
-    report_text: str = result.get("report", "Report not available.") # For PDF
+    return _send_report_pdf(result, str(upload_info.get("filename", "data")))
 
-    filename: str = upload_info.get("filename", "data")
+
+def _send_report_pdf(result: dict[str, Any], filename: str) -> Response:
+    """Generate a PDF response from a current or persisted final report."""
+    from services.pdf_service import report_to_pdf
+
+    report_text: str = result.get("report", "Report not available.")
     base_name = filename.rsplit(".", 1)[0] if "." in filename else filename
-    pdf_filename = f"forecast_report_{base_name}.pdf"
-
+    pdf_filename = f"forecast_report_{base_name or 'data'}.pdf"
     pdf_bytes = report_to_pdf(
         report_text,
         title=pdf_filename.replace("_", " ").replace(".pdf", ""),
@@ -501,6 +551,68 @@ def report_export() -> Response:
         as_attachment=True,
         download_name=pdf_filename,
     )
+
+
+@main_bp.route("/reports")
+@_login_required
+def reports() -> str:
+    """Render the authenticated user's saved-report list."""
+    count, limit = report_usage_for_user(int(current_user.id))
+    return render_template(
+        "main/reports.html",
+        reports=list_reports_for_user(int(current_user.id)),
+        report_count=count,
+        report_limit=limit,
+    )
+
+
+@main_bp.route("/reports/<int:report_id>")
+@_login_required
+def saved_report(report_id: int) -> str:
+    """Render one owner-scoped saved report."""
+    stored = get_report_for_user(report_id, int(current_user.id))
+    if stored is None:
+        abort(404)
+    return _render_report(
+        stored,
+        str(stored["source_filename"]),
+        url_for("main.saved_report_export", report_id=report_id),
+        stored.get("custom_settings") or [],
+    )
+
+
+@main_bp.route("/reports/<int:report_id>/export", methods=["POST"])
+@_login_required
+def saved_report_export(report_id: int) -> Response:
+    """Export one owner-scoped saved report as PDF."""
+    stored = get_report_for_user(report_id, int(current_user.id))
+    if stored is None:
+        abort(404)
+    return _send_report_pdf(stored, str(stored["source_filename"]))
+
+
+@main_bp.route("/reports/<int:report_id>/delete", methods=["POST"])
+@_login_required
+def saved_report_delete(report_id: int) -> Response:
+    """Delete one owner-scoped saved report."""
+    if not delete_report_for_user(report_id, int(current_user.id)):
+        abort(404)
+    flash("Report deleted.", "success")
+    return redirect(url_for("main.reports"))
+
+
+@main_bp.route("/reports/<int:report_id>/rename", methods=["POST"])
+@_login_required
+def saved_report_rename(report_id: int) -> Response:
+    """Rename one owner-scoped saved report."""
+    title = str(request.form.get("title", "")).strip()
+    if not title or len(title) > 200:
+        flash("Report names must be between 1 and 200 characters.", "danger")
+        return redirect(url_for("main.reports"))
+    if not rename_report_for_user(report_id, int(current_user.id), title):
+        abort(404)
+    flash("Report renamed.", "success")
+    return redirect(url_for("main.reports"))
 
 
 @main_bp.route("/load-demo", methods=["GET", "POST"])
@@ -666,6 +778,24 @@ def api_preflight_choices() -> Response:
     return jsonify({"ok": True})
 
 
+@main_bp.route("/api/setup-state", methods=["POST"])
+@_login_required
+def api_setup_state() -> Response:
+    """Persist non-sensitive wizard configuration while the user works."""
+    data: dict[str, Any] = request.get_json(silent=True) or {}
+    horizon = data.get("forecast_horizon")
+    if horizon is not None:
+        try:
+            session["forecast_horizon"] = max(1, min(100, int(horizon)))
+        except (TypeError, ValueError):
+            return make_response(jsonify({"error": "Invalid forecast horizon"}), 400)
+    if "model_choice" in data:
+        session["model_choice"] = str(data["model_choice"])
+    if "user_prompt" in data:
+        session["user_prompt"] = str(data["user_prompt"]).strip()
+    return jsonify({"ok": True})
+
+
 def _build_analyze_payload(data: dict[str, Any]) -> dict[str, Any]:
     """Build the backend analysis payload from request/session state."""
     upload_info: dict[str, Any] = session.get("upload_info") or {}
@@ -685,6 +815,7 @@ def _build_analyze_payload(data: dict[str, Any]) -> dict[str, Any]:
     session["forecast_horizon"] = horizon
     session["model_choice"] = model_choice
     session["user_prompt"] = user_prompt
+    session["preflight_options"] = preflight_options
 
     forced_model: str | None = (
         None if model_choice == "Auto (AI selects)" else model_choice
@@ -717,6 +848,10 @@ def api_analyze() -> Response:
 
     if not payload["file_id"]:
         return make_response(jsonify({"error": "No file uploaded"}), 400)
+
+    payload["application_user_id"] = current_user.id
+    payload["application_username"] = current_user.username
+    payload["application_user_is_admin"] = current_user.is_admin
 
     try:
         client = get_api_client()
@@ -751,6 +886,26 @@ def _handle_done_job(
     session["job_running"] = False
     session["job_id"] = None
     session["analysis_error"] = None
+    upload_info: dict[str, Any] = session.get("upload_info") or {}
+    try:
+        save_report(
+            user_id=int(current_user.id),
+            result=result_data,
+            source_filename=str(upload_info.get("filename", "data")),
+            forecast_horizon=int(session.get("forecast_horizon") or 12),
+            custom_settings=_custom_settings_from_session(),
+        )
+    except ReportLimitError:
+        flash(
+            "This report was not saved because you reached your report limit. "
+            "Delete a saved report before running another forecast.",
+            "warning",
+        )
+    except Exception:  # pylint: disable=broad-exception-caught
+        logger.exception(
+            "Failed to persist completed report for user_id=%s", current_user.id
+        )
+        flash("The report was generated but could not be saved.", "warning")
     return jsonify(
         {
             "status": status_data.get("status", ""),
@@ -829,6 +984,18 @@ def api_job_status() -> Response:
             }
         )
 
+    except requests.exceptions.Timeout:
+        logger.exception("Status poll timed out")
+        session["job_running"] = False
+        session["job_id"] = None
+        session["analysis_error"] = _JOB_STATUS_TIMEOUT_ERROR
+        return make_response(jsonify({"error": _JOB_STATUS_TIMEOUT_ERROR}), 504)
+    except requests.exceptions.RequestException:
+        logger.exception("Status poll request error")
+        session["job_running"] = False
+        session["job_id"] = None
+        session["analysis_error"] = _BACKEND_CONN_ERROR
+        return make_response(jsonify({"error": _BACKEND_CONN_ERROR}), 503)
     except Exception:
         logger.exception("Status poll error")
         return make_response(jsonify({"error": "Status poll error."}), 503)

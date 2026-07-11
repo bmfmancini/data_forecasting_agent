@@ -280,7 +280,11 @@ def _validate_viz_config(config: Any) -> dict[str, Any] | None:
 
 
 def chat_with_data(
-    query: str, df: pd.DataFrame, file_id: str, chroma_persist_dir: str
+    query: str,
+    df: pd.DataFrame,
+    file_id: str,
+    owner_id: int | None,
+    chroma_persist_dir: str,
 ) -> dict[str, Any]:
     """Handle a data-explorer chat query about a specific uploaded dataset.
 
@@ -303,7 +307,17 @@ def chat_with_data(
     rag_kb = get_rag_kb(chroma_persist_dir)
     memory_context = ""
     try:
-        chunks = rag_kb.retrieve(query, k=3)
+        chunks = rag_kb.retrieve(
+            query,
+            k=3,
+            where={
+                "$and": [
+                    {"type": "analysis_result"},
+                    {"file_id": file_id},
+                    {"owner_id": str(owner_id) if owner_id is not None else ""},
+                ]
+            },
+        )
         memory_context = "\n".join(chunks)
     except Exception as exc:
         logger.warning("RAG retrieval failed for chat: %s", exc)
@@ -407,7 +421,10 @@ def chat_with_data(
         }
 
 
-def chat_general(query: str, chroma_persist_dir: str) -> dict[str, Any]:
+def chat_general(
+    query: str,
+    chroma_persist_dir: str,
+) -> dict[str, Any]:
     """Handle general questions using only the RAG knowledge base.
 
     No dataset is required — the LLM answers based on forecasting
@@ -426,7 +443,9 @@ def chat_general(query: str, chroma_persist_dir: str) -> dict[str, Any]:
     rag_kb = get_rag_kb(chroma_persist_dir)
     memory_context = ""
     try:
-        chunks = rag_kb.retrieve(query, k=5)
+        # General chat is deliberately limited to shared methodology. Runtime
+        # analysis is customer data and must never enter this prompt.
+        chunks = rag_kb.retrieve(query, k=5, where={"type": "methodology"})
         memory_context = "\n".join(chunks)
     except Exception as exc:
         logger.warning("RAG retrieval failed for general chat: %s", exc)

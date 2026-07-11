@@ -37,6 +37,9 @@ MAX_UPLOAD_BYTES: int = MAX_UPLOAD_MB * 1024 * 1024
 # and jobs can accumulate before the oldest is evicted.
 MAX_INMEMORY_FILES: int = int(os.getenv("MAX_INMEMORY_FILES", "50"))
 MAX_INMEMORY_JOBS: int = int(os.getenv("MAX_INMEMORY_JOBS", "100"))
+MAX_CONCURRENT_JOBS: int = int(os.getenv("MAX_CONCURRENT_JOBS", "2"))
+if MAX_CONCURRENT_JOBS < 1:
+    raise ValueError("MAX_CONCURRENT_JOBS must be at least 1.")
 
 ALLOWED_EXTENSIONS: list[str] = os.getenv("ALLOWED_EXTENSIONS", "csv,xlsx").split(",")
 
@@ -54,7 +57,7 @@ CHROMA_PERSIST_DIR: str = os.getenv("CHROMA_PERSIST_DIR", "./chroma_db")
 # lookups; the DataFrame itself is loaded lazily from disk on demand.
 FILE_STORAGE_DIR: str = os.getenv("FILE_STORAGE_DIR", "./file_store")
 
-API_KEY_DB_PATH: str = os.getenv("API_KEY_DB_PATH", "./data")
+BACKEND_DB_PATH: str = os.getenv("BACKEND_DB_PATH", "./data/backend.db")
 API_KEY_ENABLED: bool = os.getenv("API_KEY_ENABLED", "false").lower() == "true"
 
 # Deployment-time secret used to protect the one-time bootstrap endpoint

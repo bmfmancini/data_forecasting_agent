@@ -28,7 +28,6 @@ from auth.api_key_db import (
     delete_api_user,
     has_any_users,
     has_bootstrap_user,
-    init_db as init_api_key_db,
     list_api_users,
     rotate_api_key,
     set_user_admin,
@@ -36,6 +35,7 @@ from auth.api_key_db import (
 )
 from auth.dependency import require_admin_api_key, require_api_key
 from core.config import set_api_key_enabled
+from core.database import init_database
 from core.logging_config import get_logger
 from schemas import (
     APIKeyRotatedResponse,
@@ -50,6 +50,9 @@ from schemas import (
     BootstrapResponse,
     ChatRequest,
     ChatResponse,
+    DeletedJobsResponse,
+    ForecastJobQueueItem,
+    ForecastJobSettings,
     JobStatusResponse,
     JobSubmitResponse,
     PreflightResponse,
@@ -59,11 +62,16 @@ from services.chat_service import chat_general, chat_with_data
 from services.file_service import get_file, init_storage, store_file
 from services.job_service import (
     create_job,
+    clear_terminal_jobs,
+    cleanup_terminal_jobs,
     get_job,
+    get_job_settings,
     get_job_status_only,
     init_job_queue,
     is_queue_ready,
     job_worker,
+    list_recent_jobs,
+    update_job_settings,
 )
 from utils.data_parser import parse_upload
 from utils.preflight import run_preflight_checks
@@ -71,6 +79,16 @@ from utils.preflight import run_preflight_checks
 logger = get_logger(__name__)
 
 _JSON_MEDIA_TYPE: str = "application/json"
+_JOB_CLEANUP_INTERVAL_SECONDS: int = 24 * 60 * 60
+
+
+async def _cleanup_job_history() -> None:
+    """Run retention cleanup daily without blocking API request handling."""
+    while True:
+        await asyncio.sleep(_JOB_CLEANUP_INTERVAL_SECONDS)
+        deleted_count = await asyncio.to_thread(cleanup_terminal_jobs)
+        if deleted_count:
+            logger.info("Deleted %d expired forecast job records.", deleted_count)
 
 
 @asynccontextmanager
@@ -82,7 +100,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     on shutdown.
     """
     logger.info("Initializing API key database…")
-    init_api_key_db()
+    init_database()
+    cleanup_terminal_jobs()
     init_storage()
     if has_any_users():
         set_api_key_enabled(True)
@@ -118,13 +137,16 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     else:
         logger.info("No API users — auth disabled (open mode).")
     init_job_queue()
-    worker_task = asyncio.create_task(job_worker())
+    worker_tasks = [
+        asyncio.create_task(job_worker())
+        for _ in range(settings.MAX_CONCURRENT_JOBS)
+    ]
+    cleanup_task = asyncio.create_task(_cleanup_job_history())
     yield
-    worker_task.cancel()
-    try:
-        await worker_task
-    except asyncio.CancelledError:
-        pass
+    for worker_task in worker_tasks:
+        worker_task.cancel()
+    cleanup_task.cancel()
+    await asyncio.gather(*worker_tasks, cleanup_task, return_exceptions=True)
 
 
 app = FastAPI(title="Data Forecaster API", version="1.0.0", lifespan=lifespan)
@@ -133,7 +155,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "DELETE"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=[
         "X-API-Username",
         "X-API-Key",
@@ -480,7 +502,17 @@ async def upload_file(
             detail="An internal error occurred while parsing the file.",
         ) from exc
 
-    file_id = store_file(df, date_col, value_col, freq, file.filename)
+    try:
+        file_id = store_file(
+            df,
+            date_col,
+            value_col,
+            freq,
+            file.filename,
+            owner_id=_user.get("id"),
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     return UploadResponse(
         file_id=file_id,
@@ -505,7 +537,7 @@ async def preflight_check(
     _user: Annotated[dict, Depends(require_api_key)],
 ) -> PreflightResponse:
     """Run data quality checks before starting the full analysis pipeline."""
-    stored = get_file(body.file_id)
+    stored = get_file(body.file_id, requester=_user)
     if not stored:
         raise HTTPException(
             status_code=404,
@@ -546,7 +578,7 @@ def analyze(
     if not is_queue_ready():
         raise HTTPException(status_code=503, detail="Service not ready.")
 
-    stored = get_file(body.file_id)
+    stored = get_file(body.file_id, requester=_user)
     if stored is None:
         raise HTTPException(
             status_code=404, detail=f"File ID '{body.file_id}' not found."
@@ -555,19 +587,83 @@ def analyze(
     date_col = body.date_col or stored["date_col"]
     value_col = body.value_col or stored["value_col"]
 
-    job_id = create_job(
-        file_id=body.file_id,
-        date_col=date_col,
-        value_col=value_col,
-        forecast_horizon=body.forecast_horizon,
-        forced_model=body.forced_model,
-        user_prompt=body.user_prompt,
-        preflight_options=body.preflight_options,
-    )
+    try:
+        job_id = create_job(
+            file_id=body.file_id,
+            date_col=date_col,
+            value_col=value_col,
+            forecast_horizon=body.forecast_horizon,
+            forced_model=body.forced_model,
+            user_prompt=body.user_prompt,
+            preflight_options=body.preflight_options,
+            owner_id=_user.get("id"),
+            application_user_id=body.application_user_id,
+            application_username=body.application_username,
+            application_user_is_admin=(
+                body.application_user_is_admin and bool(_user.get("is_admin"))
+            ),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     return JobSubmitResponse(job_id=job_id, status="pending")
 
 
 # ── Job Status & Results ──────────────────────────────────────────────────────
+
+
+@app.get(
+    "/jobs/recent",
+    response_model=list[ForecastJobQueueItem],
+    responses={403: {"description": "Authenticated user is not an admin"}},
+)
+def recent_jobs(
+    _user: Annotated[dict, Depends(require_admin_api_key)],
+) -> list[dict[str, Any]]:
+    """Return the 25 most recent jobs for the administrator queue."""
+    return list_recent_jobs()
+
+
+@app.delete(
+    "/jobs/terminal",
+    response_model=DeletedJobsResponse,
+    responses={403: {"description": "Authenticated user is not an admin"}},
+)
+def terminal_jobs_clear(
+    _user: Annotated[dict, Depends(require_admin_api_key)],
+) -> dict[str, int]:
+    """Delete completed and failed forecast jobs at an administrator's request."""
+    return {"deleted_count": clear_terminal_jobs()}
+
+
+@app.get(
+    "/job-settings",
+    response_model=ForecastJobSettings,
+    responses={403: {"description": "Authenticated user is not an admin"}},
+)
+def job_settings_get(
+    _user: Annotated[dict, Depends(require_admin_api_key)],
+) -> dict[str, Any]:
+    """Return administrator-managed scheduler and retention settings."""
+    return get_job_settings()
+
+
+@app.put(
+    "/job-settings",
+    response_model=ForecastJobSettings,
+    responses={403: {"description": "Authenticated user is not an admin"}},
+)
+def job_settings_update(
+    job_settings: ForecastJobSettings,
+    _user: Annotated[dict, Depends(require_admin_api_key)],
+) -> dict[str, Any]:
+    """Update scheduler and retention settings, then clean expired history."""
+    updated = update_job_settings(
+        job_settings.max_running_jobs_per_user,
+        job_settings.retention_days,
+        job_settings.cleanup_enabled,
+    )
+    cleanup_terminal_jobs()
+    return updated
 
 
 @app.get("/jobs/{job_id}/status", responses={404: {"description": "Job ID not found"}})
@@ -582,7 +678,7 @@ def get_job_status_lightweight(
     ``GET /jobs/{job_id}`` to retrieve the complete results once the
     job is done.
     """
-    status = get_job_status_only(job_id)
+    status = get_job_status_only(job_id, requester=_user)
     if status is None:
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
     return {"job_id": job_id, **status}
@@ -594,7 +690,7 @@ def get_job_status(
     _user: Annotated[dict, Depends(require_api_key)],
 ) -> JobStatusResponse:
     """Retrieve the full status and results of a specific background job."""
-    job = get_job(job_id)
+    job = get_job(job_id, requester=_user)
     if job is None:
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
     return JobStatusResponse(
@@ -623,7 +719,7 @@ async def chat_explorer(
 ) -> ChatResponse:
     """Allow users to chat with the agent about the uploaded data and results."""
     if request.file_id:
-        stored = get_file(request.file_id)
+        stored = get_file(request.file_id, requester=_user)
         if not stored:
             raise HTTPException(
                 status_code=404,
@@ -639,6 +735,7 @@ async def chat_explorer(
                 query=request.query,
                 df=stored["df"],
                 file_id=request.file_id,
+                owner_id=_user.get("id"),
                 chroma_persist_dir=settings.CHROMA_PERSIST_DIR,
             )
             return ChatResponse(**response)

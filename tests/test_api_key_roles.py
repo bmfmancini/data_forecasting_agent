@@ -22,11 +22,11 @@ from auth.api_key_db import (  # noqa: E402
     create_api_user,
     create_first_user,
     delete_api_user,
-    init_db,
     list_api_users,
     set_user_admin,
 )
 from auth.dependency import require_admin_api_key, require_api_key  # noqa: E402
+from core.database import init_database  # noqa: E402
 from main import app  # noqa: E402
 
 # Test API key reused from the ADMIN_API_KEY env var set in _reset_api_key_db.
@@ -41,18 +41,17 @@ def _reset_api_key_db(tmp_path: Any, monkeypatch: Any) -> None:
     time, so ``monkeypatch.setenv`` alone is not enough — we must also
     patch the cached attributes directly.
     """
-    db_dir = tmp_path / "api_keys"
-    db_dir.mkdir()
-    monkeypatch.setenv("API_KEY_DB_PATH", str(db_dir))
+    db_path = str(tmp_path / "backend.db")
+    monkeypatch.setenv("BACKEND_DB_PATH", db_path)
     monkeypatch.setenv("API_KEY_ENABLED", "true")
     monkeypatch.setenv("ADMIN_API_KEY", _ADMIN_KEY)
     monkeypatch.setenv("CHROMA_PERSIST_DIR", str(tmp_path / "chroma"))
     monkeypatch.setenv("FILE_STORAGE_DIR", str(tmp_path / "files"))
     # Patch the cached module attributes (read at import time).
-    monkeypatch.setattr(settings, "API_KEY_DB_PATH", str(db_dir))
+    monkeypatch.setattr(settings, "BACKEND_DB_PATH", db_path)
     monkeypatch.setattr(settings, "API_KEY_ENABLED", True)
     monkeypatch.setattr(settings, "ADMIN_API_KEY", _ADMIN_KEY)
-    init_db()
+    init_database()
 
 
 @pytest.fixture
@@ -120,6 +119,18 @@ class TestAdminEndpoints:
             ("POST", "/api-users/1/admin", {"is_admin": True}),
             ("DELETE", "/api-users/1", None),
             ("GET", "/api-users/bootstrap-status", None),
+            ("GET", "/jobs/recent", None),
+            ("DELETE", "/jobs/terminal", None),
+            ("GET", "/job-settings", None),
+            (
+                "PUT",
+                "/job-settings",
+                {
+                    "max_running_jobs_per_user": 2,
+                    "retention_days": 30,
+                    "cleanup_enabled": True,
+                },
+            ),
         ],
     )
     def test_regular_user_forbidden(
@@ -172,6 +183,24 @@ class TestAdminEndpoints:
         )
         assert response.status_code == 200
         assert response.json()["is_admin"] is True
+
+    def test_admin_can_update_forecast_job_settings(
+        self, client: TestClient, admin_user: tuple[str, str]
+    ) -> None:
+        """An administrator can configure queue concurrency and retention."""
+        username, key = admin_user
+        response = client.put(
+            "/job-settings",
+            headers=_auth_headers(username, key),
+            json={
+                "max_running_jobs_per_user": 3,
+                "retention_days": 7,
+                "cleanup_enabled": True,
+            },
+        )
+        assert response.status_code == 200
+        assert response.json()["max_running_jobs_per_user"] == 3
+        assert response.json()["retention_days"] == 7
 
 
 class TestBootstrap:

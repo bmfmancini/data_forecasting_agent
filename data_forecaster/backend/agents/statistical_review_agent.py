@@ -277,13 +277,18 @@ def _check_residual_autocorrelation(
         A flag dict if autocorrelation is detected, otherwise ``None``.
     """
     diag = forecast_result.residual_diagnostics
-    if diag and not diag.is_uncorrelated:
+    if diag and diag.is_uncorrelated is False:
+        p_value = (
+            f"{diag.ljung_box_p_value:.4f}"
+            if diag.ljung_box_p_value is not None
+            else "not available"
+        )
         return {
             "agent": "forecasting",
             "severity": "critical",
             "issue": (
                 f"Model residuals are autocorrelated (Ljung-Box p-value="
-                f"{diag.ljung_box_p_value:.4f}). The model has failed to "
+                f"{p_value}). The model has failed to "
                 "capture all predictable patterns in the data."
             ),
             "recommendation": (
@@ -307,13 +312,18 @@ def _check_residual_normality(
         A flag dict if non-normality is detected, otherwise ``None``.
     """
     diag = forecast_result.residual_diagnostics
-    if diag and not diag.is_normal:
+    if diag and diag.is_normal is False:
+        p_value = (
+            f"{diag.shapiro_wilk_p_value:.4f}"
+            if diag.shapiro_wilk_p_value is not None
+            else "not available"
+        )
         return {
             "agent": "forecasting",
             "severity": "warning",
             "issue": (
                 f"Model residuals are not normally distributed (Shapiro-Wilk "
-                f"p-value={diag.shapiro_wilk_p_value:.4f})."
+                f"p-value={p_value})."
             ),
             "recommendation": (
                 "The calculated prediction intervals may be unreliable. "
@@ -326,7 +336,7 @@ def _check_residual_normality(
 def _check_residual_mean(forecast_result: ForecastResult) -> dict[str, Any] | None:
     """Flag when model residuals have a non-zero mean."""
     diag = forecast_result.residual_diagnostics
-    if diag and not diag.is_zero_mean:
+    if diag and diag.is_zero_mean is False:
         return {
             "agent": "forecasting",
             "severity": "warning",
@@ -388,6 +398,7 @@ def _build_statistical_profile(stat_result: StatisticalResult) -> str:
         f"- White noise: {stat_result.is_white_noise} "
         f"(p={stat_result.white_noise_p_value:.4f})\n"
         f"- Recommended remediation: {stat_result.recommended_remediation}\n"
+        f"- Disabled statistical tests: {stat_result.disabled_tests}\n"
         f"- Summary: {stat_result.summary}"
     )
 
@@ -411,10 +422,21 @@ def _build_forecast_text(forecast_result: ForecastResult) -> str:
     forecast_sample = [round(v, 2) for v in forecast_result.forecast[:10]]
     residual_text = "Not available."
     if diag := forecast_result.residual_diagnostics:
+        ljung_box = (
+            f"{diag.ljung_box_p_value:.4f}"
+            if diag.ljung_box_p_value is not None
+            else "disabled"
+        )
+        shapiro = (
+            f"{diag.shapiro_wilk_p_value:.4f}"
+            if diag.shapiro_wilk_p_value is not None
+            else "disabled"
+        )
         residual_text = (
             f"Mean={diag.mean:.4f} (is_zero: {diag.is_zero_mean}), "
-            f"Ljung-Box p={diag.ljung_box_p_value:.4f} (is_uncorrelated: {diag.is_uncorrelated}), "
-            f"Shapiro-Wilk p={diag.shapiro_wilk_p_value:.4f} (is_normal: {diag.is_normal})"
+            f"Ljung-Box p={ljung_box} (is_uncorrelated: {diag.is_uncorrelated}), "
+            f"Shapiro-Wilk p={shapiro} (is_normal: {diag.is_normal}), "
+            f"Disabled: {diag.disabled_tests}"
         )
 
     return (

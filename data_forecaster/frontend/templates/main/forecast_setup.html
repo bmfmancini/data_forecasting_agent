@@ -1,186 +1,98 @@
 {% extends "base.html" %}
 {% block title %}Forecast Setup — Forecaster{% endblock %}
-{% block header %}🚀 Forecast Setup{% endblock %}
+{% block header %}Forecast Setup{% endblock %}
 
 {% block content %}
-<div class="row">
-    <div class="col-12">
-        <div class="card">
-            <div class="card-body">
+<div class="wizard-shell" id="forecast-wizard">
+    {% if setup_error %}
+    <div class="alert alert-danger" role="alert">{{ setup_error }}</div>
+    {% endif %}
+    <div class="setup-stepper" id="setup-stepper" aria-label="Forecast setup progress">
+        <div class="stepper-step active" data-step="1" aria-current="step"><div class="stepper-circle">1</div><span class="stepper-label">Data</span><div class="stepper-line"></div></div>
+        <div class="stepper-step" data-step="2"><div class="stepper-circle">2</div><span class="stepper-label">Preflight</span><div class="stepper-line"></div></div>
+        <div class="stepper-step" data-step="3"><div class="stepper-circle">3</div><span class="stepper-label">Configure</span></div>
+    </div>
 
-                {# ── Setup Stepper ─────────────────────────────────── #}
-                <div class="setup-stepper" id="setup-stepper">
-                    <div class="stepper-step active" data-step="1" aria-current="step">
-                        <div class="stepper-circle">1</div>
-                        <span class="stepper-label">Data Source</span>
-                        <div class="stepper-line"></div>
-                    </div>
-                    <div class="stepper-step" data-step="2">
-                        <div class="stepper-circle">2</div>
-                        <span class="stepper-label">Columns</span>
-                        <div class="stepper-line"></div>
-                    </div>
-                    <div class="stepper-step" data-step="3">
-                        <div class="stepper-circle">3</div>
-                        <span class="stepper-label">Preflight</span>
-                        <div class="stepper-line"></div>
-                    </div>
-                    <div class="stepper-step" data-step="4">
-                        <div class="stepper-circle">4</div>
-                        <span class="stepper-label">Configure</span>
-                    </div>
-                </div>
-
-                <div class="row">
-                    {# ── Section 1: Data Source ─────────────────────────── #}
-                    <div class="col-lg-6 mb-4">
-                        <h5 class="mb-3">1. Data Source</h5>
-                        <div class="card">
-                            <div class="card-body">
-                                <label class="form-label">Upload Time Series (CSV or XLSX)</label>
-                                <input type="file" id="file-input" class="form-control" accept=".csv,.xlsx">
-                                <div id="upload-status" class="mt-2 small"></div>
-
-                                <div class="d-flex align-items-center my-3">
-                                    <hr class="flex-grow-1">
-                                    <span class="mx-2 text-muted">OR</span>
-                                    <hr class="flex-grow-1">
-                                </div>
-
-                                <form method="post" action="{{ url_for('main.load_demo') }}" class="mb-2">
-                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                    <button type="submit" class="btn btn-outline-secondary w-100">📂 Load Demo Data</button>
-                                </form>
-                            </div>
-                        </div>
-                    </div>
-
-                    {# ── Section 2: Column Selection ────────────────────── #}
-                    <div class="col-lg-6 mb-4">
-                        <h5 class="mb-3">2. Column Selection</h5>
-                        <div class="card">
-                            <div class="card-body">
-                                <div class="mb-3">
-                                    <label class="form-label">Date Column</label>
-                                    <select id="sel-date" class="form-select" disabled>
-                                        <option value="">Upload a file first</option>
-                                    </select>
-                                </div>
-                                <div class="mb-3">
-                                    <label class="form-label">Value Column</label>
-                                    <select id="sel-value" class="form-select" disabled>
-                                        <option value="">Upload a file first</option>
-                                    </select>
-                                </div>
-                                <p class="small mb-0 text-muted">
-                                    Detected Frequency: <strong>—</strong>
-                                </p>
-                            </div>
-                        </div>
-                    </div>
-
-                    {# ── Section 3: Preflight Review ────────────────────── #}
-                    <div class="col-lg-6 mb-4">
-                        <h5 class="mb-3">3. Preflight Review</h5>
-                        <div id="preflight-status">
-                            <div class="alert alert-secondary">
-                                Upload data to run the preflight checks.
-                            </div>
-                        </div>
-                    </div>
-
-                    {# ── Section 4: Forecast Configuration ──────────────── #}
-                    <div class="col-lg-6 mb-4">
-                        <h5 class="mb-3">4. Forecast Configuration</h5>
-                        <div class="card">
-                            <div class="card-body">
-                                <div class="mb-3">
-                                    <label class="form-label">Forecast Model</label>
-                                    <select id="sel-model" class="form-select" disabled>
-                                        <option value="Auto (AI selects)">Auto (AI selects)</option>
-                                        <option value="ARIMA">ARIMA</option>
-                                        <option value="SARIMA">SARIMA</option>
-                                        <option value="Holt-Winters">Holt-Winters</option>
-                                    </select>
-                                </div>
-                                <div class="mb-3">
-                                    <label class="form-label">
-                                        Forecast Horizon: <span id="horizon-val">12</span> periods
-                                    </label>
-                                    <input type="range" id="inp-horizon" class="form-range" min="1" max="100" value="12" disabled>
-                                </div>
-                                <div>
-                                    <label class="form-label">Additional Instructions (optional)</label>
-                                    <textarea id="inp-prompt" class="form-control" rows="2"
-                                              placeholder="e.g. Focus on seasonal patterns" disabled></textarea>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                </div>
-
-                {# ── Section 5: Run Analysis ────────────────────────────── #}
-                <div class="text-center mt-3">
-                    <div id="run-error-message" style="display: none;"></div>
-                    <button type="button" class="btn btn-success btn-lg w-50" id="btn-run" disabled>
-                        Run Analysis
-                    </button>
-                </div>
-
-                {# Progress Bar Area #}
-                <div id="progress-area-container" class="mt-4" style="display: none;">
-                    <div class="progress" style="height: 20px;">
-                        <div id="progress-bar-main" class="progress-bar" role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">0%</div>
-                    </div>
-                    <div id="progress-step" class="text-center mt-2 small text-muted"></div>
-                </div>
-
+    <section class="wizard-panel" data-wizard-step="1" aria-labelledby="data-step-title">
+        <p class="wizard-kicker">Step 1 of 3</p>
+        <h1 id="data-step-title" class="h3">Start with your data</h1>
+        <p class="text-muted">Upload a CSV or XLSX file, or use the demo dataset. Then confirm the time and measure columns.</p>
+        <div class="row g-4 mt-1">
+            <div class="col-lg-6">
+                <div class="card h-100"><div class="card-body">
+                    <label class="form-label" for="file-input">Upload time-series data</label>
+                    <input type="file" id="file-input" class="form-control" accept=".csv,.xlsx">
+                    <div id="upload-status" class="mt-2 small" aria-live="polite"></div>
+                    <div class="d-flex align-items-center my-3"><hr class="flex-grow-1"><span class="mx-2 text-muted">OR</span><hr class="flex-grow-1"></div>
+                    <form method="post" action="{{ url_for('main.load_demo') }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-outline-secondary w-100">Load demo data</button>
+                    </form>
+                </div></div>
+            </div>
+            <div class="col-lg-6">
+                <div class="card h-100"><div class="card-body">
+                    <div class="mb-3"><label class="form-label" for="sel-date">Date column</label><select id="sel-date" class="form-select" disabled><option value="">Upload a file first</option></select></div>
+                    <div class="mb-3"><label class="form-label" for="sel-value">Data column</label><select id="sel-value" class="form-select" disabled><option value="">Upload a file first</option></select></div>
+                    <p class="small mb-0 text-muted">Detected frequency: <strong id="detected-frequency">—</strong></p>
+                </div></div>
             </div>
         </div>
-    </div>
-</div>
-{% endblock %}
+        <div class="card mt-4"><div class="card-body">
+            <label class="form-label" for="inp-prompt">Tell us about this data <span class="text-muted fw-normal">(optional)</span></label>
+            <textarea id="inp-prompt" class="form-control" rows="3" placeholder="For example: monthly unit sales for the Northeast region; explain any promotions, events, or business context that may affect the forecast.">{{ setup_state.user_prompt }}</textarea>
+            <p class="small text-muted mb-0 mt-2">This context is included with the forecast request.</p>
+        </div></div>
+        <div class="wizard-actions"><span></span><button class="btn btn-primary" id="btn-to-preflight" type="button" disabled>Continue to preflight</button></div>
+    </section>
 
-{% block modal %}
-{# ── Preflight Modal ───────────────────────────────────────── #}
-{# Rendered outside the content block so it is a direct child of  #}
-{# body, avoiding the .tab-content-area stacking context trap.    #}
-<div class="modal fade" id="preflightModal" tabindex="-1">
-    <div class="modal-dialog modal-lg">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title">Preflight Review</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-            </div>
-            <div class="modal-body" id="preflight-modal-body"></div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <button type="button" class="btn btn-primary" onclick="App.savePreflightChoices()">
-                    Apply Preflight Choices
-                </button>
-            </div>
-        </div>
-    </div>
+    <section class="wizard-panel d-none" data-wizard-step="2" aria-labelledby="preflight-step-title">
+        <p class="wizard-kicker">Step 2 of 3</p>
+        <h1 id="preflight-step-title" class="h3">Review data readiness</h1>
+        <p class="text-muted">We check the selected series before forecasting. Resolve or acknowledge any decisions below.</p>
+        <div id="preflight-status" aria-live="polite"><div class="alert alert-secondary">Run preflight checks to review this series.</div></div>
+        <div id="preflight-decisions"></div>
+        <div class="wizard-actions"><button class="btn btn-outline-secondary" data-wizard-back="1" type="button">Back</button><button class="btn btn-primary" id="btn-to-configure" type="button" disabled>Continue to configuration</button></div>
+    </section>
+
+    <section class="wizard-panel d-none" data-wizard-step="3" aria-labelledby="config-step-title">
+        <p class="wizard-kicker">Step 3 of 3</p>
+        <h1 id="config-step-title" class="h3">Configure the forecast</h1>
+        <p class="text-muted">Choose how far ahead to predict and optionally select a model.</p>
+        <div class="card"><div class="card-body">
+            <div class="mb-3"><label class="form-label" for="sel-model">Forecast model</label><select id="sel-model" class="form-select"><option value="Auto (AI selects)" {{ 'selected' if setup_state.model_choice == 'Auto (AI selects)' }}>Auto (AI selects)</option><option value="ARIMA" {{ 'selected' if setup_state.model_choice == 'ARIMA' }}>ARIMA</option><option value="SARIMA" {{ 'selected' if setup_state.model_choice == 'SARIMA' }}>SARIMA</option><option value="Holt-Winters" {{ 'selected' if setup_state.model_choice == 'Holt-Winters' }}>Holt-Winters</option></select></div>
+            <div class="mb-3"><label class="form-label" for="inp-horizon">Forecast horizon: <span id="horizon-val">{{ setup_state.forecast_horizon }}</span> periods</label><input type="range" id="inp-horizon" class="form-range" min="1" max="100" value="{{ setup_state.forecast_horizon }}"></div>
+            <section class="advanced-options-box" aria-labelledby="advanced-options-title">
+            <h2 id="advanced-options-title" class="h6 mb-3">Advanced options</h2>
+            <button class="btn btn-success btn-sm w-100" type="button" data-bs-toggle="collapse" data-bs-target="#advanced-data-cleaning" aria-expanded="false">Advanced data cleaning methods</button>
+            <div class="collapse mt-3" id="advanced-data-cleaning"><div class="border rounded p-3">
+                <p class="small text-muted mb-3">Override the automatic cleaning choices for this forecast. These controls take precedence over preflight selections.</p>
+                <div class="row g-3">
+                    <div class="col-md-6"><label class="form-label small" for="clean-frequency">Frequency alignment</label><select id="clean-frequency" class="form-select form-select-sm cleaning-option"><option value="Let AI Decide">Let AI decide</option><option value="D">Daily</option><option value="W">Weekly</option><option value="MS">Monthly</option><option value="QS">Quarterly</option><option value="YS">Yearly</option></select></div>
+                    <div class="col-md-6"><label class="form-label small" for="clean-duplicates">Duplicate timestamps</label><select id="clean-duplicates" class="form-select form-select-sm cleaning-option"><option value="Let AI Decide">Let AI decide</option><option value="mean">Average values</option><option value="latest">Keep latest value</option><option value="keep-first">Keep first value</option></select></div>
+                    <div class="col-md-6"><label class="form-label small" for="clean-missing">Missing values</label><select id="clean-missing" class="form-select form-select-sm cleaning-option"><option value="Let AI Decide">Let AI decide</option><option value="interpolate">Time interpolation</option><option value="forward-fill">Forward fill</option><option value="seasonal-decompose">Seasonal decomposition</option></select></div>
+                    <div class="col-md-6"><label class="form-label small" for="clean-outliers">Outlier treatment</label><select id="clean-outliers" class="form-select form-select-sm cleaning-option"><option value="Let AI Decide">Let AI decide</option><option value="None">Keep all values</option><option value="Clip (Winsorize)">IQR clipping</option><option value="Z-Score Clip">Z-score clipping</option><option value="Remove">Remove and impute</option></select></div>
+                    <div class="col-md-6"><label class="form-label small" for="clean-smoothing">Smoothing</label><select id="clean-smoothing" class="form-select form-select-sm cleaning-option"><option value="none">None</option><option value="ewma">Exponentially weighted moving average</option><option value="savgol">Savitzky-Golay filter</option></select></div>
+                </div>
+            </div></div>
+            <button class="btn btn-success btn-sm w-100 advanced-statistical-button" type="button" data-bs-toggle="collapse" data-bs-target="#advanced-statistical-tuning" aria-expanded="false">Advanced statistical tuning</button>
+            <div class="collapse mt-3" id="advanced-statistical-tuning"><div class="border rounded p-3"><p class="small text-muted mb-3">Disable tests or transforms for this forecast only. By default all applicable checks run.</p><div class="row g-2">
+                {% for test, label in [('adf', 'ADF stationarity'), ('kpss', 'KPSS stationarity'), ('trend', 'Trend detection'), ('white_noise', 'White-noise test'), ('variance_stability', 'Variance stability'), ('box_cox', 'Box-Cox transform'), ('change_points', 'Change points'), ('acf_pacf', 'ACF/PACF'), ('stl', 'STL decomposition'), ('periodogram', 'Periodogram'), ('residual_zero_mean', 'Residual zero mean'), ('residual_autocorrelation', 'Residual autocorrelation'), ('residual_normality', 'Residual normality')] %}
+                <div class="col-sm-6"><div class="form-check"><input class="form-check-input stat-tuning-toggle" type="checkbox" id="stat-{{ test }}" data-stat-test="{{ test }}" checked><label class="form-check-label small" for="stat-{{ test }}">{{ label }}</label></div></div>
+                {% endfor %}
+            </div></div></div>
+            </section>
+        </div></div>
+        <div id="run-error-message" class="mt-3" style="display: none;" aria-live="assertive"></div>
+        <div class="wizard-actions"><button class="btn btn-outline-secondary" data-wizard-back="2" type="button">Back</button><button type="button" class="btn btn-success" id="btn-run">Run forecast</button></div>
+    </section>
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script>
-{# Auto-populate dropdowns if upload_info exists in session (e.g. from demo data) #}
 {% if upload_info and upload_info.file_id %}
-(function() {
-    var info = {{ upload_info | tojson }};
-    if (window.App) {
-        App.populateColumnSelectors(info);
-        App.enableControls();
-        App.updateUploadStatus(info.rows + " rows detected.", false);
-
-        if (App.triggerPreflight) {
-            setTimeout(function() { App.triggerPreflight(); }, 100);
-        }
-    }
-})();
+window.forecastUploadInfo = {{ upload_info | tojson }};
 {% endif %}
 </script>
 {% endblock %}

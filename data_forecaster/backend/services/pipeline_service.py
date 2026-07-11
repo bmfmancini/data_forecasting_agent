@@ -88,6 +88,11 @@ def run_pipeline(
     if (preflight_options or {}).get("continue_short_series") == "stop":
         raise ValueError("Analysis stopped because the selected series is too short.")
 
+    statistical_tuning = (preflight_options or {}).get("statistical_tuning") or {}
+    disabled_statistical_tests = statistical_tuning.get("disabled_tests") or []
+    if not isinstance(disabled_statistical_tests, list):
+        disabled_statistical_tests = []
+
     df, freq = prepare_series_frame(df, date_col, value_col, preflight_options)
     series = df.set_index(date_col)[value_col].astype(float)
     seasonal_period = _freq_to_period(freq)
@@ -105,7 +110,10 @@ def run_pipeline(
     _progress(20, "Running statistical analysis…")
     user_domain = (preflight_options or {}).get("data_domain", "Skip / Let AI Guess")
     stat_result = run_statistical_agent(
-        series, seasonal_period, user_domain=user_domain
+        series,
+        seasonal_period,
+        user_domain=user_domain,
+        disabled_tests=disabled_statistical_tests,
     )
     _progress(35, "Statistical analysis complete")
 
@@ -125,7 +133,10 @@ def run_pipeline(
                 "(likely determined outliers are signal)."
             )
 
-    if "box_cox" in stat_result.recommended_remediation:
+    if (
+        "box_cox" in stat_result.recommended_remediation
+        and "box_cox" not in disabled_statistical_tests
+    ):
         logger.info("Agent decided to APPLY Box-Cox transformation.")
         try:
             series, _ = apply_boxcox(series)
@@ -136,7 +147,10 @@ def run_pipeline(
         except Exception as e:
             logger.warning("Box-Cox application failed: %s", e)
 
-    if "change_point_analysis" in stat_result.recommended_remediation:
+    if (
+        "change_point_analysis" in stat_result.recommended_remediation
+        and "change_points" not in disabled_statistical_tests
+    ):
         logger.info(
             "Agent detected significant change points. Adding note to analysis."
         )
@@ -189,7 +203,12 @@ def run_pipeline(
     logger.info("Agent 4: Forecasting")
     _progress(60, "Running forecast…")
     forecast_result, all_metrics = run_forecasting_agent(
-        series, model_selection, stat_result, forecast_horizon, freq
+        series,
+        model_selection,
+        stat_result,
+        forecast_horizon,
+        freq,
+        disabled_tests=disabled_statistical_tests,
     )
     _progress(75, "Forecast complete")
 
@@ -278,7 +297,8 @@ def run_pipeline(
             stat_result,
             forecast_horizon,
             freq,
-            all_metrics=all_metrics,  # Pass existing metrics
+            existing_metrics=all_metrics,  # Pass existing metrics
+            disabled_tests=disabled_statistical_tests,
         )
         # Re-run statistical review on the new outputs
         _progress(87, "Re-running statistical review…")
@@ -353,17 +373,23 @@ def run_pipeline(
     chart_historical = plot_historical(series)
 
     try:
-        stl_data = run_stl_decomposition(series, period=sp)
-        chart_stl = plot_stl(series, stl_data, sp)
+        if "stl" in disabled_statistical_tests:
+            chart_stl = {}
+        else:
+            stl_data = run_stl_decomposition(series, period=sp)
+            chart_stl = plot_stl(series, stl_data, sp)
     except Exception as exc:
         logger.warning("STL chart failed: %s", exc)
         chart_stl = {}
 
     try:
-        acf_data = compute_acf_pacf(series)
-        chart_acf_pacf = plot_acf_pacf(
-            acf_data["acf_values"], acf_data["pacf_values"], acf_data["lags"]
-        )
+        if "acf_pacf" in disabled_statistical_tests:
+            chart_acf_pacf = ""
+        else:
+            acf_data = compute_acf_pacf(series)
+            chart_acf_pacf = plot_acf_pacf(
+                acf_data["acf_values"], acf_data["pacf_values"], acf_data["lags"]
+            )
     except Exception as exc:
         logger.warning("ACF/PACF chart failed: %s", exc)
         chart_acf_pacf = ""

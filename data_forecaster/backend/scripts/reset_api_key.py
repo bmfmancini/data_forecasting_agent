@@ -30,8 +30,9 @@ import sys
 # Ensure local modules are importable when run as ``python -m`` or directly.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from auth.api_key_db import get_connection, hash_api_key
-from core.config import API_KEY_DB_PATH
+from auth.argon2_helpers import hash_api_key
+from core.config import BACKEND_DB_PATH
+from core.database import get_connection
 
 
 def _resolve_user(
@@ -112,8 +113,8 @@ Examples:
     parser.add_argument(
         "--db-path",
         dest="db_path",
-        default=API_KEY_DB_PATH,
-        help=f"Directory containing api_keys.db. Defaults to {API_KEY_DB_PATH}.",
+        default=BACKEND_DB_PATH,
+        help=f"SQLite database file. Defaults to {BACKEND_DB_PATH}.",
     )
 
     args = parser.parse_args()
@@ -131,9 +132,8 @@ Examples:
         print("Error: no API key provided.", file=sys.stderr)
         return 1
 
-    db_file = os.path.join(args.db_path, "api_keys.db")
-    if not os.path.exists(db_file):
-        print(f"Error: database not found at {db_file}", file=sys.stderr)
+    if not os.path.exists(args.db_path):
+        print(f"Error: database not found at {args.db_path}", file=sys.stderr)
         return 1
 
     conn = get_connection(db_path=args.db_path)

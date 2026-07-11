@@ -28,9 +28,13 @@ logger = get_logger(__name__)
 
 
 def run_statistical_agent(
-    series: pd.Series, seasonal_period: int = 12, user_domain: str = "General"
+    series: pd.Series,
+    seasonal_period: int = 12,
+    user_domain: str = "General",
+    disabled_tests: list[str] | None = None,
 ) -> StatisticalResult:
     """Run statistical analysis ReAct agent and return a StatisticalResult."""
+    disabled = set(disabled_tests or [])
 
     # ── Compute all stats directly ────────────────────────────────────────────
     # Handle constant series to avoid ValueError in statsmodels (adfuller)
@@ -47,6 +51,7 @@ def run_statistical_agent(
             trend_slope=0.0,
             seasonal_period=seasonal_period,
             dominant_period=0.0,
+            disabled_tests=sorted(disabled),
             summary="The provided time series is constant (all values are identical). It is statistically stationary with no detectable trend or seasonal patterns.",
             reasoning_steps=[
                 {
@@ -56,14 +61,65 @@ def run_statistical_agent(
             ],
         )
 
-    adf = run_adf_test(series)
-    kpss_res = run_kpss_test(series)
-    trend = detect_trend(series)
-    periodogram = run_periodogram(series)
+    adf = (
+        {
+            "statistic": 0.0,
+            "p_value": 1.0,
+            "is_stationary": True,
+            "interpretation": "ADF stationarity test skipped by user request.",
+        }
+        if "adf" in disabled
+        else run_adf_test(series)
+    )
+    kpss_res = (
+        {
+            "statistic": 0.0,
+            "p_value": 1.0,
+            "is_stationary": True,
+            "interpretation": "KPSS stationarity test skipped by user request.",
+        }
+        if "kpss" in disabled
+        else run_kpss_test(series)
+    )
+    trend = (
+        {
+            "has_trend": False,
+            "slope": 0.0,
+            "interpretation": "Trend detection skipped by user request.",
+        }
+        if "trend" in disabled
+        else detect_trend(series)
+    )
+    periodogram = (
+        {
+            "dominant_period": 0.0,
+            "frequencies": [],
+            "power": [],
+            "interpretation": "Periodogram skipped by user request.",
+        }
+        if "periodogram" in disabled
+        else run_periodogram(series)
+    )
     outliers_iqr = detect_outliers_iqr(series)
     outliers_zscore = detect_outliers_zscore(series)
-    white_noise = run_white_noise_test(series)
-    var_stability = check_variance_stability(series)
+    white_noise = (
+        {
+            "p_value": 1.0,
+            "is_white_noise": False,
+            "interpretation": "White-noise test skipped by user request.",
+        }
+        if "white_noise" in disabled
+        else run_white_noise_test(series)
+    )
+    var_stability = (
+        {
+            "is_unstable": False,
+            "correlation": 0.0,
+            "interpretation": "Variance stability check skipped by user request.",
+        }
+        if "variance_stability" in disabled
+        else check_variance_stability(series)
+    )
 
     # Determine which outlier detection method to recommend based on data characteristics
     # Z-score is better for normally distributed data, IQR for skewed distributions
@@ -99,13 +155,30 @@ def run_statistical_agent(
                 )
 
     # ── Build Statistical Profile ─────────────────────────────────────────────
-    stl = run_stl_decomposition(series, period=inferred_period or 12)
-    change_points = detect_change_points(series)
-    acf_data = compute_acf_pacf(series)
+    stl = (
+        None
+        if "stl" in disabled
+        else run_stl_decomposition(series, period=inferred_period or 12)
+    )
+    change_points = (
+        {
+            "change_points": [],
+            "method_used": "disabled",
+            "threshold": None,
+            "interpretation": "Change-point detection skipped by user request.",
+        }
+        if "change_points" in disabled
+        else detect_change_points(series)
+    )
+    acf_data = None if "acf_pacf" in disabled else compute_acf_pacf(series)
     conf_bound = 1.96 / np.sqrt(len(series))
-    sig_acf = [
-        i for i, v in enumerate(acf_data["acf_values"][1:], 1) if abs(v) > conf_bound
-    ]
+    sig_acf = []
+    if acf_data is not None:
+        sig_acf = [
+            i
+            for i, v in enumerate(acf_data["acf_values"][1:], 1)
+            if abs(v) > conf_bound
+        ]
 
     # Treat 'Skip' or the generic 'Other' as a trigger for AI inference
     is_inferred = user_domain in ["Skip / Let AI Guess", "Other (Custom)"]
@@ -120,9 +193,18 @@ def run_statistical_agent(
         f"Outliers ({'Z-score' if use_zscore else 'IQR'}): {outliers['interpretation']}"
     )
     outlier_comparison = f"Outlier Comparison: IQR found {outliers_iqr['count']} outliers, Z-score found {outliers_zscore['count']} outliers"
+    seasonal_range = (
+        max(stl["seasonal"]) - min(stl["seasonal"]) if stl is not None else 0.0
+    )
+    disabled_info = (
+        f"Disabled statistical tests for this forecast: {sorted(disabled)}\n"
+        if disabled
+        else ""
+    )
 
     profile = (
         f"{domain_info}\n"
+        f"{disabled_info}"
         f"STATISTICAL PROFILE:\n"
         f"- ADF: {adf['interpretation']}\n"
         f"- KPSS: {kpss_res['interpretation']}\n"
@@ -134,7 +216,7 @@ def run_statistical_agent(
         f"- Randomness: {white_noise['interpretation']}\n"
         f"- Variance Stability: {var_stability['interpretation']}\n"
         f"- Dominant Period: {periodogram['dominant_period']:.2f}\n"
-        f"- STL Seasonal Range: {max(stl['seasonal']) - min(stl['seasonal']):.2f}\n"
+        f"- STL Seasonal Range: {seasonal_range:.2f}\n"
         f"- Change Points: {change_points['interpretation']}\n"
         f"- Significant ACF Lags: {sig_acf[:5]}"
     )
@@ -163,9 +245,9 @@ def run_statistical_agent(
             recommended_remediation.append("iqr_clip")
         if "APPLY_ZSCORE" in summary or ("APPLY_OUTLIER" in summary and use_zscore):
             recommended_remediation.append("zscore_clip")
-        if "APPLY_BOXCOX" in summary:
+        if "APPLY_BOXCOX" in summary and "box_cox" not in disabled:
             recommended_remediation.append("box_cox")
-        if "CHANGE_POINTS_DETECTED" in summary:
+        if "CHANGE_POINTS_DETECTED" in summary and "change_points" not in disabled:
             recommended_remediation.append("change_point_analysis")
 
         reasoning_steps = [
@@ -185,12 +267,23 @@ def run_statistical_agent(
             f"KPSS: {'stationary' if kpss_res['is_stationary'] else 'non-stationary'}. "
             f"Trend: {'present' if trend['has_trend'] else 'absent'}."
         )
+        if disabled:
+            summary += (
+                " Disabled by user for this forecast: "
+                f"{', '.join(sorted(disabled))}."
+            )
         reasoning_steps = [
             {
                 "thought": f"Statistical agent failed: {str(exc)}",
                 "observation": "Falling back to raw statistical test results.",
             }
         ]
+
+    if disabled and "Disabled by user for this forecast" not in summary:
+        summary += (
+            "\n\nDisabled by user for this forecast: "
+            f"{', '.join(sorted(disabled))}."
+        )
 
     logger.info(
         "Statistical analysis complete. stationary_adf=%s seasonal_period=%s",
@@ -215,6 +308,7 @@ def run_statistical_agent(
         domain=domain_guess,
         seasonal_period=inferred_period,
         dominant_period=periodogram["dominant_period"],
+        disabled_tests=sorted(disabled),
         summary=summary,
         reasoning_steps=reasoning_steps,
         token_usage=token_usage,

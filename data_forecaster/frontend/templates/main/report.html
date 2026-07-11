@@ -2,7 +2,7 @@
 {% block title %}Report — Forecaster{% endblock %}
 {% block header %}📄 Report{% endblock %}
 {% block content %}
-{% if session.analysis_result.llm_fallback %}
+{% if llm_fallback %}
 <div class="alert alert-warning">
     ⚠️ The LLM was not available for report generation. A local template was used as a fallback.
 </div>
@@ -16,7 +16,7 @@
             <p class="report-kicker mb-1">Executive Dashboard</p>
             <h2 class="report-title mb-0">Forecast decision brief</h2>
         </div>
-        <form method="post" action="{{ url_for('main.report_export') }}" class="report-export-form">
+        <form method="post" action="{{ export_url }}" class="report-export-form">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-outline-light btn-sm report-export-btn">Download PDF</button>
         </form>
@@ -52,6 +52,21 @@
         </div>
     </div>
 </section>
+
+{% if custom_settings %}
+<section class="report-panel mb-4" aria-labelledby="custom-settings-title">
+    <div class="report-section-heading">
+        <p class="report-kicker mb-1">Run Configuration</p>
+        <h5 id="custom-settings-title" class="mb-0">Selected Custom Settings</h5>
+    </div>
+    <dl class="row mb-0">
+        {% for setting in custom_settings %}
+        <dt class="col-md-4 small text-muted mb-1">{{ setting.label }}</dt>
+        <dd class="col-md-8 mb-3">{{ setting.value }}</dd>
+        {% endfor %}
+    </dl>
+</section>
+{% endif %}
 
 <div class="report-section-grid mb-4">
     {# ── Health Indicators ─────────────────────────────────────────────── #}
@@ -147,7 +162,7 @@
 <script>
 // Check if LLM fallback occurred and display a warning if needed
 (function() {
-    const llmFallback = {{ session.analysis_result.llm_fallback | tojson }};
+    const llmFallback = {{ llm_fallback | tojson }};
     if (llmFallback) {
         console.warn("LLM fallback occurred. A local template was used for report generation.");
     }

@@ -210,6 +210,43 @@ class BackendAPIClient:
             verify=self._verify,
         )
 
+    def list_recent_jobs(self) -> requests.Response:
+        """Return the 25 most recent forecast jobs for administrators."""
+        return requests.get(
+            f"{self._base_url}/jobs/recent",
+            headers=self._headers(),
+            timeout=JOB_STATUS_TIMEOUT,
+            verify=self._verify,
+        )
+
+    def clear_terminal_jobs(self) -> requests.Response:
+        """Delete all completed and failed forecast jobs as an administrator."""
+        return requests.delete(
+            f"{self._base_url}/jobs/terminal",
+            headers=self._headers(),
+            timeout=ANALYSIS_TIMEOUT,
+            verify=self._verify,
+        )
+
+    def get_job_settings(self) -> requests.Response:
+        """Return the administrator-managed forecast-job settings."""
+        return requests.get(
+            f"{self._base_url}/job-settings",
+            headers=self._headers(),
+            timeout=JOB_STATUS_TIMEOUT,
+            verify=self._verify,
+        )
+
+    def update_job_settings(self, settings: dict[str, Any]) -> requests.Response:
+        """Persist administrator-managed forecast-job settings."""
+        return requests.put(
+            f"{self._base_url}/job-settings",
+            json=settings,
+            headers=self._headers(),
+            timeout=ANALYSIS_TIMEOUT,
+            verify=self._verify,
+        )
+
     def send_chat(
         self,
         file_id: str | None,
