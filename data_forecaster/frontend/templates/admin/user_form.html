@@ -10,11 +10,11 @@
                     {{ form.hidden_tag() }}
                     {% if not edit %}
                     <div class="mb-3">{{ form.username.label(class="form-label") }}{{ form.username(class="form-control") }}</div>
-                    <div class="mb-3">{{ form.password.label(class="form-label") }}{{ form.password(class="form-control") }}</div>
-                    <div class="mb-3">{{ form.confirm_password.label(class="form-label") }}{{ form.confirm_password(class="form-control") }}</div>
+                    <div class="mb-3">{{ form.password.label(class="form-label") }}{{ form.password(class="form-control") }}{% for error in form.password.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}</div>
+                    <div class="mb-3">{{ form.confirm_password.label(class="form-label") }}{{ form.confirm_password(class="form-control") }}{% for error in form.confirm_password.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}</div>
                     {% else %}
-                    <div class="mb-3">{{ form.password.label(class="form-label") }}{{ form.password(class="form-control") }}</div>
-                    <div class="mb-3">{{ form.confirm_password.label(class="form-label") }}{{ form.confirm_password(class="form-control") }}</div>
+                    <div class="mb-3">{{ form.password.label(class="form-label") }}{{ form.password(class="form-control") }}{% for error in form.password.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}</div>
+                    <div class="mb-3">{{ form.confirm_password.label(class="form-label") }}{{ form.confirm_password(class="form-control") }}{% for error in form.confirm_password.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}</div>
                     {% endif %}
                     <div class="mb-3">{{ form.role.label(class="form-label") }}{{ form.role(class="form-select") }}</div>
                     {% if edit %}

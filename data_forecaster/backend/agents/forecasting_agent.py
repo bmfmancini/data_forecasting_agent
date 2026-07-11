@@ -58,9 +58,16 @@ def run_forecasting_agent(
     stat_result: StatisticalResult,
     forecast_horizon: int,
     freq: str,
+    existing_metrics: dict[str, dict[str, float]] | None = None,
+    disabled_tests: list[str] | None = None,
 ) -> tuple[ForecastResult, dict[str, dict[str, float]]]:
     """Run all three forecasting models, return ForecastResult for the selected model
     and an all-metrics dict for the comparison chart.
+
+    Args:
+        existing_metrics: Optional pre-existing metrics dict (e.g. from a prior
+            run or baseline models) to merge into the returned dict so that
+            re-runs preserve previously computed metrics.
 
     Returns:
         (ForecastResult, all_metrics_dict)
@@ -183,12 +190,19 @@ def run_forecasting_agent(
         }
         for name, r in results_store.items() if "rmse" in r # Ensure model ran successfully
     }
+    # Merge any pre-existing metrics (e.g. baselines) passed in by the caller
+    # so re-runs preserve previously computed results.
+    if existing_metrics is not None:
+        for name, metrics in existing_metrics.items():
+            all_metrics.setdefault(name, metrics)
 
     # ── Residual Analysis ─────────────────────────────────────────────────────
     residual_diagnostics = None
     if "residuals" in res and isinstance(res["residuals"], pd.Series):
         try:
-            residual_diagnostics = analyze_residuals(res["residuals"])
+            residual_diagnostics = analyze_residuals(
+                res["residuals"], disabled_tests=disabled_tests
+            )
         except Exception as exc:
             logger.warning("Residual analysis failed: %s", exc)
 

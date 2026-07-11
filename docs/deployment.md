@@ -165,10 +165,10 @@ You can also toggle this from the admin panel under **Admin → API Config** wit
 
 **Backend healthcheck fails on startup** — The backend takes ~25 seconds to initialize (ChromaDB + LLM setup). The healthcheck has a 40-second start period, but if your machine is slow, increase `start_period` in `docker-compose.yml`.
 
-**Stale database after changing credentials** — The API key DB lives in a Docker volume and a bind mount. If you change `FRONTEND_API_KEY` in `.env` and the old user still exists, the backend won't recreate it. Remove the stale `data/api_keys.db` and the `api_key_data` volume, then rebuild:
+**Stale database after changing credentials** — The backend DB lives in a Docker volume and a bind mount. If you change `FRONTEND_API_KEY` in `.env` and the old user still exists, the backend won't recreate it. Remove the stale `data/backend.db` and the `api_key_data` volume, then rebuild:
 
 ```bash
 docker compose down -v
-rm -f data_forecaster/data/api_keys.db
+rm -f data_forecaster/data/backend.db
 docker compose up -d --build
 ```

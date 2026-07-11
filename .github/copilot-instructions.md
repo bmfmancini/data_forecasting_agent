@@ -427,7 +427,7 @@ When context files and the Google Python Style Guide don't provide specific guid
 | `MAX_UPLOAD_MB` | both | Max file upload size (backend default 100, frontend default 200) |
 | `CHROMA_PERSIST_DIR` | backend | ChromaDB storage path (default `./chroma_db`) |
 | `FILE_STORAGE_DIR` | backend | Parquet file storage directory (default `./file_store`) |
-| `API_KEY_DB_PATH` | backend | API key SQLite DB directory (default `./data`) |
+| `BACKEND_DB_PATH` | backend | Backend SQLite database (default `./data/backend.db`) |
 | `API_KEY_ENABLED` | backend | Enable API key auth (default `false`) |
 | `ADMIN_API_KEY` | backend | Secret for bootstrap endpoint protection |
 | `FRONTEND_API_USERNAME` | both | Pre-shared service account username (default `frontend`) |

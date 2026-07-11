@@ -22,9 +22,10 @@ ENV/
 logs/
 chroma_db/
 
-# API key database (auto-generated at runtime, must not be committed)
-data/api_keys.db
-data/api_keys/
+# Backend database (auto-generated at runtime, must not be committed)
+data/backend.db
+data/backend.db-shm
+data/backend.db-wal
 
 # Temp upload directory
 uploads/

@@ -73,7 +73,9 @@ class RAGKnowledgeBase:
                 chunk_id = f"{doc_path.stem}__{i}"
                 all_ids.append(chunk_id)
                 all_texts.append(chunk)
-                all_metas.append({"source": doc_path.name, "chunk_index": i})
+                all_metas.append(
+                    {"source": doc_path.name, "chunk_index": i, "type": "methodology"}
+                )
             logger.info("Loaded %d chunks from %s", len(chunks), doc_path.name)
 
         embeddings = self._embedder.encode(all_texts, show_progress_bar=False).tolist()
@@ -88,7 +90,9 @@ class RAGKnowledgeBase:
             "Upserted %d chunks into collection '%s'", len(all_ids), COLLECTION_NAME
         )
 
-    def retrieve(self, query: str, k: int = 3) -> list[str]:
+    def retrieve(
+        self, query: str, k: int = 3, where: dict[str, Any] | None = None
+    ) -> list[str]:
         """Return top-k relevant text chunks for the given query."""
         if self._collection is None or self._embedder is None:
             raise RuntimeError(
@@ -102,6 +106,7 @@ class RAGKnowledgeBase:
             query_embeddings=query_embedding,
             n_results=k,
             include=["documents"],
+            where=where,
         )
         docs: list[str] = results.get("documents", [[]])[0]
         logger.debug("RAG retrieved %d chunks for query: %.80s", len(docs), query)

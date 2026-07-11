@@ -12,53 +12,18 @@ import logging
 import os
 from typing import Any
 
-import bleach
-import markdown as md_lib
 from flask import Flask, jsonify, redirect, request, session, url_for
 from flask_login import current_user
 from flask_session import Session  # type: ignore[import-untyped]
-from markupsafe import Markup
 from werkzeug.wrappers import Response
 
 from config import get_config
 from db.db import init_app as db_init_app, init_db, query_db
 from extensions import csrf, login_manager
 from models import User
+from services.markdown_service import markdown_to_safe_html
 
 logger = logging.getLogger(__name__)
-
-_BLEACH_ALLOWED_TAGS: list[str] = [
-    "p",
-    "h1",
-    "h2",
-    "h3",
-    "h4",
-    "h5",
-    "h6",
-    "ul",
-    "ol",
-    "li",
-    "strong",
-    "em",
-    "code",
-    "pre",
-    "blockquote",
-    "hr",
-    "a",
-    "br",
-    "table",
-    "thead",
-    "tbody",
-    "tr",
-    "th",
-    "td",
-]
-
-_BLEACH_ALLOWED_ATTRS: dict[str, list[str]] = {
-    "a": ["href", "title"],
-    "code": ["class"],
-    "pre": ["class"],
-}
 
 
 def create_app(config_name: str | None = None) -> Flask:
@@ -223,20 +188,7 @@ def _register_template_filters(app: Flask) -> None:
         Returns:
             Safe HTML string with unsafe tags stripped.
         """
-        if not text:
-            return Markup("")
-        raw_html: str = md_lib.markdown(
-            str(text),
-            extensions=["tables", "fenced_code", "nl2br"],
-        )
-        return Markup(
-            bleach.clean(
-                raw_html,
-                tags=_BLEACH_ALLOWED_TAGS,
-                attributes=_BLEACH_ALLOWED_ATTRS,
-                strip=True,
-            )
-        )
+        return markdown_to_safe_html(text)
 
 
 def _register_blueprints(app: Flask) -> None:
@@ -300,24 +252,35 @@ def _register_user_loader() -> None:
         """
         from db.db import query_db as _query
 
+        try:
+            user_pk = int(user_id)
+        except (TypeError, ValueError):
+            return None
+
         row = _query(
             """
             SELECT u.id, u.username, r.name AS role_name, u.active,
-                   u.must_change_password
+                   u.must_change_password, u.session_version
             FROM users u
             JOIN roles r ON r.id = u.role_id
             WHERE u.id = ?
             """,
-            (int(user_id),),
+            (user_pk,),
             one=True,
         )
         if row and isinstance(row, dict):
+            if not bool(row.get("active")):
+                return None
+            session_version = int(row.get("session_version", 0))
+            if session.get("user_session_version") != session_version:
+                return None
             return User(
                 user_id=int(row["id"]),
                 username=str(row["username"]),
                 role_name=str(row["role_name"]),
                 active=bool(row["active"]),
                 must_change_password=bool(row.get("must_change_password", 0)),
+                session_version=session_version,
             )
         return None
 

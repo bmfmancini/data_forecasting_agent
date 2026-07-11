@@ -42,7 +42,7 @@ def login() -> str | Response:
         row = query_db(
             """
             SELECT u.id, u.username, u.password_hash, r.name AS role_name,
-                   u.active, u.must_change_password
+                   u.active, u.must_change_password, u.session_version
             FROM users u
             JOIN roles r ON r.id = u.role_id
             WHERE u.username = ?
@@ -63,8 +63,10 @@ def login() -> str | Response:
                 role_name=str(row["role_name"]),
                 active=True,
                 must_change_password=bool(row.get("must_change_password", 0)),
+                session_version=int(row.get("session_version", 0)),
             )
             login_user(user)
+            session["user_session_version"] = user.session_version
             if user.must_change_password:
                 flash(
                     "You must change your default password before continuing.",
@@ -144,9 +146,25 @@ def change_password() -> str | Response:
 
         new_hash: str = generate_password_hash(new_pw)
         execute_db(
-            "UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?",
+            """
+            UPDATE users
+            SET password_hash = ?, must_change_password = 0,
+                session_version = session_version + 1
+            WHERE id = ?
+            """,
             (new_hash, current_user.id),  # type: ignore[union-attr]
         )
+        version_row = query_db(
+            "SELECT session_version FROM users WHERE id = ?",
+            (current_user.id,),  # type: ignore[union-attr]
+            one=True,
+        )
+        new_session_version = int(
+            version_row.get("session_version", 0)
+            if isinstance(version_row, dict)
+            else 0
+        )
+        session["user_session_version"] = new_session_version
         flash("Password updated successfully.", "success")
         return redirect(url_for("main.index"))
 
