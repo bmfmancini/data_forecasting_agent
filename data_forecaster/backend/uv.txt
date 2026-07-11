@@ -9,7 +9,7 @@ chromadb==0.5.3
 sentence-transformers==5.5.1
 statsmodels==0.14.2
 pandas==2.2.2
-pyarrow==15.0.2
+pyarrow==23.0.1
 numpy==1.26.4
 scipy==1.13.1
 plotly==6.8.0
