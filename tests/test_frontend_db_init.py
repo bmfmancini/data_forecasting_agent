@@ -9,7 +9,9 @@ from cryptography.fernet import Fernet
 from flask import Flask
 from werkzeug.security import check_password_hash
 
-FRONTEND_ROOT = Path(__file__).resolve().parents[1] / "data_forecaster" / "frontend"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+BACKEND_ROOT = REPO_ROOT / "data_forecaster" / "backend"
+FRONTEND_ROOT = REPO_ROOT / "data_forecaster" / "frontend"
 if str(FRONTEND_ROOT) in sys.path:
     sys.path.remove(str(FRONTEND_ROOT))
 sys.path.insert(0, str(FRONTEND_ROOT))
@@ -18,6 +20,14 @@ sys.modules.pop("services", None)
 from app import _sync_app_config_from_db
 from db.crypto import decrypt, encrypt
 from db.db import get_db, init_app, init_db
+
+sys.modules.pop("services", None)
+if str(FRONTEND_ROOT) in sys.path:
+    sys.path.remove(str(FRONTEND_ROOT))
+if str(BACKEND_ROOT) in sys.path:
+    sys.path.remove(str(BACKEND_ROOT))
+sys.path.insert(0, str(BACKEND_ROOT))
+sys.path.insert(1, str(FRONTEND_ROOT))
 
 
 def _app(tmp_path: Path) -> Flask:
