@@ -283,7 +283,7 @@ async def _check_ollama_reachable() -> bool:
         async with httpx.AsyncClient() as client:
             response = await client.get(ollama_url)
             return response.status_code == 200
-    except Exception:
+    except httpx.HTTPError:
         return False
 
 
@@ -303,7 +303,7 @@ async def _check_gemini_reachable() -> bool:
                 params={"key": GOOGLE_API_KEY},
             )
             return response.status_code == 200
-    except Exception:
+    except httpx.HTTPError:
         return False
 
 
@@ -558,7 +558,7 @@ async def _stream_upload_to_disk(file: UploadFile) -> tuple[str, int]:
                     break
                 await fh.write(chunk)
                 total += len(chunk)
-    except Exception:
+    except (OSError, RuntimeError):
         await anyio.to_thread.run_sync(os.unlink, tmp_path)
         raise
     return tmp_path, total
@@ -592,7 +592,7 @@ async def upload_file(
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except Exception as exc:
+        except (OSError, RuntimeError) as exc:
             logger.exception("Unexpected error during file parsing")
             raise HTTPException(
                 status_code=500,
@@ -653,7 +653,7 @@ async def preflight_check(
         return run_preflight_checks(
             stored["df"], date_col, value_col, body.forecast_horizon
         )
-    except Exception as exc:
+    except (KeyError, TypeError, ValueError) as exc:
         logger.exception("Preflight failed")
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

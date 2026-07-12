@@ -198,7 +198,7 @@ def get_file(
         # Columnar pruning: read only the needed columns from parquet.
         # This avoids loading wide DataFrames entirely into memory.
         df = pd.read_parquet(path, columns=[date_col, value_col])
-    except Exception as exc:
+    except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
         logger.exception("Failed to load parquet for file_id=%s: %s", file_id, exc)
         return None
 

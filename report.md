@@ -427,15 +427,27 @@ Address findings 6 and 8:
      preserving `ValueError` compatibility.
    - Remaining follow-up: continue mapping these categories at each HTTP/worker
      boundary as broad handlers are narrowed.
-2. [ ] Replace broad catches inside routes/services and add transaction tests for multi-step
+2. [x] Replace broad catches inside routes/services and add transaction tests for multi-step
    admin actions.
    - Partially completed 2026-07-12: narrowed the Box-Cox remediation handler to
      expected value/type failures.
-   - Remaining follow-up: replace route-level broad catches in focused batches and
-     add transaction tests for multi-step admin settings/credential changes.
-3. [ ] Decouple storage/job tests from ML/RAG imports through composition/injection.
-   - Not completed in this pass; current tests still use path insertion and module
-     imports. Keep this as a follow-up before broad package migration.
+   - Partially completed 2026-07-12: removed broad catches from frontend admin routes,
+     narrowed admin backend-call failures to request/JSON/encryption/database errors,
+     and added a fast guard that frontend admin settings are persisted only after
+     backend job settings are accepted.
+   - Partially completed 2026-07-12: narrowed broad catches in frontend main
+     backend-proxy routes and backend upload/preflight/LLM-health request handlers;
+     added a source guard that allows remaining route-level broad catches only at
+     documented isolation boundaries.
+   - Completed 2026-07-12: narrowed pipeline, chat-service, file-service, visualization,
+     job indexing, and frontend report-persistence handlers to expected exception
+     families. Remaining broad catches are limited by source tests to the backend chat
+     request boundary and the job worker boundary.
+3. [x] Decouple storage/job tests from ML/RAG imports through composition/injection.
+   - Completed 2026-07-12: job scheduling no longer imports the forecasting pipeline or
+     RAG service at module load; those optional dependencies are loaded only when a job
+     executes or completed results are indexed. Added a source guard to prevent
+     accidental reintroduction of eager ML/RAG imports.
 4. [x] Create fast unit and integration tiers with deterministic dependency installation.
    - Completed 2026-07-12 for the first fast unit slice: added focused tests that
      avoid optional ML/RAG service imports and updated CI to execute both test trees
@@ -446,10 +458,12 @@ Address findings 6 and 8:
    sensitive error redaction.
    - Completed 2026-07-12 for production config; ownership and auth-failure tests
      already existed before this pass.
-   - Remaining follow-up: add explicit sensitive-error-redaction assertions.
+   - Completed 2026-07-12: added explicit connection-error redaction tests so API
+     keys, bearer values, and URL credentials are not reflected to the browser.
 
-**Exit criteria:** Core tests collect without optional ML/RAG services; broad catches exist
-only at documented isolation boundaries; quality gates are blocking for touched code.
+**Exit criteria:** Complete as of 2026-07-12. Core tests for this slice collect without
+optional ML/RAG services; broad catches exist only at documented isolation boundaries;
+quality gates are blocking for touched code.
 
 ### Phase 3 — Targeted maintainability changes (3–6 weeks)
 

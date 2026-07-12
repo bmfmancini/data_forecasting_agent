@@ -12,6 +12,7 @@ import io
 import json
 import logging
 import re
+import sqlite3
 from functools import wraps
 from typing import Any, Callable, TypeVar
 
@@ -80,7 +81,7 @@ def _safe_error_detail(resp: Any, fallback: str = "Request failed.") -> str:
         if isinstance(body, dict):
             return str(body.get("detail", fallback))
         return fallback
-    except Exception:
+    except ValueError:
         return fallback
 
 
@@ -657,7 +658,7 @@ def load_demo() -> Response:
         else:
             detail = resp.json().get("detail", "Demo upload failed.")
             flash(detail, "danger")
-    except Exception:
+    except (requests.RequestException, ValueError):
         logger.exception("Backend connection error during demo data load")
         flash(
             "Backend connection error. Verify BACKEND_URL and service availability.",
@@ -695,7 +696,7 @@ def _forward_upload(file: Any) -> Response:
             jsonify({"error": _safe_error_detail(resp, "Upload failed.")}),
             resp.status_code,
         )
-    except Exception:
+    except (requests.RequestException, ValueError, OSError):
         logger.exception("Backend connection error during upload")
         return make_response(jsonify({"error": _BACKEND_CONN_ERROR}), 503)
 
@@ -761,7 +762,7 @@ def api_columns() -> Response:
             jsonify({"error": _safe_error_detail(resp, "Preflight failed.")}),
             resp.status_code,
         )
-    except Exception:
+    except (requests.RequestException, ValueError):
         logger.exception("Backend connection error during preflight")
         return make_response(jsonify({"error": _BACKEND_CONN_ERROR}), 503)
 
@@ -873,7 +874,7 @@ def api_analyze() -> Response:
             jsonify({"error": _safe_error_detail(resp, "Failed to submit job.")}),
             resp.status_code,
         )
-    except Exception:
+    except (requests.RequestException, ValueError):
         logger.exception("Backend connection error during preflight")
         return make_response(jsonify({"error": _BACKEND_CONN_ERROR}), 503)
 
@@ -906,7 +907,7 @@ def _handle_done_job(
             "Delete a saved report before running another forecast.",
             "warning",
         )
-    except Exception:  # pylint: disable=broad-exception-caught
+    except (sqlite3.Error, TypeError, ValueError):
         logger.exception(
             "Failed to persist completed report for user_id=%s", current_user.id
         )
@@ -1001,7 +1002,7 @@ def api_job_status() -> Response:
         session["job_id"] = None
         session["analysis_error"] = _BACKEND_CONN_ERROR
         return make_response(jsonify({"error": _BACKEND_CONN_ERROR}), 503)
-    except Exception:
+    except (requests.RequestException, KeyError, ValueError):
         logger.exception("Status poll error")
         return make_response(jsonify({"error": "Status poll error."}), 503)
 
@@ -1021,7 +1022,7 @@ def api_llm_health() -> Response:
         client = get_api_client()
         resp = client.get_llm_health()
         return make_response(jsonify(resp.json()), resp.status_code)
-    except Exception:
+    except (requests.RequestException, ValueError):
         logger.exception("Failed to proxy LLM health check")
         return make_response(jsonify({"error": "Failed to check LLM health."}), 503)
 
@@ -1069,7 +1070,7 @@ def api_chat() -> Response:
             jsonify({"error": _safe_error_detail(resp, "Chat request failed.")}),
             resp.status_code,
         )
-    except Exception:
+    except (requests.RequestException, ValueError):
         logger.exception("Backend connection error during chat")
         return make_response(jsonify({"error": _BACKEND_CONN_ERROR}), 503)
 
@@ -1144,5 +1145,5 @@ def _parse_preview(content: Any, filename: str) -> list[dict[str, Any]]:
         else:
             df = pandas.read_csv(buffer).head(20)
         return df.astype(str).to_dict(orient="records")
-    except Exception:
+    except (OSError, ValueError, pandas.errors.ParserError):
         return []

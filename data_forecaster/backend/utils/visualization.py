@@ -203,7 +203,7 @@ def _index_to_str(series: pd.Series) -> list[str]:
     """
     try:
         return series.index.strftime("%Y-%m-%d").tolist()
-    except Exception:
+    except AttributeError:
         return [str(i) for i in series.index]
 
 

@@ -8,9 +8,11 @@ role.  The ``admin_required`` decorator enforces this.
 from __future__ import annotations
 
 import logging
+import sqlite3
 from functools import wraps
 from typing import Any, Callable, TypeVar
 
+import requests
 from flask import (
     current_app,
     flash,
@@ -34,6 +36,7 @@ from blueprints.admin.forms import (
 from db.crypto import encrypt
 from db.db import execute_db, query_db
 from services.api_client import BackendAPIClient, get_api_client
+from services.connection_errors import sanitize_connection_error
 from services.report_service import (
     delete_all_reports_for_admin,
     delete_report_for_admin,
@@ -61,6 +64,20 @@ _RETENTION_OPTIONS: dict[str, tuple[int | None, bool]] = {
     "indefinite": (None, True),
     "disabled": (None, False),
 }
+
+
+def _save_app_config_values(values: dict[str, str]) -> None:
+    """Persist application config values after all validation succeeds."""
+    for key, value in values.items():
+        execute_db(
+            """
+            INSERT INTO app_config (key, value, updated_at)
+            VALUES (?, ?, datetime('now'))
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value,
+                                           updated_at = excluded.updated_at
+            """,
+            (key, value),
+        )
 
 
 def admin_required(f: _F) -> _F:
@@ -112,7 +129,7 @@ def dashboard() -> str:
             api_users_list: list[dict[str, Any]] = resp.json()
             api_key_count = len(api_users_list)
             has_bootstrap = any(u.get("bootstrap") for u in api_users_list)
-    except Exception:
+    except (requests.RequestException, ValueError):
         logger.exception("Failed to fetch API users for admin dashboard")
 
     return render_template(
@@ -374,18 +391,11 @@ def settings() -> str | Response:
         except ValueError:
             flash("Enter a report limit of at least 1.", "danger")
             return redirect(url_for("admin.settings"))
-        for key in known_keys:
-            value: str = str(request.form.get(key, "")).strip()
-            if value:
-                execute_db(
-                    """
-                    INSERT INTO app_config (key, value, updated_at)
-                    VALUES (?, ?, datetime('now'))
-                    ON CONFLICT(key) DO UPDATE SET value = excluded.value,
-                                                   updated_at = excluded.updated_at
-                    """,
-                    (key, value),
-                )
+        app_config_updates = {
+            key: value
+            for key in known_keys
+            if (value := str(request.form.get(key, "")).strip())
+        }
         try:
             max_running_jobs = int(request.form.get("max_running_jobs_per_user", ""))
             retention_option = str(request.form.get("job_retention", "30"))
@@ -406,10 +416,11 @@ def settings() -> str | Response:
             if response.status_code != 200:
                 flash("Forecast job settings could not be saved.", "danger")
                 return redirect(url_for("admin.settings"))
-        except Exception:
+        except requests.RequestException:
             logger.exception("Failed to save forecast job settings")
             flash("The backend is unavailable; forecast job settings were not saved.", "danger")
             return redirect(url_for("admin.settings"))
+        _save_app_config_values(app_config_updates)
         flash("Settings saved.", "success")
         return redirect(url_for("admin.settings"))
 
@@ -496,7 +507,7 @@ def _load_forecast_job_settings() -> dict[str, Any]:
         response = get_api_client().get_job_settings()
         if response.status_code == 200:
             return response.json()
-    except Exception:
+    except (requests.RequestException, ValueError):
         logger.exception("Failed to load forecast job settings")
     return defaults
 
@@ -521,7 +532,7 @@ def job_queue() -> str:
             jobs = response.json()
         else:
             queue_error = "The backend could not provide job history."
-    except Exception:
+    except (requests.RequestException, ValueError):
         logger.exception("Failed to fetch forecast job queue")
         queue_error = "The backend is unavailable. Try again once it is online."
     return render_template("admin/job_queue.html", jobs=jobs, queue_error=queue_error)
@@ -538,7 +549,7 @@ def clear_terminal_jobs() -> Response:
             flash(f"Cleared {deleted_count} completed or failed job(s).", "success")
         else:
             flash("Completed and failed jobs could not be cleared.", "danger")
-    except Exception:
+    except (requests.RequestException, ValueError):
         logger.exception("Failed to clear terminal forecast jobs")
         flash("The backend is unavailable; terminal jobs were not cleared.", "danger")
     return redirect(url_for(_ADMIN_JOB_QUEUE_ENDPOINT))
@@ -564,7 +575,7 @@ def _fetch_backend_auth_status() -> dict[str, Any]:
         resp = client.get_auth_status()
         if resp.status_code == 200:
             auth_status = resp.json()
-    except Exception:
+    except (requests.RequestException, ValueError):
         pass  # Backend unreachable — show defaults
     return auth_status
 
@@ -748,9 +759,11 @@ def api_config_test() -> Response:
                 "message": f"Backend returned HTTP {resp.status_code}.",
             }
         )
-    except Exception as exc:
+    except requests.RequestException as exc:
         safe_message = _sanitise_connection_error(str(exc))
         return jsonify({"ok": False, "message": safe_message})
+    except ValueError:
+        return jsonify({"ok": False, "message": "Backend returned an invalid response."})
 
 
 @admin_bp.route("/api-config/enable-auth", methods=["POST"])
@@ -779,7 +792,7 @@ def api_config_enable_auth() -> Response:
     client = get_api_client()
     try:
         resp = client.bootstrap_api_user(api_username, api_key, admin_key)
-    except Exception as exc:
+    except requests.RequestException as exc:
         flash(
             f"Could not connect to backend: {_sanitise_connection_error(str(exc))}",
             "danger",
@@ -802,7 +815,7 @@ def api_config_enable_auth() -> Response:
         detail: str = "Unknown error."
         try:
             detail = resp.json().get("detail", detail)
-        except Exception:
+        except ValueError:
             logger.exception("Failed to parse bootstrap error response")
         flash(f"Bootstrap failed (HTTP {resp.status_code}): {detail}", "danger")
         return redirect(url_for(_ADMIN_API_CONFIG_ENDPOINT))
@@ -842,7 +855,7 @@ def _check_backend_health() -> bool:
         client = get_api_client()
         resp = client.health_check()
         return resp.status_code == 200
-    except Exception:
+    except requests.RequestException:
         return False
 
 
@@ -858,13 +871,7 @@ def _sanitise_connection_error(error_message: str) -> str:
     Returns:
         A short description safe for display.
     """
-    if "Connection refused" in error_message or "ConnectError" in error_message:
-        return "Could not connect to the backend. Check the Base URL and ensure the service is running."
-    if "Timeout" in error_message or "timed out" in error_message.lower():
-        return "Connection timed out. The backend may be overloaded or unreachable."
-    if "401" in error_message or "Unauthorized" in error_message:
-        return "Authentication failed. Check the configured credentials."
-    return "Connection failed. Verify the backend URL and network accessibility."
+    return sanitize_connection_error(error_message)
 
 
 # ── API Key User Management ───────────────────────────────────────────────────
@@ -890,7 +897,7 @@ def api_keys() -> str | Response:
                 "danger",
             )
             api_users = []
-    except Exception as exc:
+    except (requests.RequestException, ValueError) as exc:
         flash(
             f"Could not connect to backend: {_sanitise_connection_error(str(exc))}",
             "danger",
@@ -940,7 +947,7 @@ def api_key_new() -> str | Response:
                     f"Failed to create API user (HTTP {resp.status_code}).",
                     "danger",
                 )
-        except Exception as exc:
+        except (requests.RequestException, ValueError) as exc:
             flash(
                 f"Could not connect to backend: {_sanitise_connection_error(str(exc))}",
                 "danger",
@@ -1002,7 +1009,7 @@ def api_key_rotate(user_id: int) -> Response:
                         "automatically.",
                         "success",
                     )
-                except Exception as cred_exc:
+                except (RuntimeError, sqlite3.DatabaseError) as cred_exc:
                     logger.exception(
                         "Failed to update frontend credentials after rotation"
                     )
@@ -1023,7 +1030,7 @@ def api_key_rotate(user_id: int) -> Response:
                 f"Failed to rotate key (HTTP {resp.status_code}).",
                 "danger",
             )
-    except Exception as exc:
+    except (requests.RequestException, ValueError) as exc:
         flash(
             f"Could not connect to backend: {_sanitise_connection_error(str(exc))}",
             "danger",
@@ -1055,7 +1062,7 @@ def api_key_toggle(user_id: int) -> Response:
                 f"Failed to toggle user (HTTP {resp.status_code}).",
                 "danger",
             )
-    except Exception as exc:
+    except (requests.RequestException, ValueError) as exc:
         flash(
             f"Could not connect to backend: {_sanitise_connection_error(str(exc))}",
             "danger",
@@ -1108,7 +1115,7 @@ def api_key_set_admin(user_id: int) -> Response:
                 f"Failed to update admin status (HTTP {resp.status_code}).",
                 "danger",
             )
-    except Exception as exc:
+    except (requests.RequestException, ValueError) as exc:
         flash(
             f"Could not connect to backend: {_sanitise_connection_error(str(exc))}",
             "danger",
@@ -1153,7 +1160,7 @@ def api_key_delete(user_id: int) -> Response:
                         "danger",
                     )
                     return redirect(url_for(_ADMIN_API_KEYS_ENDPOINT))
-    except Exception:
+    except (requests.RequestException, ValueError):
         logger.exception("Failed to check active API user before deletion")
 
     client = get_api_client()
@@ -1166,7 +1173,7 @@ def api_key_delete(user_id: int) -> Response:
                 f"Failed to delete user (HTTP {resp.status_code}).",
                 "danger",
             )
-    except Exception as exc:
+    except requests.RequestException as exc:
         flash(
             f"Could not connect to backend: {_sanitise_connection_error(str(exc))}",
             "danger",

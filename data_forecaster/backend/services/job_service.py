@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import json
 import threading
 import uuid
@@ -14,8 +15,6 @@ from core.database import get_connection
 from core.logging_config import get_logger
 from schemas import AnalysisResponse
 from services.file_service import get_file, release_file, reserve_file
-from services.pipeline_service import run_pipeline
-from services.rag_service import get_rag_kb
 
 logger = get_logger(__name__)
 
@@ -378,7 +377,7 @@ async def _run_job(job_id: str, job: dict[str, Any]) -> None:
         return
 
     def run_pipeline_sync() -> AnalysisResponse:
-        return run_pipeline(
+        return _run_pipeline(
             df=stored["df"], file_id=str(job["file_id"]),
             date_col=str(job["date_col"]), value_col=str(job["value_col"]),
             freq=stored["freq"], forecast_horizon=int(job["forecast_horizon"]),
@@ -398,7 +397,7 @@ async def _run_job(job_id: str, job: dict[str, Any]) -> None:
                 index_analysis_results, str(job["file_id"]), job["backend_owner_id"],
                 result, settings.CHROMA_PERSIST_DIR,
             )
-        except Exception:  # pylint: disable=broad-exception-caught
+        except (RuntimeError, TypeError, ValueError, OSError):
             logger.exception("Analysis result indexing failed for job_id=%s", job_id)
     except Exception as exc:  # pylint: disable=broad-exception-caught
         logger.exception("Pipeline failed for job_id=%s", job_id)
@@ -425,11 +424,18 @@ def _complete_job(job_id: str) -> None:
         connection.close()
 
 
+def _run_pipeline(**kwargs: Any) -> AnalysisResponse:
+    """Load and execute the forecasting pipeline only when a job is running."""
+    run_pipeline = importlib.import_module("services.pipeline_service").run_pipeline
+    return run_pipeline(**kwargs)
+
+
 def index_analysis_results(
     file_id: str, owner_id: int | None, analysis_result: AnalysisResponse,
     chroma_persist_dir: str,
 ) -> None:
     """Index completed analysis results without making indexing job-critical."""
+    get_rag_kb = importlib.import_module("services.rag_service").get_rag_kb
     rag_kb = get_rag_kb(chroma_persist_dir)
     summary = (
         f"Forecasting Analysis Results for {file_id}:\n"

@@ -319,7 +319,7 @@ def chat_with_data(
             },
         )
         memory_context = "\n".join(chunks)
-    except Exception as exc:
+    except (RuntimeError, TypeError, ValueError, OSError) as exc:
         logger.warning("RAG retrieval failed for chat: %s", exc)
 
     # 2. Prepare Data Summary for the LLM
@@ -343,7 +343,7 @@ def chat_with_data(
 
             data_snapshots = f"\nHIGHEST 5 RECORDS (Sorted by {val_col}):\n{top_5}\n"
             data_snapshots += f"\nLOWEST 5 RECORDS (Sorted by {val_col}):\n{bottom_5}\n"
-    except Exception as exc:
+    except (KeyError, TypeError, ValueError) as exc:
         logger.warning("Failed to generate data highlights for chat: %s", exc)
 
     data_summary = f"""
@@ -411,7 +411,7 @@ def chat_with_data(
 
         return {"answer": content}
 
-    except Exception:
+    except (RuntimeError, TypeError, ValueError, AttributeError):
         logger.exception("LLM Chat failed")
         return {
             "answer": (
@@ -447,7 +447,7 @@ def chat_general(
         # analysis is customer data and must never enter this prompt.
         chunks = rag_kb.retrieve(query, k=5, where={"type": "methodology"})
         memory_context = "\n".join(chunks)
-    except Exception as exc:
+    except (RuntimeError, TypeError, ValueError, OSError) as exc:
         logger.warning("RAG retrieval failed for general chat: %s", exc)
 
     # 2. Setup LLM based on configuration
@@ -460,7 +460,7 @@ def chat_general(
         content = response.content
         return {"answer": content}
 
-    except Exception:
+    except (RuntimeError, TypeError, ValueError, AttributeError):
         logger.exception("LLM General Chat failed")
         return {
             "answer": (

@@ -362,7 +362,7 @@ def run_pipeline(
         html_renderer = HTMLRenderer()
         report_md = md_renderer.render(executive_report)
         report_html = html_renderer.render(executive_report)
-    except Exception as exc:  # pylint: disable=broad-except
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
         logger.warning(
             "Report rendering failed: %s — using empty render output.", exc
         )
@@ -381,7 +381,7 @@ def run_pipeline(
         else:
             stl_data = run_stl_decomposition(series, period=sp)
             chart_stl = plot_stl(series, stl_data, sp)
-    except Exception as exc:
+    except (KeyError, TypeError, ValueError, RuntimeError) as exc:
         logger.warning("STL chart failed: %s", exc)
         chart_stl = {}
 
@@ -393,7 +393,7 @@ def run_pipeline(
             chart_acf_pacf = plot_acf_pacf(
                 acf_data["acf_values"], acf_data["pacf_values"], acf_data["lags"]
             )
-    except Exception as exc:
+    except (KeyError, TypeError, ValueError, RuntimeError) as exc:
         logger.warning("ACF/PACF chart failed: %s", exc)
         chart_acf_pacf = ""
 
@@ -407,19 +407,19 @@ def run_pipeline(
     chart_model_comparison_png = ""
     try:
         chart_historical_png = chart_dict_to_png_b64(chart_historical)
-    except Exception as exc:
+    except (KeyError, TypeError, ValueError, RuntimeError, OSError) as exc:
         logger.warning("Historical chart PNG failed: %s", exc)
     try:
         chart_stl_png = chart_dict_to_png_b64(chart_stl)
-    except Exception as exc:
+    except (KeyError, TypeError, ValueError, RuntimeError, OSError) as exc:
         logger.warning("STL chart PNG failed: %s", exc)
     try:
         chart_forecast_png = chart_dict_to_png_b64(chart_forecast)
-    except Exception as exc:
+    except (KeyError, TypeError, ValueError, RuntimeError, OSError) as exc:
         logger.warning("Forecast chart PNG failed: %s", exc)
     try:
         chart_model_comparison_png = chart_dict_to_png_b64(chart_model_comparison)
-    except Exception as exc:
+    except (KeyError, TypeError, ValueError, RuntimeError, OSError) as exc:
         logger.warning("Model comparison chart PNG failed: %s", exc)
 
     # ── Token Usage Aggregation ─────────────────────────────────────────────
