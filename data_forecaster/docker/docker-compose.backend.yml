@@ -1,5 +1,3 @@
-version: "3.9"
-
 # Backend-only deployment — run on the backend host in a distributed setup.
 #
 #   docker-compose -f docker-compose.backend.yml up -d --build
@@ -14,7 +12,7 @@ services:
       context: ../backend
       dockerfile: ../docker/Dockerfile.backend
     env_file:
-      - ../.env
+      - ../backend/.env
     volumes:
       - logs_data:/app/logs
       - chroma_data:/app/chroma_db

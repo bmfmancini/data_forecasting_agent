@@ -1,5 +1,3 @@
-version: "3.9"
-
 # Distributed deployment — frontend host override.
 #
 # Apply this file on top of docker-compose.yml on the frontend machine to
@@ -8,7 +6,7 @@ version: "3.9"
 #
 #   docker-compose -f docker-compose.yml -f docker-compose.distributed.yml up -d --build
 #
-# Set REMOTE_BACKEND_URL and API_VERIFY_SSL in .env before starting.
+# Set REMOTE_BACKEND_URL and API_VERIFY_SSL in frontend/.env before starting.
 
 services:
   backend:
