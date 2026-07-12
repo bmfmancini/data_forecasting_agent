@@ -128,24 +128,32 @@ def init_db() -> None:
             ("admin", admin_hash),
         )
 
-    db.execute("""
+    db.execute(
+        """
         INSERT INTO api_credentials (label, base_url, timeout, verify_ssl)
         VALUES ('default', '', 30, 0)
         ON CONFLICT(label) DO NOTHING
-        """)
+        """
+    )
 
-    db.execute("""
+    db.execute(
+        """
         INSERT OR IGNORE INTO app_config (key, value)
         VALUES ('app_name', 'Time Series Data Forecaster Agent')
-        """)
-    db.execute("""
+        """
+    )
+    db.execute(
+        """
         INSERT OR IGNORE INTO app_config (key, value)
         VALUES ('max_reports_per_user', '10')
-        """)
-    db.execute("""
+        """
+    )
+    db.execute(
+        """
         INSERT OR IGNORE INTO app_config (key, value)
         VALUES ('max_upload_mb', '100')
-        """)
+        """
+    )
 
     db.commit()
 

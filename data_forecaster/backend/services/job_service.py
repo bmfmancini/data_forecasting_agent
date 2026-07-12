@@ -30,12 +30,14 @@ def init_job_queue() -> None:
     JOB_QUEUE = asyncio.Queue()
     connection = get_connection()
     try:
-        connection.execute("""
+        connection.execute(
+            """
             UPDATE forecast_jobs
             SET status = 'error', error = 'Backend restarted during processing.',
                 step = 'Interrupted by backend restart.', completed_at = datetime('now')
             WHERE status = 'running'
-            """)
+            """
+        )
         pending_rows = connection.execute(
             "SELECT job_id, file_id FROM forecast_jobs WHERE status = 'pending' "
             "ORDER BY queued_at, rowid"
@@ -61,10 +63,12 @@ def get_job_settings() -> dict[str, Any]:
     """Return the current persistent job scheduler settings."""
     connection = get_connection()
     try:
-        row = connection.execute("""
+        row = connection.execute(
+            """
             SELECT max_running_jobs_per_user, retention_days, cleanup_enabled
             FROM forecast_job_settings WHERE singleton = 1
-            """).fetchone()
+            """
+        ).fetchone()
         return (
             dict(row)
             if row

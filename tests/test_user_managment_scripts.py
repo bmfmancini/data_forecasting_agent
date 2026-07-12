@@ -177,13 +177,15 @@ def test_frontend_script_add_disable_reset_and_delete(
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
-        row = conn.execute("""
+        row = conn.execute(
+            """
             SELECT u.id, u.password_hash, u.active, u.must_change_password,
                    u.session_version, r.name AS role
             FROM users u
             JOIN roles r ON r.id = u.role_id
             WHERE u.username = 'alice'
-            """).fetchone()
+            """
+        ).fetchone()
         assert row is not None
         assert row["role"] == "admin"
         assert int(row["active"]) == 1

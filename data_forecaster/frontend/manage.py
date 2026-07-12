@@ -79,12 +79,14 @@ def register_commands(app: Flask) -> None:
     def user_list() -> None:
         """List all application users."""
         with app.app_context():
-            rows = query_db("""
+            rows = query_db(
+                """
                 SELECT u.id, u.username, r.name AS role, u.active, u.created_at
                 FROM users u
                 JOIN roles r ON r.id = u.role_id
                 ORDER BY u.id
-                """)
+                """
+            )
             if not rows or not isinstance(rows, list):
                 click.echo("No users found.")
                 return

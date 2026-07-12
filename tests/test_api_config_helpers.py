@@ -105,12 +105,14 @@ def test_save_api_credentials_preserves_existing_key(
             preserve_existing_key=True,
         )
 
-        row = db.execute("""
+        row = db.execute(
+            """
             SELECT base_url, timeout, verify_ssl, encrypted_username,
                    encrypted_password
             FROM api_credentials
             WHERE label = 'default'
-            """).fetchone()
+            """
+        ).fetchone()
 
     assert row["base_url"] == "https://new-backend"
     assert row["timeout"] == 45

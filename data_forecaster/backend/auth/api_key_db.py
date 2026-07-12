@@ -236,12 +236,14 @@ def list_api_users() -> list[dict[str, Any]]:
     """
     conn: sqlite3.Connection = get_connection()
     try:
-        rows: list[sqlite3.Row] = conn.execute("""
+        rows: list[sqlite3.Row] = conn.execute(
+            """
             SELECT id, username, description, enabled, bootstrap, is_admin,
                    created_at, last_used, last_used_ip
             FROM api_users
             ORDER BY id
-            """).fetchall()
+            """
+        ).fetchall()
         return [
             {
                 "id": int(r["id"]),

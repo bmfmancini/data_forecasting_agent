@@ -9,8 +9,8 @@
                 <form method="post" novalidate>
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <div class="mb-3">
-                        <label class="form-label">Application Name</label>
-                        <input type="text" name="app_name" class="form-control" value="{{ config.get('app_name', '') }}">
+                        <label class="form-label" for="app_name">Application Name</label>
+                        <input type="text" id="app_name" name="app_name" class="form-control" value="{{ config.get('app_name', '') }}">
                     </div>
                     <hr class="my-4">
                     <section aria-labelledby="upload-settings-heading">

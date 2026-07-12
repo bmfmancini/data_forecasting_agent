@@ -151,13 +151,15 @@ def users() -> str:
     Returns:
         Rendered HTML for the user management list page.
     """
-    rows = query_db("""
+    rows = query_db(
+        """
         SELECT u.id, u.username, r.name AS role, u.active, u.created_at,
                u.must_change_password
         FROM users u
         JOIN roles r ON r.id = u.role_id
         ORDER BY u.id
-        """)
+        """
+    )
     user_list: list[dict[str, Any]] = rows if isinstance(rows, list) else []
     return render_template("admin/users.html", users=user_list)
 
