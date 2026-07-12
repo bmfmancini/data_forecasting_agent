@@ -58,7 +58,15 @@ python scripts/user_managment.py --add--user alice --admin
 Provide a password non-interactively:
 
 ```bash
-python scripts/user_managment.py --add--user alice --password "temporary-password"
+FRONTEND_USER_PASSWORD="temporary-password" \
+  python scripts/user_managment.py --add--user alice
+```
+
+For bulk account creation, let the script generate a temporary password and
+print it once:
+
+```bash
+python scripts/user_managment.py --add--user alice --generate-temp-password
 ```
 
 Create a user without forcing a password change:
@@ -67,9 +75,10 @@ Create a user without forcing a password change:
 python scripts/user_managment.py --add--user alice --no-must-change-password
 ```
 
-Use non-interactive passwords only when your shell history and process-list
-exposure are acceptable for the environment. Interactive entry is safer for
-real operator work.
+For non-interactive automation, prefer `FRONTEND_USER_PASSWORD`, stdin from a
+secret manager, or `--generate-temp-password`. The frontend script does not
+accept plaintext passwords as command-line arguments because those can be
+exposed through shell history and process listings.
 
 ### Reset a frontend user's password
 
@@ -85,6 +94,12 @@ python scripts/user_managment.py --reset--password --id 3
 
 Password reset increments the user's `session_version`, which invalidates
 existing sessions.
+
+To reset with a generated temporary password:
+
+```bash
+python scripts/user_managment.py --reset--password alice --generate-temp-password
+```
 
 ### Disable a frontend user
 

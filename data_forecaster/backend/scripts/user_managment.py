@@ -32,6 +32,16 @@ from core.database import get_connection, init_database  # noqa: E402
 Action = Callable[[argparse.Namespace], int]
 
 
+def _resolve_db_path(db_path: str) -> str:
+    """Resolve relative backend DB paths from the backend project root."""
+    if db_path == ":memory:":
+        return db_path
+    path = Path(db_path)
+    if path.is_absolute():
+        return str(path)
+    return str(BACKEND_ROOT / path)
+
+
 def _resolve_user(
     username: str | None,
     user_id: int | None,
@@ -171,7 +181,7 @@ def _select_action(args: argparse.Namespace) -> tuple[Action, str | None]:
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
-    settings.BACKEND_DB_PATH = args.db_path
+    settings.BACKEND_DB_PATH = _resolve_db_path(str(args.db_path))
     init_database()
 
     try:

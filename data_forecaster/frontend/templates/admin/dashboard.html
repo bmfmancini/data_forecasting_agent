@@ -5,8 +5,8 @@
 {% if has_bootstrap %}
 <div class="alert alert-warning mb-4">
     <strong>⚠ Initial API key in use.</strong><br>
-    The frontend API key was auto-configured from the <code>FRONTEND_API_KEY</code> environment variable.
-    For production security, rotate this key and update the stored credentials below.
+    The backend service account is still marked as a bootstrap credential.
+    For production security, rotate this key and update Admin → API Config.
     <a href="{{ url_for('admin.api_keys') }}" class="alert-link">Manage API Keys →</a>
 </div>
 {% endif %}

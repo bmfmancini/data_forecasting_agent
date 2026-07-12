@@ -11,6 +11,8 @@ the pre-computed structured fields and LLM-generated narrative strings.
 
 from __future__ import annotations
 
+import math
+
 from report.models import (
     ExecutiveReport,
     HealthIndicator,
@@ -33,6 +35,11 @@ def _sanitize_cell(value: str) -> str:
         Sanitised cell text safe for Markdown table insertion.
     """
     return value.replace("|", "\\|").replace("\n", " ").replace("\r", " ")
+
+
+def _finite_or_zero(value: float | None) -> float:
+    """Return finite metric values, replacing unavailable values with zero."""
+    return value if value is not None and math.isfinite(value) else 0.0
 
 
 class MarkdownRenderer:
@@ -197,9 +204,12 @@ class MarkdownRenderer:
         for entry in mc.entries:
             selected = "✓" if entry.selected else ""
             rejected = _sanitize_cell(entry.rejected_reason or "")
+            wape = _finite_or_zero(entry.wape)
+            mase = _finite_or_zero(entry.mase)
             lines.append(
-                f"| {entry.model} | {entry.rmse:.4f} | {entry.mae:.4f} | {entry.mape:.2f}% | "
-                f"{entry.wape or 0.0:.2f}% | {entry.mase or 0.0:.4f} | {selected} | {rejected} |"
+                f"| {entry.model} | {entry.rmse:.4f} | {entry.mae:.4f} | "
+                f"{entry.mape:.2f}% | "
+                f"{wape:.2f}% | {mase:.4f} | {selected} | {rejected} |"
             )
         lines.append("")
         lines.append("[VISUAL:ACF_PACF]")

@@ -18,7 +18,7 @@ server {
     ssl_session_cache   shared:SSL:10m;
     ssl_session_timeout 10m;
 
-    # Allow large uploads (CSV/XLSX).  Match MAX_UPLOAD_MB on the backend.
+    # Proxy cap for CSV/XLSX uploads. The frontend app limit is DB-managed.
     client_max_body_size 256m;
 
     # Forwarded headers so Flask sees the original scheme/host.

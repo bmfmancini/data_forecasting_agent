@@ -15,6 +15,7 @@ from collections.abc import Callable
 import getpass
 import os
 from pathlib import Path
+import secrets
 import sqlite3
 import sys
 
@@ -77,23 +78,31 @@ def _role_id(conn: sqlite3.Connection, role_name: str) -> int:
     return int(row["id"])
 
 
-def _read_password(args: argparse.Namespace) -> str:
-    password = args.password or ""
+def _read_password(args: argparse.Namespace) -> tuple[str, bool]:
+    password = os.getenv("FRONTEND_USER_PASSWORD", "")
     if password:
-        return password
+        return password, False
+    if args.generate_temp_password:
+        return secrets.token_urlsafe(18), True
     if not sys.stdin.isatty():
-        raise ValueError("No password provided. Use --password or run interactively.")
+        password = sys.stdin.read().strip()
+        if password:
+            return password, False
+        raise ValueError(
+            "No password provided. Set FRONTEND_USER_PASSWORD, pipe it on stdin, "
+            "use --generate-temp-password, or run interactively."
+        )
     first = getpass.getpass("Password: ")
     second = getpass.getpass("Confirm password: ")
     if first != second:
         raise ValueError("Passwords do not match.")
     if not first:
         raise ValueError("Password is required.")
-    return first
+    return first, False
 
 
 def _add(args: argparse.Namespace) -> int:
-    password = _read_password(args)
+    password, generated = _read_password(args)
     role_name = "admin" if args.admin else "user"
     with _connect(args.db_path) as conn:
         existing = conn.execute(
@@ -118,6 +127,9 @@ def _add(args: argparse.Namespace) -> int:
         )
         conn.commit()
     print(f"Created frontend user '{args.username.strip()}' ({role_name}).")
+    if generated:
+        print(f"Temporary password: {password}")
+        print("This password is shown once.")
     return 0
 
 
@@ -152,7 +164,7 @@ def _disable(args: argparse.Namespace) -> int:
 
 
 def _reset_password(args: argparse.Namespace) -> int:
-    password = _read_password(args)
+    password, generated = _read_password(args)
     with _connect(args.db_path) as conn:
         user_id, username = _resolve_user(conn, args.username, args.user_id)
         conn.execute(
@@ -171,6 +183,9 @@ def _reset_password(args: argparse.Namespace) -> int:
         )
         conn.commit()
     print(f"Reset password for frontend user '{username}' (id={user_id}).")
+    if generated:
+        print(f"Temporary password: {password}")
+        print("This password is shown once.")
     return 0
 
 
@@ -180,15 +195,19 @@ def _add_identifier_args(parser: argparse.ArgumentParser) -> None:
 
 def _add_password_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
-        "--password",
-        default=None,
-        help="Plaintext password. If omitted, prompted interactively.",
+        "--generate-temp-password",
+        action="store_true",
+        help="Generate and print a one-time temporary password.",
     )
     parser.add_argument(
         "--must-change-password",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Require password change on next login.",
+        help=(
+            "Require password change on next login. Passwords are read from "
+            "FRONTEND_USER_PASSWORD, stdin, an interactive prompt, or generated "
+            "with --generate-temp-password."
+        ),
     )
 
 

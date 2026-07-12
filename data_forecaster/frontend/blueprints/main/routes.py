@@ -561,7 +561,7 @@ def load_demo() -> Response:
     except (requests.RequestException, ValueError):
         logger.exception("Backend connection error during demo data load")
         flash(
-            "Backend connection error. Verify BACKEND_URL and service availability.",
+            "Backend connection error. Verify Admin API Config and service availability.",
             "danger",
         )
 

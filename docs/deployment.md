@@ -63,21 +63,14 @@ This uses `docker/docker-compose.backend.yml` and brings up just the backend and
 
 ### On the frontend machine
 
-Set `REMOTE_BACKEND_URL` in `frontend/.env` to point at the backend machine:
-
-```bash
-# In frontend/.env
-REMOTE_BACKEND_URL=https://backend.example.com:8443
-API_VERIFY_SSL=false   # true if you're using a real CA-signed cert
-```
-
-Then:
-
 ```bash
 ./scripts/build_containers.sh --distributed --role frontend
 ```
 
-This uses `docker/docker-compose.distributed.yml` as an override — it drops the backend and nginx-backend services and points the frontend at `REMOTE_BACKEND_URL`.
+This uses `docker/docker-compose.distributed.yml` as an override and drops
+the backend and nginx-backend services. After the frontend starts, log in and
+configure the backend URL, SSL verification setting, username, and key under
+**Admin → API Config**.
 
 ## TLS certificates
 
@@ -107,16 +100,11 @@ This becomes the CN and primary SAN on the generated certificate.
 
 ## SSL verification
 
-The frontend talks to the backend over HTTPS. By default, SSL verification is **off** (`API_VERIFY_SSL=false`) because the self-signed cert won't verify against a trusted CA.
+The frontend talks to the backend over HTTPS. Configure whether the frontend
+verifies the backend certificate under **Admin → API Config**.
 
-If you're using a CA-signed cert on the backend, turn it on:
-
-```bash
-# In frontend/.env
-API_VERIFY_SSL=true
-```
-
-You can also toggle this from the admin panel under **Admin → API Config** without restarting.
+Turn verification off for the default self-signed certificate, and turn it on
+when the backend uses a CA-signed certificate.
 
 ## Environment variables
 
@@ -126,14 +114,14 @@ You can also toggle this from the admin panel under **Admin → API Config** wit
 | `HTTP_PORT` | nginx-frontend | `80` | HTTP port (redirects to HTTPS) |
 | `FRONTEND_HTTPS_PORT` | nginx-frontend | `443` | Frontend HTTPS port |
 | `BACKEND_HTTPS_PORT` | nginx-backend | `8443` | Backend HTTPS port |
-| `BACKEND_URL` | frontend | `https://nginx-backend:8443` | Backend URL (internal in single-machine mode) |
-| `REMOTE_BACKEND_URL` | frontend | `https://api.example.com:8443` | Backend URL for distributed mode |
-| `API_VERIFY_SSL` | frontend | `false` | Verify backend TLS cert |
 | `CORS_ALLOWED_ORIGINS` | backend | `http://localhost:5000,...` | Comma-separated allowed origins |
-| `FRONTEND_API_USERNAME` | both | `frontend` | Default service-account username |
-| `FRONTEND_API_KEY` | both | `frontend` | Default service-account key (rotate for production) |
+| `FRONTEND_API_USERNAME` | backend | `frontend` | Optional backend bootstrap service-account username |
+| `FRONTEND_API_KEY` | backend | `frontend` | Optional backend bootstrap service-account key |
 | `SECRET_KEY` | frontend | (random) | Flask session secret |
 | `FLASK_ENCRYPTION_KEY` | frontend | (random) | Fernet key for encrypting stored API credentials |
+
+The frontend stores the active backend URL, SSL verification setting,
+username, and encrypted key in its SQLite database via **Admin → API Config**.
 
 ## The build script
 
@@ -159,13 +147,13 @@ You can also toggle this from the admin panel under **Admin → API Config** wit
 
 **`SSL_ERROR_RX_RECORD_TOO_LONG`** — The Nginx config is missing the `ssl` keyword on the `listen` directive. This was a bug in an earlier version; make sure you're using the current `docker/nginx/conf.d/*.conf.template` files.
 
-**Frontend can't reach backend (401)** — Check that the API credentials match. The default is `frontend`/`frontend`. If you rotated the key on the backend, update it in **Admin → API Config** on the frontend.
+**Frontend can't reach backend (401)** — Check that the API credentials match. If you rotated the key on the backend, update it in **Admin → API Config** on the frontend.
 
-**Frontend can't reach backend (SSL error)** — Set `API_VERIFY_SSL=false` in `frontend/.env` or in the admin panel. This is expected with self-signed certs.
+**Frontend can't reach backend (SSL error)** — Disable SSL verification under **Admin → API Config** when using the default self-signed backend certificate.
 
 **Backend healthcheck fails on startup** — The backend takes ~25 seconds to initialize (ChromaDB + LLM setup). The healthcheck has a 40-second start period, but if your machine is slow, increase `start_period` in `docker-compose.yml`.
 
-**Stale database after changing credentials** — The backend DB lives in a Docker volume and a bind mount. If you change `FRONTEND_API_KEY` in `backend/.env` and the old user still exists, the backend won't recreate it. Keep the matching key in `frontend/.env`, remove the stale `data/backend.db` and the `api_key_data` volume, then rebuild:
+**Stale database after changing backend bootstrap credentials** — The backend DB lives in a Docker volume and a bind mount. If you change `FRONTEND_API_KEY` in `backend/.env` and the old user still exists, the backend won't recreate it. Rotate or create the backend API user from **Admin → API Keys**, then update **Admin → API Config**. For a full reset:
 
 ```bash
 docker compose down -v

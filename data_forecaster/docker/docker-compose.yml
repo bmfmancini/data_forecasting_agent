@@ -42,8 +42,6 @@ services:
       - ../frontend/.env
     environment:
       - FLASK_ENV=production
-      - BACKEND_URL=https://nginx-backend:${BACKEND_HTTPS_PORT:-8443}
-      - API_VERIFY_SSL=false
       - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
     volumes:
       - flask_instance:/app/instance

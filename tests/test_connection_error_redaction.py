@@ -31,3 +31,14 @@ def test_sanitize_connection_error_redacts_url_credentials() -> None:
 
     assert "4qxOABc41uEL" not in sanitized
     assert sanitized.startswith("Could not connect to the backend.")
+
+
+def test_sanitize_connection_error_redacts_authorization_scheme_and_token() -> None:
+    """Authorization schemes and short tokens should be redacted together."""
+    message = "Unauthorized 401 for Authorization: Bearer short-token"
+
+    sanitized = sanitize_connection_error(message)
+
+    assert "Bearer" not in sanitized
+    assert "short-token" not in sanitized
+    assert sanitized == "Authentication failed. Check the configured credentials."

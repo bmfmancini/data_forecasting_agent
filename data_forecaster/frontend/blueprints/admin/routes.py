@@ -13,6 +13,7 @@ from functools import wraps
 from typing import Any, Callable, TypeVar
 
 import requests
+from cryptography.fernet import InvalidToken
 from flask import (
     current_app,
     flash,
@@ -33,7 +34,7 @@ from blueprints.admin.forms import (
     UserCreateForm,
     UserEditForm,
 )
-from db.crypto import encrypt
+from db.crypto import decrypt, encrypt
 from db.db import execute_db, query_db
 from services.api_client import BackendAPIClient, get_api_client
 from services.connection_errors import sanitize_connection_error
@@ -53,6 +54,7 @@ _ADMIN_USER_FORM_TEMPLATE: str = "admin/user_form.html"
 _ADMIN_API_CONFIG_ENDPOINT: str = "admin.api_config"
 _ADMIN_API_KEYS_ENDPOINT: str = "admin.api_keys"
 _ADMIN_JOB_QUEUE_ENDPOINT: str = "admin.job_queue"
+_API_KEY_PLACEHOLDER: str = "******"
 
 _RETENTION_OPTIONS: dict[str, tuple[int | None, bool]] = {
     "1": (1, True),
@@ -382,7 +384,7 @@ def settings() -> str | Response:
     Returns:
         Rendered settings template on GET; redirect on successful POST.
     """
-    known_keys: list[str] = ["app_name", "max_reports_per_user"]
+    known_keys: list[str] = ["app_name", "max_reports_per_user", "max_upload_mb"]
 
     if request.method == "POST":
         try:
@@ -390,6 +392,13 @@ def settings() -> str | Response:
                 raise ValueError
         except ValueError:
             flash("Enter a report limit of at least 1.", "danger")
+            return redirect(url_for("admin.settings"))
+        try:
+            max_upload_mb = int(request.form.get("max_upload_mb", ""))
+            if max_upload_mb < 1 or max_upload_mb > 256:
+                raise ValueError
+        except ValueError:
+            flash("Enter an upload limit from 1 to 256 MB.", "danger")
             return redirect(url_for("admin.settings"))
         app_config_updates = {
             key: value
@@ -421,12 +430,13 @@ def settings() -> str | Response:
             flash("The backend is unavailable; forecast job settings were not saved.", "danger")
             return redirect(url_for("admin.settings"))
         _save_app_config_values(app_config_updates)
+        current_app.config["MAX_CONTENT_LENGTH"] = max_upload_mb * 1024 * 1024
         flash("Settings saved.", "success")
         return redirect(url_for("admin.settings"))
 
     config_rows = query_db(
-        "SELECT key, value FROM app_config WHERE key IN (?, ?)",
-        (known_keys[0], known_keys[1]),
+        "SELECT key, value FROM app_config WHERE key IN (?, ?, ?)",
+        (known_keys[0], known_keys[1], known_keys[2]),
     )
     config_map: dict[str, str] = {}
     if isinstance(config_rows, list):
@@ -555,16 +565,64 @@ def clear_terminal_jobs() -> Response:
     return redirect(url_for(_ADMIN_JOB_QUEUE_ENDPOINT))
 
 
-def _load_api_config_form(form: APIConfigForm) -> None:
-    """Populate the API config form from the stored default row."""
+def _load_current_api_config() -> dict[str, Any] | None:
+    """Return the saved API config summary without exposing the API key."""
     current_row = query_db(
-        "SELECT base_url, timeout, verify_ssl FROM api_credentials WHERE label = 'default' LIMIT 1",
+        """
+        SELECT base_url, timeout, verify_ssl, encrypted_username,
+               encrypted_password
+        FROM api_credentials WHERE label = 'default' LIMIT 1
+        """,
         one=True,
     )
-    if current_row and isinstance(current_row, dict):
-        form.base_url.data = str(current_row.get("base_url", ""))
-        form.timeout.data = int(current_row.get("timeout", 30))
-        form.verify_ssl.data = bool(current_row.get("verify_ssl", 0))
+    if not current_row or not isinstance(current_row, dict):
+        return None
+
+    username = ""
+    enc_user = current_row.get("encrypted_username")
+    if enc_user:
+        try:
+            username = decrypt(str(enc_user))
+        except (InvalidToken, RuntimeError, ValueError):
+            username = ""
+
+    return {
+        "base_url": str(current_row.get("base_url", "")),
+        "username": username,
+        "timeout": int(current_row.get("timeout", 30)),
+        "verify_ssl": bool(current_row.get("verify_ssl", 0)),
+        "has_key": bool(current_row.get("encrypted_password")),
+    }
+
+
+def _load_api_config_form(
+    form: APIConfigForm, current_config: dict[str, Any] | None = None
+) -> None:
+    """Populate the API config form from the stored default row."""
+    current_config = current_config or _load_current_api_config()
+    if current_config:
+        form.base_url.data = str(current_config.get("base_url", ""))
+        form.api_username.data = str(current_config.get("username", ""))
+        form.timeout.data = int(current_config.get("timeout", 30))
+        form.verify_ssl.data = bool(current_config.get("verify_ssl", False))
+        form.api_password.data = ""
+
+
+def _render_api_config(
+    form: APIConfigForm,
+    auth_status: dict[str, Any],
+    status_code: int = 200,
+) -> str | tuple[str, int]:
+    """Render API Config with the current saved summary."""
+    current_config = _load_current_api_config()
+    rendered = render_template(
+        "admin/api_config.html",
+        form=form,
+        auth_status=auth_status,
+        current_api_config=current_config,
+        api_key_placeholder=_API_KEY_PLACEHOLDER,
+    )
+    return rendered if status_code == 200 else (rendered, status_code)
 
 
 def _fetch_backend_auth_status() -> dict[str, Any]:
@@ -597,6 +655,7 @@ def _save_api_credentials(
     verify_ssl: int,
     enc_user: str | None,
     enc_pass: str | None,
+    preserve_existing_key: bool = False,
 ) -> None:
     """Upsert the default API credential row.
 
@@ -619,6 +678,21 @@ def _save_api_credentials(
                 verify_ssl         = excluded.verify_ssl
             """,
             (base_url, enc_user, enc_pass, timeout, verify_ssl),
+        )
+    elif enc_user and preserve_existing_key:
+        execute_db(
+            """
+            INSERT INTO api_credentials
+                (label, base_url, encrypted_username, encrypted_password,
+                 timeout, verify_ssl)
+            VALUES ('default', ?, ?, NULL, ?, ?)
+            ON CONFLICT(label) DO UPDATE SET
+                base_url           = excluded.base_url,
+                encrypted_username = excluded.encrypted_username,
+                timeout            = excluded.timeout,
+                verify_ssl         = excluded.verify_ssl
+            """,
+            (base_url, enc_user, timeout, verify_ssl),
         )
     else:
         execute_db(
@@ -646,8 +720,25 @@ def _client_from_api_config_form() -> BackendAPIClient | None:
     api_key = str(request.form.get("api_password", "")).strip()
     verify_ssl = request.form.get("verify_ssl") in {"y", "on", "true", "1"}
 
-    if bool(username) != bool(api_key):
+    if api_key and not username:
         return None
+
+    if username and not api_key:
+        row = query_db(
+            """
+            SELECT encrypted_password
+            FROM api_credentials
+            WHERE label = 'default'
+            LIMIT 1
+            """,
+            one=True,
+        )
+        if not row or not isinstance(row, dict) or not row.get("encrypted_password"):
+            return None
+        try:
+            api_key = decrypt(str(row["encrypted_password"]))
+        except (InvalidToken, RuntimeError, ValueError):
+            return None
 
     return BackendAPIClient(
         base_url=base_url,
@@ -676,38 +767,57 @@ def api_config() -> str | Response:
     auth_status = _fetch_backend_auth_status()
 
     if request.method == "GET":
-        _load_api_config_form(form)
-        return render_template(
-            "admin/api_config.html", form=form, auth_status=auth_status
-        )
+        current_config = _load_current_api_config()
+        _load_api_config_form(form, current_config)
+        return _render_api_config(form, auth_status)
 
     if not form.validate_on_submit():
-        return render_template(
-            "admin/api_config.html", form=form, auth_status=auth_status
-        )
+        return _render_api_config(form, auth_status)
 
     base_url: str = str(form.base_url.data or "").rstrip("/")
     api_username: str = str(form.api_username.data or "").strip()
     api_password: str = str(form.api_password.data or "").strip()
     timeout: int = int(form.timeout.data or 30)
     verify_ssl: int = 1 if form.verify_ssl.data else 0
+    current_config = _load_current_api_config()
+    has_existing_key = bool(current_config and current_config.get("has_key"))
 
-    if bool(api_username) != bool(api_password):
-        flash("Enter both API username and API key, or leave both blank.", "danger")
-        return render_template(
-            "admin/api_config.html", form=form, auth_status=auth_status
-        )
+    if api_password == _API_KEY_PLACEHOLDER:
+        api_password = ""
+
+    if api_password and not api_username:
+        flash("Enter an API username when providing a new API key.", "danger")
+        return _render_api_config(form, auth_status)
+
+    if api_username and not api_password and not has_existing_key:
+        flash("Enter an API key for the configured API username.", "danger")
+        return _render_api_config(form, auth_status)
 
     enc_user: str | None = None
     enc_pass: str | None = None
+    preserve_existing_key = False
     if api_username and api_password:
         enc_user, enc_pass = _encrypt_credentials(api_username, api_password)
         if enc_user is None or enc_pass is None:
-            return render_template(
-                "admin/api_config.html", form=form, auth_status=auth_status
-            )
+            return _render_api_config(form, auth_status)
+    elif api_username and has_existing_key:
+        try:
+            enc_user = encrypt(api_username)
+        except RuntimeError as exc:
+            flash(str(exc), "danger")
+            return _render_api_config(form, auth_status)
+        preserve_existing_key = True
+    elif not api_username and has_existing_key:
+        preserve_existing_key = True
 
-    _save_api_credentials(base_url, timeout, verify_ssl, enc_user, enc_pass)
+    _save_api_credentials(
+        base_url,
+        timeout,
+        verify_ssl,
+        enc_user,
+        enc_pass,
+        preserve_existing_key,
+    )
     current_app.config["BACKEND_URL"] = base_url
     current_app.config["API_VERIFY_SSL"] = bool(verify_ssl)
     flash("API configuration saved.", "success")

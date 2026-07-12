@@ -34,11 +34,11 @@ def fit_ewma(series: pd.Series, forecast_horizon: int, alpha: float = 0.3) -> di
     metrics = perform_rolling_origin_validation(
         series, forecast_horizon, _ewma_fit_forecast
     )
-    rmse = metrics.get("rmse", 0.0)
-    mae = metrics.get("mae", 0.0)
-    mape = metrics.get("mape", 0.0)
+    rmse = metrics.get("rmse")
+    mae = metrics.get("mae")
+    mape = metrics.get("mape")
     if not metrics:
-        logger.warning("EWMA rolling validation failed; returning zero metrics.")
+        logger.warning("EWMA rolling validation failed; metrics unavailable.")
 
     # ── Full-series fit for forecast ─────────────────────────────────────────
     # Calculate EWMA for entire series

@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import importlib.util
-import os
 from pathlib import Path
 import sqlite3
 from typing import Any
 
+import pytest
 from werkzeug.security import check_password_hash
 
 
@@ -133,8 +133,24 @@ def test_backend_script_rejects_ambiguous_identifier(
     assert "Provide exactly one" in capsys.readouterr().err
 
 
+def test_backend_script_resolves_relative_db_path_from_backend_root(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    """Default-style relative DB paths should not depend on cwd."""
+    module = _load_backend_script()
+    monkeypatch.chdir(BACKEND_ROOT / "scripts")
+    monkeypatch.setattr(module, "BACKEND_ROOT", tmp_path)
+
+    assert module.main(["--db-path", "data/backend.db", "--add--user", "svc"]) == 0
+
+    assert (tmp_path / "data" / "backend.db").exists()
+    assert not (BACKEND_ROOT / "scripts" / "data" / "backend.db").exists()
+
+
 def test_frontend_script_add_disable_reset_and_delete(
     tmp_path: Path,
+    monkeypatch: Any,
     capsys: Any,
 ) -> None:
     """Frontend script manages app users and session invalidation fields."""
@@ -150,13 +166,15 @@ def test_frontend_script_add_disable_reset_and_delete(
                 "--add--user",
                 "alice",
                 "--admin",
-                "--password",
-                "Password1!",
+                "--generate-temp-password",
             ]
         )
         == 0
     )
-    assert "Created frontend user 'alice' (admin)." in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "Created frontend user 'alice' (admin)." in output
+    assert "Temporary password:" in output
+    generated_password = output.split("Temporary password: ", 1)[1].splitlines()[0]
 
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -175,7 +193,7 @@ def test_frontend_script_add_disable_reset_and_delete(
         assert int(row["active"]) == 1
         assert int(row["must_change_password"]) == 1
         assert int(row["session_version"]) == 0
-        assert check_password_hash(str(row["password_hash"]), "Password1!")
+        assert check_password_hash(str(row["password_hash"]), generated_password)
         user_id = int(row["id"])
     finally:
         conn.close()
@@ -199,20 +217,16 @@ def test_frontend_script_add_disable_reset_and_delete(
     finally:
         conn.close()
 
-    assert (
-        module.main(
-            [
-                "--db-path",
-                str(db_path),
-                "--reset--password",
-                "alice",
-                "--password",
-                "Password2!",
-                "--no-must-change-password",
-            ]
-        )
-        == 0
-    )
+    monkeypatch.setenv("FRONTEND_USER_PASSWORD", "Password2!")
+    reset_args = [
+        "--db-path",
+        str(db_path),
+        "--reset--password",
+        "alice",
+        "--no-must-change-password",
+    ]
+    assert module.main(reset_args) == 0
+    assert "Temporary password:" not in capsys.readouterr().out
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
@@ -229,6 +243,9 @@ def test_frontend_script_add_disable_reset_and_delete(
         assert int(row["session_version"]) == 2
     finally:
         conn.close()
+
+    with pytest.raises(SystemExit):
+        module.main(["--db-path", str(db_path), "--add--user", "bob", "--password"])
 
     assert (
         module.main(["--db-path", str(db_path), "--delete--user", "alice", "--yes"])
@@ -260,8 +277,7 @@ def test_frontend_script_requires_delete_confirmation(
                 str(db_path),
                 "--add--user",
                 "alice",
-                "--password",
-                "Password1!",
+                "--generate-temp-password",
             ]
         )
         == 0

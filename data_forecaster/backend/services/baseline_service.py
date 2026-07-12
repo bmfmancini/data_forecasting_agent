@@ -91,14 +91,10 @@ def run_baseline_models(
 
     # 2. Seasonal Naive Forecast
     if len(train) >= seasonal_period:
-        snaive_forecast = []
-        for i in range(1, h + 1):
-            idx = len(train) + i - seasonal_period
-            if idx < len(train):
-                snaive_forecast.append(train.iloc[idx])
-            else: # pragma: no cover
-                # This case is hard to hit with typical data but is a safeguard
-                snaive_forecast.append(train.iloc[-seasonal_period])
+        final_season = train.iloc[-seasonal_period:]
+        snaive_forecast = [
+            final_season.iloc[i % seasonal_period] for i in range(h)
+        ]
         snaive_pred = pd.Series(snaive_forecast, index=test.index)
         metrics["Seasonal Naive"] = _calculate_metrics(test, snaive_pred)
 
