@@ -12,10 +12,14 @@ import logging
 import os
 from typing import Any
 
+from dotenv import load_dotenv
 from flask import Flask, jsonify, redirect, request, session, url_for
 from flask_login import current_user
 from flask_session import Session  # type: ignore[import-untyped]
 from werkzeug.wrappers import Response
+
+
+load_dotenv()
 
 from config import get_config
 from db.db import init_app as db_init_app, init_db, query_db

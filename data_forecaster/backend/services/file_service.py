@@ -163,7 +163,9 @@ def get_file(
 ) -> dict[str, Any] | None:
     """Retrieve a stored file's metadata and DataFrame by ``file_id``.
 
-    Loads the DataFrame lazily from the parquet file on disk.
+    Loads the DataFrame lazily from the parquet file on disk.  Only the
+    date and value columns are read from parquet (columnar pruning),
+    keeping memory bounded for wide datasets.
 
     Args:
         file_id: The UUID returned by :func:`store_file`.
@@ -189,8 +191,13 @@ def get_file(
         logger.warning("Parquet file missing for file_id=%s", file_id)
         return None
 
+    date_col = meta["date_col"]
+    value_col = meta["value_col"]
+
     try:
-        df = pd.read_parquet(path)
+        # Columnar pruning: read only the needed columns from parquet.
+        # This avoids loading wide DataFrames entirely into memory.
+        df = pd.read_parquet(path, columns=[date_col, value_col])
     except Exception as exc:
         logger.exception("Failed to load parquet for file_id=%s: %s", file_id, exc)
         return None
@@ -198,8 +205,8 @@ def get_file(
     return {
         "df": df,
         "owner_id": owner_id,
-        "date_col": meta["date_col"],
-        "value_col": meta["value_col"],
+        "date_col": date_col,
+        "value_col": value_col,
         "freq": meta["freq"],
         "filename": meta["filename"],
     }

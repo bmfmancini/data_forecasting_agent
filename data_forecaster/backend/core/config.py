@@ -41,12 +41,16 @@ MAX_CONCURRENT_JOBS: int = int(os.getenv("MAX_CONCURRENT_JOBS", "2"))
 if MAX_CONCURRENT_JOBS < 1:
     raise ValueError("MAX_CONCURRENT_JOBS must be at least 1.")
 
-ALLOWED_EXTENSIONS: list[str] = os.getenv("ALLOWED_EXTENSIONS", "csv,xlsx").split(",")
+ALLOWED_EXTENSIONS: list[str] = os.getenv(
+    "ALLOWED_EXTENSIONS", "csv,xlsx,json"
+).split(",")
 
 ALLOWED_MIME_TYPES: list[str] = [
     "text/csv",
     "application/vnd.ms-excel",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/json",
+    "text/plain",
 ]
 
 CHROMA_PERSIST_DIR: str = os.getenv("CHROMA_PERSIST_DIR", "./chroma_db")

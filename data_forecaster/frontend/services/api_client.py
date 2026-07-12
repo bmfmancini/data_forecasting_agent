@@ -81,7 +81,7 @@ class BackendAPIClient:
         content: bytes,
         content_type: str,
     ) -> requests.Response:
-        """Upload a CSV or XLSX file to the backend.
+        """Upload a CSV, XLSX, or JSON file to the backend.
 
         Args:
             filename:     Original file name including extension.
@@ -94,6 +94,33 @@ class BackendAPIClient:
         return requests.post(
             f"{self._base_url}/upload",
             files={"file": (filename, content, content_type)},
+            headers=self._headers(),
+            timeout=UPLOAD_TIMEOUT,
+            verify=self._verify,
+        )
+
+    def upload_file_stream(
+        self,
+        filename: str,
+        file_obj: Any,
+        content_type: str,
+    ) -> requests.Response:
+        """Upload a file to the backend using a streaming file-like object.
+
+        This avoids loading the entire file into memory — the file is
+        streamed directly from disk (or from the Flask request stream).
+
+        Args:
+            filename:     Original file name including extension.
+            file_obj:     A file-like object (must support ``read()``).
+            content_type: MIME type string (e.g. ``text/csv``).
+
+        Returns:
+            The :class:`requests.Response` from ``POST /upload``.
+        """
+        return requests.post(
+            f"{self._base_url}/upload",
+            files={"file": (filename, file_obj, content_type)},
             headers=self._headers(),
             timeout=UPLOAD_TIMEOUT,
             verify=self._verify,

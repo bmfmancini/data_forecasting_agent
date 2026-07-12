@@ -6,8 +6,13 @@ orchestration, chat, and RAG).
 """
 
 import asyncio
+import os
+import tempfile
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Annotated
+
+import aiofiles
+import anyio
 
 from fastapi import (
     Body,
@@ -73,7 +78,7 @@ from services.job_service import (
     list_recent_jobs,
     update_job_settings,
 )
-from utils.data_parser import parse_upload
+from utils.data_parser import parse_upload, parse_upload_from_path
 from utils.preflight import run_preflight_checks
 
 logger = get_logger(__name__)
@@ -403,23 +408,28 @@ def api_users_bootstrap(
 
 # ── File Upload & Analysis ────────────────────────────────────────────────────
 
+# Chunk size for streaming uploads to disk (1 MB).
+_UPLOAD_CHUNK_SIZE: int = 1024 * 1024
 
-def _validate_upload_file(file: UploadFile, contents: bytes) -> str:
-    """Validate upload metadata and magic bytes.
+
+def _validate_upload_metadata(file: UploadFile, file_size: int) -> str:
+    """Validate upload metadata (content type, extension, size).
 
     Args:
-        file: The uploaded file object.
-        contents: Raw file bytes already read from *file*.
+        file:      The uploaded file object (metadata only, not contents).
+        file_size: Size of the streamed file in bytes.
 
     Returns:
         The lower-cased file extension.
 
     Raises:
-        HTTPException: 400 when content type, extension, size, or magic
-            bytes are invalid.
+        HTTPException: 400 when content type, extension, or size is invalid.
     """
     logger.info(
-        "POST /upload  filename=%s  content_type=%s", file.filename, file.content_type
+        "POST /upload  filename=%s  content_type=%s  size=%d",
+        file.filename,
+        file.content_type,
+        file_size,
     )
 
     if file.content_type not in settings.ALLOWED_MIME_TYPES:
@@ -441,19 +451,36 @@ def _validate_upload_file(file: UploadFile, contents: bytes) -> str:
             ),
         )
 
-    if len(contents) > settings.MAX_UPLOAD_BYTES:
+    if file_size > settings.MAX_UPLOAD_BYTES:
         raise HTTPException(
             status_code=400,
             detail=(
-                f"File too large ({len(contents) // 1024} KB). "
+                f"File too large ({file_size // 1024} KB). "
                 f"Maximum allowed: {settings.MAX_UPLOAD_MB} MB."
             ),
         )
 
-    if not contents:
+    if file_size == 0:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
-    if ext == "xlsx" and contents[:4] != b"PK\x03\x04":
+    return ext
+
+
+def _validate_file_signature(path: str, ext: str) -> None:
+    """Validate file magic bytes from a disk path.
+
+    Args:
+        path: Path to the temporary file on disk.
+        ext:  Lower-cased file extension.
+
+    Raises:
+        HTTPException: 400 when the file content does not match the
+            expected format.
+    """
+    with open(path, "rb") as fh:
+        header = fh.read(4096)
+
+    if ext == "xlsx" and header[:4] != b"PK\x03\x04":
         raise HTTPException(
             status_code=400,
             detail="File content does not match XLSX format (expected ZIP signature).",
@@ -461,23 +488,62 @@ def _validate_upload_file(file: UploadFile, contents: bytes) -> str:
 
     if ext == "csv":
         try:
-            contents[:4096].decode("utf-8")
+            header.decode("utf-8")
         except UnicodeDecodeError:
             try:
-                contents[:4096].decode("latin-1")
+                header.decode("latin-1")
             except UnicodeDecodeError:
                 raise HTTPException(
                     status_code=400,
                     detail="File content does not appear to be a valid text/CSV file.",
                 ) from None
 
-    return ext
+    if ext == "json":
+        try:
+            header.decode("utf-8")
+        except UnicodeDecodeError:
+            raise HTTPException(
+                status_code=400,
+                detail="File content does not appear to be valid UTF-8 JSON.",
+            ) from None
+
+
+async def _stream_upload_to_disk(file: UploadFile) -> tuple[str, int]:
+    """Stream an upload to a temporary file on disk, returning path and size.
+
+    Reads the upload in fixed-size chunks to avoid loading the entire
+    file into memory.  Synchronous file operations are offloaded to a
+    thread pool via ``anyio.to_thread.run_sync`` to avoid blocking the
+    async event loop on large uploads.
+
+    Args:
+        file: The FastAPI UploadFile to stream.
+
+    Returns:
+        A tuple of ``(temp_file_path, total_bytes_written)``.
+    """
+    tmp_fd, tmp_path = tempfile.mkstemp(suffix=".upload")
+    os.close(tmp_fd)  # Close the raw fd; aiofiles opens its own handle.
+    total = 0
+    try:
+        async with aiofiles.open(tmp_path, "wb") as fh:
+            while True:
+                chunk = await file.read(_UPLOAD_CHUNK_SIZE)
+                if not chunk:
+                    break
+                await fh.write(chunk)
+                total += len(chunk)
+    except Exception:
+        await anyio.to_thread.run_sync(os.unlink, tmp_path)
+        raise
+    return tmp_path, total
 
 
 @app.post(
     "/upload",
     responses={
         400: {"description": "Invalid file content, size, or format"},
+        503: {"description": "File storage is full and cannot be evicted"},
         500: {"description": "File parsing failed"},
     },
 )
@@ -485,44 +551,55 @@ async def upload_file(
     file: Annotated[UploadFile, File(...)],
     _user: Annotated[dict, Depends(require_api_key)],
 ) -> UploadResponse:
-    """Handle file uploads, validate types, and store in memory."""
-    contents = await file.read()
-    _validate_upload_file(file, contents)
+    """Handle file uploads, validate types, and store on disk.
 
+    Streams the upload to a temporary file to avoid loading the entire
+    file into memory, then parses from disk.
+    """
+    tmp_path, file_size = await _stream_upload_to_disk(file)
     try:
-        df, date_col, value_col, freq = parse_upload(
-            contents, file.filename or "upload.csv"
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:
-        logger.exception("Unexpected error during file parsing")
-        raise HTTPException(
-            status_code=500,
-            detail="An internal error occurred while parsing the file.",
-        ) from exc
+        ext = _validate_upload_metadata(file, file_size)
+        _validate_file_signature(tmp_path, ext)
 
-    try:
-        file_id = store_file(
-            df,
-            date_col,
-            value_col,
-            freq,
-            file.filename,
-            owner_id=_user.get("id"),
-        )
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        try:
+            df, date_col, value_col, freq = parse_upload_from_path(
+                tmp_path, file.filename or "upload.csv"
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            logger.exception("Unexpected error during file parsing")
+            raise HTTPException(
+                status_code=500,
+                detail="An internal error occurred while parsing the file.",
+            ) from exc
 
-    return UploadResponse(
-        file_id=file_id,
-        filename=file.filename or "",
-        rows=len(df),
-        columns=df.columns.tolist(),
-        detected_date_col=date_col,
-        detected_value_col=value_col,
-        detected_frequency=freq,
-    )
+        try:
+            file_id = store_file(
+                df,
+                date_col,
+                value_col,
+                freq,
+                file.filename,
+                owner_id=_user.get("id"),
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+        return UploadResponse(
+            file_id=file_id,
+            filename=file.filename or "",
+            rows=len(df),
+            columns=df.columns.tolist(),
+            detected_date_col=date_col,
+            detected_value_col=value_col,
+            detected_frequency=freq,
+        )
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            logger.warning("Failed to clean up temp file: %s", tmp_path)
 
 
 @app.post(
