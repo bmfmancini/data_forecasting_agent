@@ -139,7 +139,7 @@ Examples:
     conn = get_connection(db_path=args.db_path)
     try:
         user_id, username = _resolve_user(conn, args.username, args.user_id)
-        key_hash = hash_api_key(args.api_key)
+        key_hash = hash_api_key(api_key)
         conn.execute(
             "UPDATE api_users SET api_key_hash = ? WHERE id = ?",
             (key_hash, user_id),
