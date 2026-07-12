@@ -2,20 +2,12 @@
 
 from __future__ import annotations
 
-import os
-import sys
 from types import SimpleNamespace
 
 import pytest
 from langchain_core.prompts import ChatPromptTemplate
 
-# Add the backend directory to the path
-backend_dir = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "..", "backend"
-)
-sys.path.insert(0, backend_dir)
-
-from utils.token_tracking import extract_token_usage, estimate_input_text  # noqa: E402
+from utils.token_tracking import extract_token_usage, estimate_input_text
 
 
 class TestExtractTokenUsage:

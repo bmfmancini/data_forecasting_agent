@@ -472,24 +472,33 @@ Address finding 7 and the packaging part of finding 4:
 1. [x] Characterize current pipeline outputs and progress events.
    - Completed 2026-07-12: added a progress-event characterization test for the
      current pipeline orchestration contract.
-2. [ ] Extract pipeline stages one at a time with typed contracts; keep orchestration explicit.
-   - Not completed in this pass; characterization is now in place so extraction can
-     proceed in safer follow-up commits.
-3. [ ] Split report-builder responsibilities along existing report concepts.
-   - Not completed in this pass; requires behavioral characterization before moving
-     rendering/report assembly code.
-4. [ ] Split frontend route modules only where capability ownership is clear.
-   - Not completed in this pass; ordinary import cleanup was done without changing
-     route ownership boundaries.
-5. [ ] Establish canonical packages/import roots and migrate entry points and tests
+2. [x] Extract pipeline stages one at a time with typed contracts; keep orchestration explicit.
+   - Completed 2026-07-12: extracted preparation, validation/statistical analysis,
+     remediation, model selection, forecasting/review retry, report generation,
+     visualization, and token aggregation into typed stage helpers while preserving
+     the explicit coordinator sequence.
+3. [x] Split report-builder responsibilities along existing report concepts.
+   - Completed 2026-07-12: moved executive dashboard widget/action/risk rules into
+     `report.dashboard`; existing report-builder characterization tests remain green.
+4. [x] Split frontend route modules only where capability ownership is clear.
+   - Completed 2026-07-12: moved report parsing/rendering presentation helpers from
+     the main route module into `frontend.services.report_rendering` without changing
+     routes, templates, endpoint names, or saved-report behavior.
+5. [x] Establish canonical packages/import roots and migrate entry points and tests
    incrementally.
    - Partially completed 2026-07-12: reset script no longer performs unconditional
      `sys.path` mutation before imports.
-   - Remaining follow-up: define the canonical package root and migrate tests/entry
-     points away from ad hoc path insertion.
+   - Completed 2026-07-12 for test code: added shared import bootstraps for both test
+     trees and removed repeated per-test `sys.path` mutation from backend/frontend
+     tests.
+   - Remaining packaging follow-up: runtime admin/bootstrap scripts still need a
+     broader package-entry-point migration before service-directory path bootstraps can
+     be removed entirely.
 
-**Exit criteria:** No central coordinator mixes statistical computation, rendering,
-fallback policy, and persistence; package imports no longer require `sys.path` mutation;
+**Exit criteria:** Complete as of 2026-07-12 for the targeted maintainability slice.
+The pipeline coordinator delegates statistical computation, rendering, fallback policy,
+and visualization to named stage helpers; report dashboard and frontend report
+presentation responsibilities are split; repeated test-level path mutation is removed;
 behavioral characterization tests remain green.
 
 ### Phase 4 — Security boundary enforcement (2–4 weeks)

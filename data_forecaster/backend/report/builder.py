@@ -19,7 +19,6 @@ from report.models import (
     Assumption,
     ConfidenceAssessment,
     Dashboard,
-    DashboardItem,
     DataQualitySection,
     EvidenceRef,
     ExecutiveReport,
@@ -38,9 +37,9 @@ from report.models import (
     Risk,
     StatisticalAudit,
 )
+from report.dashboard import build_dashboard
 from report.rules import (
     CONFIDENCE_DEDUCTIONS,
-    DASHBOARD_STATUS_COLORS,
     FORECAST_DIRECTIONS,
     HEALTH_STATUS,
     RECOMMENDATION_PRIORITIES,
@@ -1184,165 +1183,15 @@ class ExecutiveReportBuilder:
         Returns:
             :class:`Dashboard` with 7 :class:`DashboardItem` widgets.
         """
-        first_val, last_val, pct_change = self._forecast_pct_change(forecast)
-        direction, dir_status = self._direction_status(statistical.trend_slope)
-        growth_str = f"{pct_change:+.1f}%"
-        growth_status = self._growth_status(pct_change)
-        conf_str = f"{confidence.score}/100 — {confidence.label}"
-        conf_status = self._confidence_status(confidence.label)
-        dq_status = self._quality_status(data_quality.rating)
-        primary_risk, risk_status = self._primary_risk(
-            review, data_quality, forecast, statistical, has_structural_breaks
-        )
-        action, action_status = self._recommended_action(review, data_quality)
-
-        items = [
-            DashboardItem(
-                title="Forecast Direction",
-                value=direction,
-                status=dir_status,
-                description=(
-                    f"The metric is projected to trend {direction.lower()} "
-                    f"over the {len(forecast.forecast)}-period horizon."
-                ),
-                icon="📈",
-                priority=1,
-            ),
-            DashboardItem(
-                title="Expected Growth",
-                value=growth_str,
-                status=growth_status,
-                description=(
-                    f"Projected change from {round(first_val, 2)} to "
-                    f"{round(last_val, 2)} over the forecast horizon."
-                ),
-                icon="📊",
-                priority=2,
-            ),
-            DashboardItem(
-                title="Forecast Confidence",
-                value=conf_str,
-                status=conf_status,
-                description=confidence.explanation,
-                icon="🎯",
-                priority=3,
-            ),
-            DashboardItem(
-                title="Data Quality",
-                value=data_quality.rating,
-                status=dq_status,
-                description=data_quality.rating_explanation,
-                icon="🔍",
-                priority=4,
-            ),
-            DashboardItem(
-                title="Model Selected",
-                value=model_selection.selected_model,
-                status="info",
-                description=(
-                    "Selected based on validation performance and data "
-                    "characteristics."
-                ),
-                icon="🤖",
-                priority=5,
-            ),
-            DashboardItem(
-                title="Primary Risk",
-                value=primary_risk,
-                status=risk_status,
-                description=(
-                    "The most significant risk identified from the analysis."
-                ),
-                icon="⚠️",
-                priority=6,
-            ),
-            DashboardItem(
-                title="Recommended Action",
-                value=action,
-                status=action_status,
-                description=(
-                    "Immediate action recommended for leadership."
-                ),
-                icon="✅",
-                priority=7,
-            ),
-        ]
-        return Dashboard(widgets=items)
-
-    @staticmethod
-    def _direction_status(slope: float) -> tuple[str, str]:
-        """Return (direction label, status token) for a trend slope."""
-        if slope > 0:
-            return FORECAST_DIRECTIONS["upward"], "positive"
-        if slope < 0:
-            return FORECAST_DIRECTIONS["downward"], "negative"
-        return FORECAST_DIRECTIONS["flat"], "neutral"
-
-    @staticmethod
-    def _growth_status(pct_change: float) -> str:
-        """Return a status token for a growth percentage."""
-        if pct_change > 0:
-            return "positive"
-        if pct_change < 0:
-            return "negative"
-        return "neutral"
-
-    @staticmethod
-    def _confidence_status(label: str) -> str:
-        """Return a status token for a confidence label."""
-        if label == "High":
-            return "positive"
-        if label == "Medium":
-            return "warning"
-        return "negative"
-
-    @staticmethod
-    def _quality_status(rating: str) -> str:
-        """Return a status token for a data quality rating."""
-        if rating == "Good":
-            return "positive"
-        if rating == "Fair":
-            return "warning"
-        return "negative"
-
-    @staticmethod
-    def _primary_risk(
-        review: StatisticalReviewResult | None,
-        data_quality: DataQualitySection,
-        forecast: ForecastResult,
-        statistical: StatisticalResult,
-        has_structural_breaks: bool = False,
-    ) -> tuple[str, str]:
-        """Return (risk description, status token) for the dashboard."""
-        if review and review.verdict == "fail":
-            return _REVIEW_CRITICAL_MSG, "negative"
-        if data_quality.rating == "Poor":
-            return "Poor data quality may compromise reliability", "negative"
-        if forecast.mape > 20:
-            return "High forecast uncertainty (MAPE > 20%)", "warning"
-        if has_structural_breaks:
-            return (
-                "Structural breaks detected — monitor for regime shifts",
-                "warning",
-            )
-        return "Forecast accuracy may decline over longer horizons", "neutral"
-
-    @staticmethod
-    def _recommended_action(
-        review: StatisticalReviewResult | None,
-        data_quality: DataQualitySection,
-    ) -> tuple[str, str]:
-        """Return (action description, status token) for the dashboard."""
-        if review and review.verdict in ("warn", "fail"):
-            return (
-                "Review statistical audit findings and validate forecast",
-                "warning",
-            )
-        if data_quality.rating != "Good":
-            return "Improve data quality and re-run analysis", "warning"
-        return (
-            "Use forecast for near-term planning; validate against actuals",
-            "positive",
+        return build_dashboard(
+            forecast=forecast,
+            trend_slope=statistical.trend_slope,
+            model_selection=model_selection,
+            confidence=confidence,
+            data_quality=data_quality,
+            review=review,
+            forecast_change=self._forecast_pct_change(forecast),
+            has_structural_breaks=has_structural_breaks,
         )
 
     # ── Executive Summary ─────────────────────────────────────────────────

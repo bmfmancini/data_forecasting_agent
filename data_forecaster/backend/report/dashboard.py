@@ -1,0 +1,180 @@
+"""Dashboard widget rules for deterministic executive reports."""
+
+from __future__ import annotations
+
+from report.models import (
+    ConfidenceAssessment,
+    Dashboard,
+    DashboardItem,
+    DataQualitySection,
+)
+from report.rules import FORECAST_DIRECTIONS
+from schemas import ForecastResult, ModelSelectionResult, StatisticalReviewResult
+
+_REVIEW_CRITICAL_MSG = "Statistical review identified critical issues"
+
+
+def build_dashboard(
+    forecast: ForecastResult,
+    trend_slope: float,
+    model_selection: ModelSelectionResult,
+    confidence: ConfidenceAssessment,
+    data_quality: DataQualitySection,
+    review: StatisticalReviewResult | None,
+    forecast_change: tuple[float, float, float],
+    has_structural_breaks: bool = False,
+) -> Dashboard:
+    """Build reusable dashboard widgets for the executive report."""
+    first_val, last_val, pct_change = forecast_change
+    direction, dir_status = direction_status(trend_slope)
+    risk_label, risk_status = primary_risk(
+        review, data_quality, forecast, has_structural_breaks
+    )
+    action, action_status = recommended_action(review, data_quality)
+
+    return Dashboard(
+        widgets=[
+            DashboardItem(
+                title="Forecast Direction",
+                value=direction,
+                status=dir_status,
+                description=(
+                    f"The metric is projected to trend {direction.lower()} "
+                    f"over the {len(forecast.forecast)}-period horizon."
+                ),
+                icon="📈",
+                priority=1,
+            ),
+            DashboardItem(
+                title="Expected Growth",
+                value=f"{pct_change:+.1f}%",
+                status=growth_status(pct_change),
+                description=(
+                    f"Projected change from {round(first_val, 2)} to "
+                    f"{round(last_val, 2)} over the forecast horizon."
+                ),
+                icon="📊",
+                priority=2,
+            ),
+            DashboardItem(
+                title="Forecast Confidence",
+                value=f"{confidence.score}/100 — {confidence.label}",
+                status=confidence_status(confidence.label),
+                description=confidence.explanation,
+                icon="🎯",
+                priority=3,
+            ),
+            DashboardItem(
+                title="Data Quality",
+                value=data_quality.rating,
+                status=quality_status(data_quality.rating),
+                description=data_quality.rating_explanation,
+                icon="🔍",
+                priority=4,
+            ),
+            DashboardItem(
+                title="Model Selected",
+                value=model_selection.selected_model,
+                status="info",
+                description=(
+                    "Selected based on validation performance and data "
+                    "characteristics."
+                ),
+                icon="🤖",
+                priority=5,
+            ),
+            DashboardItem(
+                title="Primary Risk",
+                value=risk_label,
+                status=risk_status,
+                description=(
+                    "The most significant risk identified from the analysis."
+                ),
+                icon="⚠️",
+                priority=6,
+            ),
+            DashboardItem(
+                title="Recommended Action",
+                value=action,
+                status=action_status,
+                description="Immediate action recommended for leadership.",
+                icon="✅",
+                priority=7,
+            ),
+        ]
+    )
+
+
+def direction_status(slope: float) -> tuple[str, str]:
+    """Return ``(direction label, status token)`` for a trend slope."""
+    if slope > 0:
+        return FORECAST_DIRECTIONS["upward"], "positive"
+    if slope < 0:
+        return FORECAST_DIRECTIONS["downward"], "negative"
+    return FORECAST_DIRECTIONS["flat"], "neutral"
+
+
+def growth_status(pct_change: float) -> str:
+    """Return a status token for a growth percentage."""
+    if pct_change > 0:
+        return "positive"
+    if pct_change < 0:
+        return "negative"
+    return "neutral"
+
+
+def confidence_status(label: str) -> str:
+    """Return a status token for a confidence label."""
+    if label == "High":
+        return "positive"
+    if label == "Medium":
+        return "warning"
+    return "negative"
+
+
+def quality_status(rating: str) -> str:
+    """Return a status token for a data quality rating."""
+    if rating == "Good":
+        return "positive"
+    if rating == "Fair":
+        return "warning"
+    return "negative"
+
+
+def primary_risk(
+    review: StatisticalReviewResult | None,
+    data_quality: DataQualitySection,
+    forecast: ForecastResult,
+    has_structural_breaks: bool = False,
+) -> tuple[str, str]:
+    """Return ``(risk description, status token)`` for the dashboard."""
+    if review and review.verdict == "fail":
+        return _REVIEW_CRITICAL_MSG, "negative"
+    if data_quality.rating == "Poor":
+        return "Poor data quality may compromise reliability", "negative"
+    if forecast.mape > 20:
+        return "High forecast uncertainty (MAPE > 20%)", "warning"
+    if has_structural_breaks:
+        return (
+            "Structural breaks detected — monitor for regime shifts",
+            "warning",
+        )
+    return "Forecast accuracy may decline over longer horizons", "neutral"
+
+
+def recommended_action(
+    review: StatisticalReviewResult | None,
+    data_quality: DataQualitySection,
+) -> tuple[str, str]:
+    """Return ``(action description, status token)`` for the dashboard."""
+    if review and review.verdict in ("warn", "fail"):
+        return (
+            "Review statistical audit findings and validate forecast",
+            "warning",
+        )
+    if data_quality.rating != "Good":
+        return "Improve data quality and re-run analysis", "warning"
+    return (
+        "Use forecast for near-term planning; validate against actuals",
+        "positive",
+    )

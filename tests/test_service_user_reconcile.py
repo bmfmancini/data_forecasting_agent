@@ -2,26 +2,18 @@
 
 from __future__ import annotations
 
-import os
-import sys
 from typing import Any
 
 import pytest
 
-_backend_dir = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "data_forecaster", "backend")
-)
-if _backend_dir not in sys.path:
-    sys.path.insert(0, _backend_dir)
-
-import core.config as settings  # noqa: E402
-from auth.api_key_db import (  # noqa: E402
+import core.config as settings
+from auth.api_key_db import (
     create_first_user,
     reconcile_service_user,
     set_user_enabled,
     verify_api_key,
 )
-from core.database import init_database  # noqa: E402
+from core.database import init_database
 
 
 @pytest.fixture(autouse=True)

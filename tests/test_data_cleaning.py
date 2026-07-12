@@ -2,24 +2,12 @@
 
 from __future__ import annotations
 
-import os
-import sys
-
 import numpy as np
 import pandas as pd
 import pytest
 from pandas.tseries.frequencies import to_offset
 
-# Add the backend directory to the path so that backend-internal imports
-# (e.g. ``from core.logging_config import ...``) resolve correctly.
-sys.path.insert(
-    0,
-    os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "data_forecaster", "backend")
-    ),
-)
-
-from data_forecaster.backend.utils.data_cleaning import (  # noqa: E402
+from data_forecaster.backend.utils.data_cleaning import (
     apply_iqr_clipping,
     apply_zscore_clipping,
     audit_series,

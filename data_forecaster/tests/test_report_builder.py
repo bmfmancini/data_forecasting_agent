@@ -2,25 +2,17 @@
 
 from __future__ import annotations
 
-import os
-import sys
-
 import pytest
 
-sys.path.insert(
-    0,
-    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "backend")),
-)
-
-from report.builder import ExecutiveReportBuilder  # noqa: E402
-from report.models import (  # noqa: E402
+from report.builder import ExecutiveReportBuilder
+from report.models import (
     DashboardItem,
     EvidenceRef,
     ExecutiveReport,
     PredictionInterval,
     Recommendation,
 )
-from schemas import (  # noqa: E402
+from schemas import (
     ForecastResult,
     ModelSelectionResult,
     StatisticalResult,

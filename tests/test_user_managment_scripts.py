@@ -6,7 +6,6 @@ import importlib.util
 import os
 from pathlib import Path
 import sqlite3
-import sys
 from typing import Any
 
 from werkzeug.security import check_password_hash
@@ -27,8 +26,6 @@ def _load_module(name: str, path: Path) -> Any:
 
 
 def _load_backend_script() -> Any:
-    if str(BACKEND_ROOT) not in sys.path:
-        sys.path.insert(0, str(BACKEND_ROOT))
     return _load_module(
         "backend_user_managment_script",
         BACKEND_ROOT / "scripts" / "user_managment.py",
@@ -36,8 +33,6 @@ def _load_backend_script() -> Any:
 
 
 def _load_frontend_script() -> Any:
-    if str(FRONTEND_ROOT) not in sys.path:
-        sys.path.insert(0, str(FRONTEND_ROOT))
     return _load_module(
         "frontend_user_managment_script",
         FRONTEND_ROOT / "scripts" / "user_managment.py",

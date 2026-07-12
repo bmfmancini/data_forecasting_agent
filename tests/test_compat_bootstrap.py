@@ -2,19 +2,11 @@
 
 from __future__ import annotations
 
-import os
-import sys
 from pathlib import Path
 
 import pytest
 
-_backend_dir = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "data_forecaster", "backend")
-)
-if _backend_dir not in sys.path:
-    sys.path.insert(0, _backend_dir)
-
-from forecasting import pmdarima_compat  # noqa: E402
+from forecasting import pmdarima_compat
 
 
 def test_pmdarima_patch_translates_removed_keyword(monkeypatch: pytest.MonkeyPatch) -> None:

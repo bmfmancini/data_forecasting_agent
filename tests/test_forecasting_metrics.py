@@ -2,20 +2,11 @@
 
 from __future__ import annotations
 
-import os
-import sys
-
 import numpy as np
 import pandas as pd
 import pytest
 
-_backend_dir = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "data_forecaster", "backend")
-)
-if _backend_dir not in sys.path:
-    sys.path.insert(0, _backend_dir)
-
-from forecasting.metrics import calculate_holdout_metrics  # noqa: E402
+from forecasting.metrics import calculate_holdout_metrics
 
 
 class _Model:

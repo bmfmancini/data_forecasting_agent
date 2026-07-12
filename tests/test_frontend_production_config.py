@@ -3,16 +3,8 @@
 from __future__ import annotations
 
 import importlib
-import os
-import sys
 
 import pytest
-
-_frontend_dir = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "data_forecaster", "frontend")
-)
-if _frontend_dir not in sys.path:
-    sys.path.insert(0, _frontend_dir)
 
 
 def _reload_config(monkeypatch: pytest.MonkeyPatch, secret_key: str | None):

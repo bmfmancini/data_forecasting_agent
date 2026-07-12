@@ -2,16 +2,9 @@
 
 from __future__ import annotations
 
-import os
-import sys
-
-_frontend_dir = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "data_forecaster", "frontend")
+from data_forecaster.frontend.services.connection_errors import (
+    sanitize_connection_error,
 )
-if _frontend_dir not in sys.path:
-    sys.path.insert(0, _frontend_dir)
-
-from services.connection_errors import sanitize_connection_error  # noqa: E402
 
 
 def test_sanitize_connection_error_redacts_api_keys() -> None:

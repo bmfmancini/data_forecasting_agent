@@ -2,17 +2,9 @@
 
 from __future__ import annotations
 
-import os
-import sys
-
 import pytest
 
-sys.path.insert(
-    0,
-    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "backend")),
-)
-
-from report.rules import (  # noqa: E402
+from report.rules import (
     CONFIDENCE_DEDUCTIONS,
     CONFIDENCE_LABELS,
     confidence_label,
