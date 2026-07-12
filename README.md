@@ -95,6 +95,7 @@ Detailed docs are split out so this README stays short:
 - [API authentication](docs/api-auth.md) — how API keys work, rotating credentials, the default `frontend` user
 - [API reference](docs/api-reference.md) — endpoint list, error codes, request/response schemas
 - [Local development](docs/local-dev.md) — running without Docker, running the test suite
+- [User management scripts](docs/user-management-scripts.md) — CLI runbook for frontend users and backend API users
 
 ## Tech stack
 
