@@ -2,32 +2,22 @@
 
 from __future__ import annotations
 
-import os
-import sys
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
-# Ensure backend modules are importable from the tests directory.
-_backend_dir = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "..", "data_forecaster", "backend"
-)
-_backend_dir = os.path.abspath(_backend_dir)
-if _backend_dir not in sys.path:
-    sys.path.insert(0, _backend_dir)
-
-import core.config as settings  # noqa: E402
-from auth.api_key_db import (  # noqa: E402
+import core.config as settings
+from auth.api_key_db import (
     create_api_user,
     create_first_user,
     delete_api_user,
     list_api_users,
     set_user_admin,
 )
-from auth.dependency import require_admin_api_key, require_api_key  # noqa: E402
-from core.database import init_database  # noqa: E402
-from main import app  # noqa: E402
+from auth.dependency import require_admin_api_key, require_api_key
+from core.database import init_database
+from main import app
 
 # Test API key reused from the ADMIN_API_KEY env var set in _reset_api_key_db.
 _ADMIN_KEY = "test-admin-key"

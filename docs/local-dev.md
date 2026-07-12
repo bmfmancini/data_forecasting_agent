@@ -90,5 +90,5 @@ export OLLAMA_MODEL=llama3
 - The backend uses `--reload` which watches for file changes and auto-restarts. Great for iterating on agents or API endpoints.
 - The frontend in development mode has Flask debug enabled — you get the interactive debugger in the browser on errors.
 - The `FLASK_ENCRYPTION_KEY` is used to encrypt stored API credentials at rest. Generate one with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`.
-- If you change the `FRONTEND_API_KEY` in `backend/.env`, keep the matching value in `frontend/.env`, delete the stale `backend.db`, and restart the backend — it only auto-creates the user when no users exist.
+- Backend API credentials are entered in the frontend under Admin -> API Config, not stored in `frontend/.env`.
 - ChromaDB persists to `./chroma_db` by default. Delete that directory if you want a clean RAG knowledge base.

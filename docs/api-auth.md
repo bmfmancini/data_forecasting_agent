@@ -13,26 +13,33 @@ X-API-Key: <your key>
 
 On success, the backend updates `last_used` and `last_used_ip` on the user record. On failure, you get a generic `401 Unauthorized` — the error doesn't tell you whether the username or the key was wrong, so you can't probe for valid usernames.
 
-## Default credentials
+## First setup
 
-The stack ships with a default service account:
+The frontend does not read backend API credentials from its `.env` file.
+After first login, configure the active backend connection in
+**Admin → API Config**.
 
-- **Username:** `frontend`
-- **Key:** `frontend`
+For a new deployment:
 
-Both the backend and frontend auto-seed these on first boot, so everything works out of the box without any manual configuration.
+1. Log into the frontend admin panel with `admin` / `admin`.
+2. Change the password when prompted.
+3. Create or rotate a backend API user under **Admin → API Keys**.
+4. Copy the plaintext key shown once.
+5. Enter the backend URL, SSL verification setting, username, and key under
+   **Admin → API Config**.
 
-> **This key is publicly known.** Anyone reading the source code or this doc knows it. Rotate it before exposing the stack to anything beyond your local machine. The backend logs a `SECURITY` warning on startup when the default key is in use.
+The frontend stores the API username and key in its own SQLite database. The
+key is encrypted at rest and is never displayed back to the browser.
 
-## Rotating the default key
+## Rotating a key
 
-1. Log into the admin panel at `https://localhost` (`admin` / `admin`).
-2. Go to **Admin → API Keys**. You'll see the `frontend` user with a ⚠ badge (it's flagged as a bootstrap account).
-3. Click 🔄 (rotate) on the `frontend` user. Copy the new key — it's only shown once.
+1. Go to **Admin → API Keys**.
+2. Click 🔄 (rotate) on the affected user.
+3. Copy the new key — it's only shown once.
 4. Go to **Admin → API Config** and update the **API Key** field with the new key. Save.
-5. The ⚠ badge stays until you either rotate the key or delete the bootstrap user and create a new one.
 
-Alternatively, you can create a brand new API user, update the API Config with those credentials, and delete the `frontend` user entirely.
+Alternatively, create a brand new API user, update API Config with those
+credentials, and delete or disable the old user.
 
 ## Creating additional API users
 

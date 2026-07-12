@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import json
 import threading
 import uuid
@@ -14,8 +15,6 @@ from core.database import get_connection
 from core.logging_config import get_logger
 from schemas import AnalysisResponse
 from services.file_service import get_file, release_file, reserve_file
-from services.pipeline_service import run_pipeline
-from services.rag_service import get_rag_kb
 
 logger = get_logger(__name__)
 
@@ -70,11 +69,15 @@ def get_job_settings() -> dict[str, Any]:
             FROM forecast_job_settings WHERE singleton = 1
             """
         ).fetchone()
-        return dict(row) if row else {
-            "max_running_jobs_per_user": 1,
-            "retention_days": 30,
-            "cleanup_enabled": 1,
-        }
+        return (
+            dict(row)
+            if row
+            else {
+                "max_running_jobs_per_user": 1,
+                "retention_days": 30,
+                "cleanup_enabled": 1,
+            }
+        )
     finally:
         connection.close()
 
@@ -211,11 +214,18 @@ def _insert_job(
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
             """,
             (
-                job_id, owner_id, application_user_id, application_username,
-                int(application_user_is_admin), request_data["file_id"],
-                request_data["date_col"], request_data["value_col"],
-                request_data["forecast_horizon"], request_data["forced_model"],
-                request_data["user_prompt"], json.dumps(request_data["preflight_options"]),
+                job_id,
+                owner_id,
+                application_user_id,
+                application_username,
+                int(application_user_is_admin),
+                request_data["file_id"],
+                request_data["date_col"],
+                request_data["value_col"],
+                request_data["forecast_horizon"],
+                request_data["forced_model"],
+                request_data["user_prompt"],
+                json.dumps(request_data["preflight_options"]),
                 "Queued — waiting for an available slot…",
             ),
         )
@@ -284,12 +294,18 @@ def _job_record(job_id: str) -> dict[str, Any] | None:
         connection.close()
 
 
-def get_job(job_id: str, requester: dict[str, Any] | None = None) -> dict[str, Any] | None:
+def get_job(
+    job_id: str, requester: dict[str, Any] | None = None
+) -> dict[str, Any] | None:
     """Return a job's current state when the requester owns it or is an admin."""
     record = _job_record(job_id)
     if record is None:
         return None
-    if requester and not requester.get("is_admin") and record["backend_owner_id"] != requester.get("id"):
+    if (
+        requester
+        and not requester.get("is_admin")
+        and record["backend_owner_id"] != requester.get("id")
+    ):
         return None
     cached = _job_store.get(job_id, {})
     return {**record, "result": cached.get("result")}
@@ -378,11 +394,15 @@ async def _run_job(job_id: str, job: dict[str, Any]) -> None:
         return
 
     def run_pipeline_sync() -> AnalysisResponse:
-        return run_pipeline(
-            df=stored["df"], file_id=str(job["file_id"]),
-            date_col=str(job["date_col"]), value_col=str(job["value_col"]),
-            freq=stored["freq"], forecast_horizon=int(job["forecast_horizon"]),
-            forced_model=job["forced_model"], user_prompt=job["user_prompt"],
+        return _run_pipeline(
+            df=stored["df"],
+            file_id=str(job["file_id"]),
+            date_col=str(job["date_col"]),
+            value_col=str(job["value_col"]),
+            freq=stored["freq"],
+            forecast_horizon=int(job["forecast_horizon"]),
+            forced_model=job["forced_model"],
+            user_prompt=job["user_prompt"],
             preflight_options=json.loads(str(job["preflight_options"])),
             chroma_persist_dir=settings.CHROMA_PERSIST_DIR,
             progress_callback=lambda pct, step: _update_job_progress(job_id, pct, step),
@@ -395,10 +415,13 @@ async def _run_job(job_id: str, job: dict[str, Any]) -> None:
             _job_store.setdefault(job_id, {})["result"] = result.model_dump()
         try:
             await asyncio.to_thread(
-                index_analysis_results, str(job["file_id"]), job["backend_owner_id"],
-                result, settings.CHROMA_PERSIST_DIR,
+                index_analysis_results,
+                str(job["file_id"]),
+                job["backend_owner_id"],
+                result,
+                settings.CHROMA_PERSIST_DIR,
             )
-        except Exception:  # pylint: disable=broad-exception-caught
+        except (RuntimeError, TypeError, ValueError, OSError):
             logger.exception("Analysis result indexing failed for job_id=%s", job_id)
     except Exception as exc:  # pylint: disable=broad-exception-caught
         logger.exception("Pipeline failed for job_id=%s", job_id)
@@ -425,11 +448,20 @@ def _complete_job(job_id: str) -> None:
         connection.close()
 
 
+def _run_pipeline(**kwargs: Any) -> AnalysisResponse:
+    """Load and execute the forecasting pipeline only when a job is running."""
+    run_pipeline = importlib.import_module("services.pipeline_service").run_pipeline
+    return run_pipeline(**kwargs)
+
+
 def index_analysis_results(
-    file_id: str, owner_id: int | None, analysis_result: AnalysisResponse,
+    file_id: str,
+    owner_id: int | None,
+    analysis_result: AnalysisResponse,
     chroma_persist_dir: str,
 ) -> None:
     """Index completed analysis results without making indexing job-critical."""
+    get_rag_kb = importlib.import_module("services.rag_service").get_rag_kb
     rag_kb = get_rag_kb(chroma_persist_dir)
     summary = (
         f"Forecasting Analysis Results for {file_id}:\n"
@@ -440,5 +472,11 @@ def index_analysis_results(
     if hasattr(rag_kb, "add_texts"):
         rag_kb.add_texts(
             texts=[summary],
-            metadatas=[{"file_id": file_id, "owner_id": str(owner_id or ""), "type": "analysis_result"}],
+            metadatas=[
+                {
+                    "file_id": file_id,
+                    "owner_id": str(owner_id or ""),
+                    "type": "analysis_result",
+                }
+            ],
         )

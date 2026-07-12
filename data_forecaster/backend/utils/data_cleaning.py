@@ -135,17 +135,32 @@ def impute_missing(
             )
             filled = series.interpolate(method="time", limit=limit)
         else:
-            temp = series.interpolate(method="time")
-            decomp = seasonal_decompose(
-                temp, model="additive", period=period, extrapolate_trend="freq"
-            )
-            reconstructed = decomp.trend + decomp.seasonal
-            filled = series.copy()
-            filled[filled.isna()] = reconstructed[filled.isna()]
+            temp = _fill_for_decomposition(series, limit)
+            try:
+                decomp = seasonal_decompose(
+                    temp, model="additive", period=period, extrapolate_trend="freq"
+                )
+            except ValueError as exc:
+                logger.warning(
+                    "Seasonal decomposition imputation failed; falling back to interpolation: %s",
+                    exc,
+                )
+                filled = temp
+            else:
+                reconstructed = decomp.trend + decomp.seasonal
+                filled = series.copy()
+                filled[filled.isna()] = reconstructed[filled.isna()]
+                filled = _fill_for_decomposition(filled, limit)
     else:
         raise ValueError(f"Unsupported imputation method: {method}")
     logger.info("Imputed missing values using method='%s'", method)
     return filled
+
+
+def _fill_for_decomposition(series: pd.Series, limit: int | None = None) -> pd.Series:
+    """Return a copy with interior and edge gaps filled for decomposition."""
+    filled = series.interpolate(method="time", limit=limit)
+    return filled.ffill().bfill()
 
 
 def detect_outliers_iqr(series: pd.Series) -> dict[str, Any]:

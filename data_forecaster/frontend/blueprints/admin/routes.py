@@ -8,9 +8,12 @@ role.  The ``admin_required`` decorator enforces this.
 from __future__ import annotations
 
 import logging
+import sqlite3
 from functools import wraps
 from typing import Any, Callable, TypeVar
 
+import requests
+from cryptography.fernet import InvalidToken
 from flask import (
     current_app,
     flash,
@@ -31,7 +34,10 @@ from blueprints.admin.forms import (
     UserCreateForm,
     UserEditForm,
 )
+from db.crypto import decrypt, encrypt
 from db.db import execute_db, query_db
+from services.api_client import BackendAPIClient, get_api_client
+from services.connection_errors import sanitize_connection_error
 from services.report_service import (
     delete_all_reports_for_admin,
     delete_report_for_admin,
@@ -48,6 +54,7 @@ _ADMIN_USER_FORM_TEMPLATE: str = "admin/user_form.html"
 _ADMIN_API_CONFIG_ENDPOINT: str = "admin.api_config"
 _ADMIN_API_KEYS_ENDPOINT: str = "admin.api_keys"
 _ADMIN_JOB_QUEUE_ENDPOINT: str = "admin.job_queue"
+_API_KEY_PLACEHOLDER: str = "******"
 
 _RETENTION_OPTIONS: dict[str, tuple[int | None, bool]] = {
     "1": (1, True),
@@ -59,6 +66,20 @@ _RETENTION_OPTIONS: dict[str, tuple[int | None, bool]] = {
     "indefinite": (None, True),
     "disabled": (None, False),
 }
+
+
+def _save_app_config_values(values: dict[str, str]) -> None:
+    """Persist application config values after all validation succeeds."""
+    for key, value in values.items():
+        execute_db(
+            """
+            INSERT INTO app_config (key, value, updated_at)
+            VALUES (?, ?, datetime('now'))
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value,
+                                           updated_at = excluded.updated_at
+            """,
+            (key, value),
+        )
 
 
 def admin_required(f: _F) -> _F:
@@ -104,15 +125,13 @@ def dashboard() -> str:
     api_key_count: int = 0
     has_bootstrap: bool = False
     try:
-        from services.api_client import get_api_client
-
         client = get_api_client()
         resp = client.list_api_users()
         if resp.status_code == 200:
             api_users_list: list[dict[str, Any]] = resp.json()
             api_key_count = len(api_users_list)
             has_bootstrap = any(u.get("bootstrap") for u in api_users_list)
-    except Exception:
+    except (requests.RequestException, ValueError):
         logger.exception("Failed to fetch API users for admin dashboard")
 
     return render_template(
@@ -132,13 +151,15 @@ def users() -> str:
     Returns:
         Rendered HTML for the user management list page.
     """
-    rows = query_db("""
+    rows = query_db(
+        """
         SELECT u.id, u.username, r.name AS role, u.active, u.created_at,
                u.must_change_password
         FROM users u
         JOIN roles r ON r.id = u.role_id
         ORDER BY u.id
-        """)
+        """
+    )
     user_list: list[dict[str, Any]] = rows if isinstance(rows, list) else []
     return render_template("admin/users.html", users=user_list)
 
@@ -365,7 +386,7 @@ def settings() -> str | Response:
     Returns:
         Rendered settings template on GET; redirect on successful POST.
     """
-    known_keys: list[str] = ["app_name", "max_reports_per_user"]
+    known_keys: list[str] = ["app_name", "max_reports_per_user", "max_upload_mb"]
 
     if request.method == "POST":
         try:
@@ -374,18 +395,18 @@ def settings() -> str | Response:
         except ValueError:
             flash("Enter a report limit of at least 1.", "danger")
             return redirect(url_for("admin.settings"))
-        for key in known_keys:
-            value: str = str(request.form.get(key, "")).strip()
-            if value:
-                execute_db(
-                    """
-                    INSERT INTO app_config (key, value, updated_at)
-                    VALUES (?, ?, datetime('now'))
-                    ON CONFLICT(key) DO UPDATE SET value = excluded.value,
-                                                   updated_at = excluded.updated_at
-                    """,
-                    (key, value),
-                )
+        try:
+            max_upload_mb = int(request.form.get("max_upload_mb", ""))
+            if max_upload_mb < 1 or max_upload_mb > 256:
+                raise ValueError
+        except ValueError:
+            flash("Enter an upload limit from 1 to 256 MB.", "danger")
+            return redirect(url_for("admin.settings"))
+        app_config_updates = {
+            key: value
+            for key in known_keys
+            if (value := str(request.form.get(key, "")).strip())
+        }
         try:
             max_running_jobs = int(request.form.get("max_running_jobs_per_user", ""))
             retention_option = str(request.form.get("job_retention", "30"))
@@ -393,11 +414,12 @@ def settings() -> str | Response:
             if max_running_jobs < 1:
                 raise ValueError
         except (KeyError, ValueError):
-            flash("Enter a job limit of at least 1 and select a valid retention option.", "danger")
+            flash(
+                "Enter a job limit of at least 1 and select a valid retention option.",
+                "danger",
+            )
             return redirect(url_for("admin.settings"))
         try:
-            from services.api_client import get_api_client
-
             response = get_api_client().update_job_settings(
                 {
                     "max_running_jobs_per_user": max_running_jobs,
@@ -408,16 +430,21 @@ def settings() -> str | Response:
             if response.status_code != 200:
                 flash("Forecast job settings could not be saved.", "danger")
                 return redirect(url_for("admin.settings"))
-        except Exception:
+        except requests.RequestException:
             logger.exception("Failed to save forecast job settings")
-            flash("The backend is unavailable; forecast job settings were not saved.", "danger")
+            flash(
+                "The backend is unavailable; forecast job settings were not saved.",
+                "danger",
+            )
             return redirect(url_for("admin.settings"))
+        _save_app_config_values(app_config_updates)
+        current_app.config["MAX_CONTENT_LENGTH"] = max_upload_mb * 1024 * 1024
         flash("Settings saved.", "success")
         return redirect(url_for("admin.settings"))
 
     config_rows = query_db(
-        "SELECT key, value FROM app_config WHERE key IN (?, ?)",
-        (known_keys[0], known_keys[1]),
+        "SELECT key, value FROM app_config WHERE key IN (?, ?, ?)",
+        (known_keys[0], known_keys[1], known_keys[2]),
     )
     config_map: dict[str, str] = {}
     if isinstance(config_rows, list):
@@ -495,12 +522,10 @@ def _load_forecast_job_settings() -> dict[str, Any]:
         "cleanup_enabled": True,
     }
     try:
-        from services.api_client import get_api_client
-
         response = get_api_client().get_job_settings()
         if response.status_code == 200:
             return response.json()
-    except Exception:
+    except (requests.RequestException, ValueError):
         logger.exception("Failed to load forecast job settings")
     return defaults
 
@@ -520,14 +545,12 @@ def job_queue() -> str:
     jobs: list[dict[str, Any]] = []
     queue_error: str | None = None
     try:
-        from services.api_client import get_api_client
-
         response = get_api_client().list_recent_jobs()
         if response.status_code == 200:
             jobs = response.json()
         else:
             queue_error = "The backend could not provide job history."
-    except Exception:
+    except (requests.RequestException, ValueError):
         logger.exception("Failed to fetch forecast job queue")
         queue_error = "The backend is unavailable. Try again once it is online."
     return render_template("admin/job_queue.html", jobs=jobs, queue_error=queue_error)
@@ -538,43 +561,87 @@ def job_queue() -> str:
 def clear_terminal_jobs() -> Response:
     """Clear all completed and failed jobs through the protected backend API."""
     try:
-        from services.api_client import get_api_client
-
         response = get_api_client().clear_terminal_jobs()
         if response.status_code == 200:
             deleted_count = int(response.json().get("deleted_count", 0))
             flash(f"Cleared {deleted_count} completed or failed job(s).", "success")
         else:
             flash("Completed and failed jobs could not be cleared.", "danger")
-    except Exception:
+    except (requests.RequestException, ValueError):
         logger.exception("Failed to clear terminal forecast jobs")
         flash("The backend is unavailable; terminal jobs were not cleared.", "danger")
     return redirect(url_for(_ADMIN_JOB_QUEUE_ENDPOINT))
 
 
-def _load_api_config_form(form: APIConfigForm) -> None:
-    """Populate the API config form from the stored default row."""
+def _load_current_api_config() -> dict[str, Any] | None:
+    """Return the saved API config summary without exposing the API key."""
     current_row = query_db(
-        "SELECT base_url, timeout, verify_ssl FROM api_credentials WHERE label = 'default' LIMIT 1",
+        """
+        SELECT base_url, timeout, verify_ssl, encrypted_username,
+               encrypted_password
+        FROM api_credentials WHERE label = 'default' LIMIT 1
+        """,
         one=True,
     )
-    if current_row and isinstance(current_row, dict):
-        form.base_url.data = str(current_row.get("base_url", ""))
-        form.timeout.data = int(current_row.get("timeout", 30))
-        form.verify_ssl.data = bool(current_row.get("verify_ssl", 0))
+    if not current_row or not isinstance(current_row, dict):
+        return None
+
+    username = ""
+    enc_user = current_row.get("encrypted_username")
+    if enc_user:
+        try:
+            username = decrypt(str(enc_user))
+        except (InvalidToken, RuntimeError, ValueError):
+            username = ""
+
+    return {
+        "base_url": str(current_row.get("base_url", "")),
+        "username": username,
+        "timeout": int(current_row.get("timeout", 30)),
+        "verify_ssl": bool(current_row.get("verify_ssl", 0)),
+        "has_key": bool(current_row.get("encrypted_password")),
+    }
+
+
+def _load_api_config_form(
+    form: APIConfigForm, current_config: dict[str, Any] | None = None
+) -> None:
+    """Populate the API config form from the stored default row."""
+    current_config = current_config or _load_current_api_config()
+    if current_config:
+        form.base_url.data = str(current_config.get("base_url", ""))
+        form.api_username.data = str(current_config.get("username", ""))
+        form.timeout.data = int(current_config.get("timeout", 30))
+        form.verify_ssl.data = bool(current_config.get("verify_ssl", False))
+        form.api_password.data = ""
+
+
+def _render_api_config(
+    form: APIConfigForm,
+    auth_status: dict[str, Any],
+    status_code: int = 200,
+) -> str | tuple[str, int]:
+    """Render API Config with the current saved summary."""
+    current_config = _load_current_api_config()
+    rendered = render_template(
+        "admin/api_config.html",
+        form=form,
+        auth_status=auth_status,
+        current_api_config=current_config,
+        api_key_placeholder=_API_KEY_PLACEHOLDER,
+    )
+    return rendered if status_code == 200 else (rendered, status_code)
 
 
 def _fetch_backend_auth_status() -> dict[str, Any]:
     """Return the backend's auth status, or defaults if unreachable."""
     auth_status: dict[str, Any] = {"auth_enabled": False, "has_users": False}
     try:
-        from services.api_client import get_api_client
-
         client = get_api_client()
         resp = client.get_auth_status()
         if resp.status_code == 200:
             auth_status = resp.json()
-    except Exception:
+    except (requests.RequestException, ValueError):
         pass  # Backend unreachable — show defaults
     return auth_status
 
@@ -584,8 +651,6 @@ def _encrypt_credentials(
 ) -> tuple[str, str] | tuple[None, None]:
     """Encrypt API credentials, flashing and returning None on failure."""
     try:
-        from db.crypto import encrypt
-
         return encrypt(username), encrypt(password)
     except RuntimeError as exc:
         flash(str(exc), "danger")
@@ -598,6 +663,7 @@ def _save_api_credentials(
     verify_ssl: int,
     enc_user: str | None,
     enc_pass: str | None,
+    preserve_existing_key: bool = False,
 ) -> None:
     """Upsert the default API credential row.
 
@@ -621,6 +687,21 @@ def _save_api_credentials(
             """,
             (base_url, enc_user, enc_pass, timeout, verify_ssl),
         )
+    elif enc_user and preserve_existing_key:
+        execute_db(
+            """
+            INSERT INTO api_credentials
+                (label, base_url, encrypted_username, encrypted_password,
+                 timeout, verify_ssl)
+            VALUES ('default', ?, ?, NULL, ?, ?)
+            ON CONFLICT(label) DO UPDATE SET
+                base_url           = excluded.base_url,
+                encrypted_username = excluded.encrypted_username,
+                timeout            = excluded.timeout,
+                verify_ssl         = excluded.verify_ssl
+            """,
+            (base_url, enc_user, timeout, verify_ssl),
+        )
     else:
         execute_db(
             """
@@ -635,6 +716,44 @@ def _save_api_credentials(
             """,
             (base_url, timeout, verify_ssl),
         )
+
+
+def _client_from_api_config_form() -> BackendAPIClient | None:
+    """Build a temporary API client from posted API Config form values."""
+    base_url = str(request.form.get("base_url", "")).strip().rstrip("/")
+    if not base_url:
+        return None
+
+    username = str(request.form.get("api_username", "")).strip()
+    api_key = str(request.form.get("api_password", "")).strip()
+    verify_ssl = request.form.get("verify_ssl") in {"y", "on", "true", "1"}
+
+    if api_key and not username:
+        return None
+
+    if username and not api_key:
+        row = query_db(
+            """
+            SELECT encrypted_password
+            FROM api_credentials
+            WHERE label = 'default'
+            LIMIT 1
+            """,
+            one=True,
+        )
+        if not row or not isinstance(row, dict) or not row.get("encrypted_password"):
+            return None
+        try:
+            api_key = decrypt(str(row["encrypted_password"]))
+        except (InvalidToken, RuntimeError, ValueError):
+            return None
+
+    return BackendAPIClient(
+        base_url=base_url,
+        api_username=username or None,
+        api_key=api_key or None,
+        verify=verify_ssl,
+    )
 
 
 @admin_bp.route("/api-config", methods=["GET", "POST"])
@@ -656,32 +775,57 @@ def api_config() -> str | Response:
     auth_status = _fetch_backend_auth_status()
 
     if request.method == "GET":
-        _load_api_config_form(form)
-        return render_template(
-            "admin/api_config.html", form=form, auth_status=auth_status
-        )
+        current_config = _load_current_api_config()
+        _load_api_config_form(form, current_config)
+        return _render_api_config(form, auth_status)
 
     if not form.validate_on_submit():
-        return render_template(
-            "admin/api_config.html", form=form, auth_status=auth_status
-        )
+        return _render_api_config(form, auth_status)
 
     base_url: str = str(form.base_url.data or "").rstrip("/")
     api_username: str = str(form.api_username.data or "").strip()
     api_password: str = str(form.api_password.data or "").strip()
     timeout: int = int(form.timeout.data or 30)
     verify_ssl: int = 1 if form.verify_ssl.data else 0
+    current_config = _load_current_api_config()
+    has_existing_key = bool(current_config and current_config.get("has_key"))
+
+    if api_password == _API_KEY_PLACEHOLDER:
+        api_password = ""
+
+    if api_password and not api_username:
+        flash("Enter an API username when providing a new API key.", "danger")
+        return _render_api_config(form, auth_status)
+
+    if api_username and not api_password and not has_existing_key:
+        flash("Enter an API key for the configured API username.", "danger")
+        return _render_api_config(form, auth_status)
 
     enc_user: str | None = None
     enc_pass: str | None = None
+    preserve_existing_key = False
     if api_username and api_password:
         enc_user, enc_pass = _encrypt_credentials(api_username, api_password)
         if enc_user is None or enc_pass is None:
-            return render_template(
-                "admin/api_config.html", form=form, auth_status=auth_status
-            )
+            return _render_api_config(form, auth_status)
+    elif api_username and has_existing_key:
+        try:
+            enc_user = encrypt(api_username)
+        except RuntimeError as exc:
+            flash(str(exc), "danger")
+            return _render_api_config(form, auth_status)
+        preserve_existing_key = True
+    elif not api_username and has_existing_key:
+        preserve_existing_key = True
 
-    _save_api_credentials(base_url, timeout, verify_ssl, enc_user, enc_pass)
+    _save_api_credentials(
+        base_url,
+        timeout,
+        verify_ssl,
+        enc_user,
+        enc_pass,
+        preserve_existing_key,
+    )
     current_app.config["BACKEND_URL"] = base_url
     current_app.config["API_VERIFY_SSL"] = bool(verify_ssl)
     flash("API configuration saved.", "success")
@@ -693,7 +837,9 @@ def api_config() -> str | Response:
 def api_config_test() -> Response:
     """Test connectivity to the currently configured backend API.
 
-    Calls ``GET /health`` on the backend using the stored credentials.
+    Calls ``GET /auth-check`` on the backend using either the credentials
+    currently typed into the form or the stored credentials when the form
+    did not include a full username/key pair.
     Returns a sanitised result without exposing raw credential or
     connection details.
 
@@ -701,21 +847,43 @@ def api_config_test() -> Response:
         JSON with ``ok`` (bool) and ``message`` (str) keys.
     """
     try:
-        from services.api_client import get_api_client
-
-        client = get_api_client()
-        resp = client.health_check()
+        client = _client_from_api_config_form() or get_api_client()
+        resp = client.auth_check()
         if resp.status_code == 200:
-            return jsonify({"ok": True, "message": "Connection successful."})
+            data = resp.json()
+            if data.get("authenticated"):
+                return jsonify(
+                    {
+                        "ok": True,
+                        "message": "Connection and API credentials successful.",
+                    }
+                )
+            return jsonify(
+                {
+                    "ok": True,
+                    "message": "Connection successful; backend auth is disabled.",
+                }
+            )
+        if resp.status_code == 401:
+            return jsonify(
+                {
+                    "ok": False,
+                    "message": "Authentication failed. Check the configured credentials.",
+                }
+            )
         return jsonify(
             {
                 "ok": False,
                 "message": f"Backend returned HTTP {resp.status_code}.",
             }
         )
-    except Exception as exc:
+    except requests.RequestException as exc:
         safe_message = _sanitise_connection_error(str(exc))
         return jsonify({"ok": False, "message": safe_message})
+    except ValueError:
+        return jsonify(
+            {"ok": False, "message": "Backend returned an invalid response."}
+        )
 
 
 @admin_bp.route("/api-config/enable-auth", methods=["POST"])
@@ -741,12 +909,10 @@ def api_config_enable_auth() -> Response:
         flash("Username and API key are required.", "danger")
         return redirect(url_for(_ADMIN_API_CONFIG_ENDPOINT))
 
-    from services.api_client import get_api_client
-
     client = get_api_client()
     try:
         resp = client.bootstrap_api_user(api_username, api_key, admin_key)
-    except Exception as exc:
+    except requests.RequestException as exc:
         flash(
             f"Could not connect to backend: {_sanitise_connection_error(str(exc))}",
             "danger",
@@ -769,15 +935,13 @@ def api_config_enable_auth() -> Response:
         detail: str = "Unknown error."
         try:
             detail = resp.json().get("detail", detail)
-        except Exception:
+        except ValueError:
             logger.exception("Failed to parse bootstrap error response")
         flash(f"Bootstrap failed (HTTP {resp.status_code}): {detail}", "danger")
         return redirect(url_for(_ADMIN_API_CONFIG_ENDPOINT))
 
     # Success — store the credentials encrypted in the frontend DB
     try:
-        from db.crypto import encrypt
-
         enc_user = encrypt(api_username)
         enc_pass = encrypt(api_key)
         execute_db(
@@ -808,12 +972,10 @@ def _check_backend_health() -> bool:
         ``True`` when ``GET /health`` returns HTTP 200, ``False`` otherwise.
     """
     try:
-        from services.api_client import get_api_client
-
         client = get_api_client()
         resp = client.health_check()
         return resp.status_code == 200
-    except Exception:
+    except requests.RequestException:
         return False
 
 
@@ -829,13 +991,7 @@ def _sanitise_connection_error(error_message: str) -> str:
     Returns:
         A short description safe for display.
     """
-    if "Connection refused" in error_message or "ConnectError" in error_message:
-        return "Could not connect to the backend. Check the Base URL and ensure the service is running."
-    if "Timeout" in error_message or "timed out" in error_message.lower():
-        return "Connection timed out. The backend may be overloaded or unreachable."
-    if "401" in error_message or "Unauthorized" in error_message:
-        return "Authentication failed. Check the configured credentials."
-    return "Connection failed. Verify the backend URL and network accessibility."
+    return sanitize_connection_error(error_message)
 
 
 # ── API Key User Management ───────────────────────────────────────────────────
@@ -850,8 +1006,6 @@ def api_keys() -> str | Response:
         Rendered HTML for the API key management list page, or a redirect
         with an error message when the backend is unreachable.
     """
-    from services.api_client import get_api_client
-
     client = get_api_client()
     try:
         resp = client.list_api_users()
@@ -863,7 +1017,7 @@ def api_keys() -> str | Response:
                 "danger",
             )
             api_users = []
-    except Exception as exc:
+    except (requests.RequestException, ValueError) as exc:
         flash(
             f"Could not connect to backend: {_sanitise_connection_error(str(exc))}",
             "danger",
@@ -896,8 +1050,6 @@ def api_key_new() -> str | Response:
         description: str = str(form.description.data or "").strip()
         is_admin: bool = bool(form.is_admin.data)
 
-        from services.api_client import get_api_client
-
         client = get_api_client()
         try:
             resp = client.create_api_user(username, description, is_admin)
@@ -915,7 +1067,7 @@ def api_key_new() -> str | Response:
                     f"Failed to create API user (HTTP {resp.status_code}).",
                     "danger",
                 )
-        except Exception as exc:
+        except (requests.RequestException, ValueError) as exc:
             flash(
                 f"Could not connect to backend: {_sanitise_connection_error(str(exc))}",
                 "danger",
@@ -936,8 +1088,6 @@ def api_key_rotate(user_id: int) -> Response:
         Redirect to the API keys list with the new key flashed once, or
         a redirect with an error message on failure.
     """
-    from services.api_client import get_api_client
-
     client = get_api_client()
     try:
         # Check if this is the active user — warn if so
@@ -968,8 +1118,6 @@ def api_key_rotate(user_id: int) -> Response:
                 # in its own try/except so a credential-update failure does
                 # not mask the successful backend rotation.
                 try:
-                    from db.crypto import encrypt
-
                     execute_db(
                         "UPDATE api_credentials"
                         " SET encrypted_username = ?, encrypted_password = ?"
@@ -981,7 +1129,7 @@ def api_key_rotate(user_id: int) -> Response:
                         "automatically.",
                         "success",
                     )
-                except Exception as cred_exc:
+                except (RuntimeError, sqlite3.DatabaseError) as cred_exc:
                     logger.exception(
                         "Failed to update frontend credentials after rotation"
                     )
@@ -1002,7 +1150,7 @@ def api_key_rotate(user_id: int) -> Response:
                 f"Failed to rotate key (HTTP {resp.status_code}).",
                 "danger",
             )
-    except Exception as exc:
+    except (requests.RequestException, ValueError) as exc:
         flash(
             f"Could not connect to backend: {_sanitise_connection_error(str(exc))}",
             "danger",
@@ -1022,8 +1170,6 @@ def api_key_toggle(user_id: int) -> Response:
     Returns:
         Redirect to the API keys list with a flash message.
     """
-    from services.api_client import get_api_client
-
     enabled: bool = request.form.get("enabled", "").lower() in ("true", "1", "on")
     client = get_api_client()
     try:
@@ -1036,7 +1182,7 @@ def api_key_toggle(user_id: int) -> Response:
                 f"Failed to toggle user (HTTP {resp.status_code}).",
                 "danger",
             )
-    except Exception as exc:
+    except (requests.RequestException, ValueError) as exc:
         flash(
             f"Could not connect to backend: {_sanitise_connection_error(str(exc))}",
             "danger",
@@ -1056,8 +1202,6 @@ def api_key_set_admin(user_id: int) -> Response:
     Returns:
         Redirect to the API keys list with a flash message.
     """
-    from services.api_client import get_api_client
-
     is_admin: bool = request.form.get("is_admin", "").lower() in ("true", "1", "on")
     client = get_api_client()
     try:
@@ -1091,7 +1235,7 @@ def api_key_set_admin(user_id: int) -> Response:
                 f"Failed to update admin status (HTTP {resp.status_code}).",
                 "danger",
             )
-    except Exception as exc:
+    except (requests.RequestException, ValueError) as exc:
         flash(
             f"Could not connect to backend: {_sanitise_connection_error(str(exc))}",
             "danger",
@@ -1115,8 +1259,6 @@ def api_key_delete(user_id: int) -> Response:
     Returns:
         Redirect to the API keys list with a flash message.
     """
-    from services.api_client import get_api_client
-
     # ── Guard: don't allow deleting the user the frontend is actively using ──
     try:
         client = get_api_client()
@@ -1138,7 +1280,7 @@ def api_key_delete(user_id: int) -> Response:
                         "danger",
                     )
                     return redirect(url_for(_ADMIN_API_KEYS_ENDPOINT))
-    except Exception:
+    except (requests.RequestException, ValueError):
         logger.exception("Failed to check active API user before deletion")
 
     client = get_api_client()
@@ -1151,7 +1293,7 @@ def api_key_delete(user_id: int) -> Response:
                 f"Failed to delete user (HTTP {resp.status_code}).",
                 "danger",
             )
-    except Exception as exc:
+    except requests.RequestException as exc:
         flash(
             f"Could not connect to backend: {_sanitise_connection_error(str(exc))}",
             "danger",

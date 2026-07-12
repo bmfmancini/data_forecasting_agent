@@ -2,32 +2,23 @@
 
 from __future__ import annotations
 
-import os
-import sys
-
 import pytest
 
-sys.path.insert(
-    0,
-    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "backend")),
-)
-
-from report.builder import ExecutiveReportBuilder  # noqa: E402
-from report.models import (  # noqa: E402
+from report.builder import ExecutiveReportBuilder
+from report.models import (
     DashboardItem,
     EvidenceRef,
     ExecutiveReport,
     PredictionInterval,
     Recommendation,
 )
-from schemas import (  # noqa: E402
+from schemas import (
     ForecastResult,
     ModelSelectionResult,
     StatisticalResult,
     StatisticalReviewResult,
     ValidationResult,
 )
-
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -91,16 +82,61 @@ def sample_forecast() -> ForecastResult:
     """A forecast result with 12 periods and prediction intervals."""
     return ForecastResult(
         model_used="SARIMA",
-        forecast=[400.0, 410.0, 420.0, 430.0, 440.0, 450.0,
-                  460.0, 470.0, 480.0, 490.0, 500.0, 510.0],
-        lower_ci=[380.0, 390.0, 400.0, 410.0, 420.0, 430.0,
-                  440.0, 450.0, 460.0, 470.0, 480.0, 490.0],
-        upper_ci=[420.0, 430.0, 440.0, 450.0, 460.0, 470.0,
-                  480.0, 490.0, 500.0, 510.0, 520.0, 530.0],
+        forecast=[
+            400.0,
+            410.0,
+            420.0,
+            430.0,
+            440.0,
+            450.0,
+            460.0,
+            470.0,
+            480.0,
+            490.0,
+            500.0,
+            510.0,
+        ],
+        lower_ci=[
+            380.0,
+            390.0,
+            400.0,
+            410.0,
+            420.0,
+            430.0,
+            440.0,
+            450.0,
+            460.0,
+            470.0,
+            480.0,
+            490.0,
+        ],
+        upper_ci=[
+            420.0,
+            430.0,
+            440.0,
+            450.0,
+            460.0,
+            470.0,
+            480.0,
+            490.0,
+            500.0,
+            510.0,
+            520.0,
+            530.0,
+        ],
         forecast_dates=[
-            "1961-01-31", "1961-02-28", "1961-03-31", "1961-04-30",
-            "1961-05-31", "1961-06-30", "1961-07-31", "1961-08-31",
-            "1961-09-30", "1961-10-31", "1961-11-30", "1961-12-31",
+            "1961-01-31",
+            "1961-02-28",
+            "1961-03-31",
+            "1961-04-30",
+            "1961-05-31",
+            "1961-06-30",
+            "1961-07-31",
+            "1961-08-31",
+            "1961-09-30",
+            "1961-10-31",
+            "1961-11-30",
+            "1961-12-31",
         ],
         rmse=15.0,
         mae=12.0,
@@ -157,14 +193,10 @@ def built_report(
 class TestExecutiveReportBuilder:
     """Tests for the ExecutiveReportBuilder.build() method."""
 
-    def test_returns_executive_report(
-        self, built_report: ExecutiveReport
-    ) -> None:
+    def test_returns_executive_report(self, built_report: ExecutiveReport) -> None:
         assert isinstance(built_report, ExecutiveReport)
 
-    def test_all_sections_populated(
-        self, built_report: ExecutiveReport
-    ) -> None:
+    def test_all_sections_populated(self, built_report: ExecutiveReport) -> None:
         assert built_report.metadata is not None
         assert built_report.dashboard is not None
         assert built_report.executive_summary is not None
@@ -181,9 +213,7 @@ class TestExecutiveReportBuilder:
         assert len(built_report.assumptions) > 0
         assert built_report.appendix is not None
 
-    def test_narrative_fields_empty(
-        self, built_report: ExecutiveReport
-    ) -> None:
+    def test_narrative_fields_empty(self, built_report: ExecutiveReport) -> None:
         """Stage 1 should leave narrative fields empty."""
         assert built_report.executive_summary.narrative == ""
         assert built_report.data_quality.narrative == ""
@@ -193,9 +223,7 @@ class TestExecutiveReportBuilder:
         assert built_report.statistical_audit.narrative == ""
         assert built_report.explainability.narrative == ""
 
-    def test_dashboard_has_seven_items(
-        self, built_report: ExecutiveReport
-    ) -> None:
+    def test_dashboard_has_seven_items(self, built_report: ExecutiveReport) -> None:
         assert len(built_report.dashboard.widgets) == 7
         for item in built_report.dashboard.widgets:
             assert isinstance(item, DashboardItem)
@@ -212,9 +240,7 @@ class TestExecutiveReportBuilder:
         priorities = [item.priority for item in built_report.dashboard.widgets]
         assert priorities == sorted(priorities)
 
-    def test_confidence_score_in_range(
-        self, built_report: ExecutiveReport
-    ) -> None:
+    def test_confidence_score_in_range(self, built_report: ExecutiveReport) -> None:
         assert 0 <= built_report.confidence.score <= 100
         assert built_report.confidence.label in ("High", "Medium", "Low")
 
@@ -238,7 +264,8 @@ class TestExecutiveReportBuilder:
             assert pi.confidence_level == "95%"
 
     def test_model_comparison_entries(
-        self, built_report: ExecutiveReport,
+        self,
+        built_report: ExecutiveReport,
         sample_all_metrics: dict[str, dict[str, float]],
     ) -> None:
         mc = built_report.model_comparison
@@ -253,9 +280,7 @@ class TestExecutiveReportBuilder:
                 assert entry.selected is False
                 assert entry.rejected_reason is not None
 
-    def test_recommendations_have_evidence(
-        self, built_report: ExecutiveReport
-    ) -> None:
+    def test_recommendations_have_evidence(self, built_report: ExecutiveReport) -> None:
         for rec in built_report.recommendations:
             assert isinstance(rec, Recommendation)
             assert rec.priority in ("High", "Medium", "Low")
@@ -269,9 +294,7 @@ class TestExecutiveReportBuilder:
                 assert ev.value
                 assert ev.source_section
 
-    def test_health_indicators_count(
-        self, built_report: ExecutiveReport
-    ) -> None:
+    def test_health_indicators_count(self, built_report: ExecutiveReport) -> None:
         assert len(built_report.health_indicators) == 6
         indicators = [hi.indicator for hi in built_report.health_indicators]
         assert "Data Quality" in indicators
@@ -281,14 +304,10 @@ class TestExecutiveReportBuilder:
         assert "Structural Breaks" in indicators
         assert "Residual Diagnostics" in indicators
 
-    def test_data_quality_rating_good(
-        self, built_report: ExecutiveReport
-    ) -> None:
+    def test_data_quality_rating_good(self, built_report: ExecutiveReport) -> None:
         assert built_report.data_quality.rating == "Good"
 
-    def test_metadata_populated(
-        self, built_report: ExecutiveReport
-    ) -> None:
+    def test_metadata_populated(self, built_report: ExecutiveReport) -> None:
         meta = built_report.metadata
         assert meta.engine_version
         assert meta.generated_at
@@ -297,19 +316,13 @@ class TestExecutiveReportBuilder:
         assert meta.dataset_frequency == "MS"
         assert meta.row_count == 144
 
-    def test_assumptions_count(
-        self, built_report: ExecutiveReport
-    ) -> None:
+    def test_assumptions_count(self, built_report: ExecutiveReport) -> None:
         assert len(built_report.assumptions) >= 4
 
-    def test_risks_non_empty(
-        self, built_report: ExecutiveReport
-    ) -> None:
+    def test_risks_non_empty(self, built_report: ExecutiveReport) -> None:
         assert len(built_report.risks) >= 1
 
-    def test_explainability_items(
-        self, built_report: ExecutiveReport
-    ) -> None:
+    def test_explainability_items(self, built_report: ExecutiveReport) -> None:
         assert len(built_report.explainability.findings) >= 1
         for item in built_report.explainability.findings:
             assert item.finding

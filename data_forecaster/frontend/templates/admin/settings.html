@@ -9,9 +9,17 @@
                 <form method="post" novalidate>
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <div class="mb-3">
-                        <label class="form-label">Application Name</label>
-                        <input type="text" name="app_name" class="form-control" value="{{ config.get('app_name', '') }}">
+                        <label class="form-label" for="app_name">Application Name</label>
+                        <input type="text" id="app_name" name="app_name" class="form-control" value="{{ config.get('app_name', '') }}">
                     </div>
+                    <hr class="my-4">
+                    <section aria-labelledby="upload-settings-heading">
+                        <h5 id="upload-settings-heading">Upload Settings</h5>
+                        <div class="mb-3">
+                            <label class="form-label" for="max_upload_mb">Maximum upload size (MB)</label>
+                            <input class="form-control" id="max_upload_mb" max="256" min="1" name="max_upload_mb" required step="1" type="number" value="{{ config.get('max_upload_mb', '100') }}">
+                        </div>
+                    </section>
                     <hr class="my-4">
                     <section aria-labelledby="report-settings-heading">
                         <h5 id="report-settings-heading">Report Storage Settings</h5>

@@ -97,6 +97,8 @@ _ALLOWED_DYNAMIC_CHART_TYPES: set[str] = {
 # Max number of data points allowed in any single array to prevent
 # memory exhaustion on the frontend.
 _MAX_DATA_POINTS: int = 10000
+_MAX_JSON_CANDIDATE_CHARS: int = 20000
+_MAX_JSON_NESTING_DEPTH: int = 20
 
 
 def _is_safe_scalar(value: Any) -> bool:
@@ -279,6 +281,35 @@ def _validate_viz_config(config: Any) -> dict[str, Any] | None:
     return None
 
 
+def _json_object_candidates(text: str) -> list[str]:
+    """Return JSON object-like substrings without regex backtracking."""
+    candidates: list[str] = []
+    start: int | None = None
+    depth = 0
+
+    for index, char in enumerate(text):
+        if char == "{":
+            if depth == 0:
+                start = index
+            depth += 1
+            if depth > _MAX_JSON_NESTING_DEPTH:
+                start = None
+                depth = 0
+            continue
+
+        if char != "}" or depth == 0:
+            continue
+
+        depth -= 1
+        if depth == 0 and start is not None:
+            candidate = text[start : index + 1]
+            if len(candidate) <= _MAX_JSON_CANDIDATE_CHARS:
+                candidates.append(candidate)
+            start = None
+
+    return candidates
+
+
 def chat_with_data(
     query: str,
     df: pd.DataFrame,
@@ -319,7 +350,7 @@ def chat_with_data(
             },
         )
         memory_context = "\n".join(chunks)
-    except Exception as exc:
+    except (RuntimeError, TypeError, ValueError, OSError) as exc:
         logger.warning("RAG retrieval failed for chat: %s", exc)
 
     # 2. Prepare Data Summary for the LLM
@@ -343,7 +374,7 @@ def chat_with_data(
 
             data_snapshots = f"\nHIGHEST 5 RECORDS (Sorted by {val_col}):\n{top_5}\n"
             data_snapshots += f"\nLOWEST 5 RECORDS (Sorted by {val_col}):\n{bottom_5}\n"
-    except Exception as exc:
+    except (KeyError, TypeError, ValueError) as exc:
         logger.warning("Failed to generate data highlights for chat: %s", exc)
 
     data_summary = f"""
@@ -382,10 +413,7 @@ def chat_with_data(
                 pass
 
         # Try to parse any JSON visualization configuration from the response
-        json_pattern = r"\{[^{}]*\{[^{}]*\}[^{}]*\}|\{[^{}]*\}"
-        matches = re.findall(json_pattern, content, re.DOTALL)
-
-        for match in matches:
+        for match in _json_object_candidates(content):
             try:
                 potential_config = json.loads(match)
                 if isinstance(potential_config, dict) and (
@@ -411,7 +439,7 @@ def chat_with_data(
 
         return {"answer": content}
 
-    except Exception:
+    except (RuntimeError, TypeError, ValueError, AttributeError):
         logger.exception("LLM Chat failed")
         return {
             "answer": (
@@ -447,7 +475,7 @@ def chat_general(
         # analysis is customer data and must never enter this prompt.
         chunks = rag_kb.retrieve(query, k=5, where={"type": "methodology"})
         memory_context = "\n".join(chunks)
-    except Exception as exc:
+    except (RuntimeError, TypeError, ValueError, OSError) as exc:
         logger.warning("RAG retrieval failed for general chat: %s", exc)
 
     # 2. Setup LLM based on configuration
@@ -460,7 +488,7 @@ def chat_general(
         content = response.content
         return {"answer": content}
 
-    except Exception:
+    except (RuntimeError, TypeError, ValueError, AttributeError):
         logger.exception("LLM General Chat failed")
         return {
             "answer": (

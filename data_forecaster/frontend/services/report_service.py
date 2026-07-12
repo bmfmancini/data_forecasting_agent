@@ -58,6 +58,7 @@ def save_report(
         result: Completed backend result containing final report artifacts.
         source_filename: Original dataset filename retained as display metadata.
         forecast_horizon: Requested number of forecast periods.
+        custom_settings: Optional user-selected report settings to persist as JSON.
 
     Returns:
         The newly created report ID.
@@ -69,8 +70,10 @@ def save_report(
     executive_report = result.get("executive_report")
     model_used = (result.get("forecast") or {}).get("model_used")
     connection = get_db()
+    transaction_started = False
     try:
         connection.execute("BEGIN IMMEDIATE")
+        transaction_started = True
         stored_count = connection.execute(
             "SELECT COUNT(*) AS count FROM forecast_reports WHERE user_id = ?",
             (user_id,),
@@ -100,9 +103,11 @@ def save_report(
             ),
         )
         connection.commit()
+        transaction_started = False
         return int(cursor.lastrowid)
-    except sqlite3.Error:
-        connection.rollback()
+    except Exception:
+        if transaction_started:
+            connection.rollback()
         raise
 
 

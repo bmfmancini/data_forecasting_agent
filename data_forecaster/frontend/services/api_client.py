@@ -15,6 +15,9 @@ from typing import Any
 import requests
 from flask import current_app
 
+from db.crypto import decrypt
+from db.db import query_db
+
 UPLOAD_TIMEOUT: int = 60
 PREFLIGHT_TIMEOUT: int = 15
 ANALYSIS_TIMEOUT: int = 30
@@ -313,6 +316,15 @@ class BackendAPIClient:
             verify=self._verify,
         )
 
+    def auth_check(self) -> requests.Response:
+        """Validate configured API credentials against the backend."""
+        return requests.get(
+            f"{self._base_url}/auth-check",
+            headers=self._headers(),
+            timeout=5,
+            verify=self._verify,
+        )
+
     def get_llm_health(self) -> requests.Response:
         """Check LLM connectivity and configuration.
 
@@ -496,21 +508,14 @@ def get_api_client() -> BackendAPIClient:
     """Construct a :class:`BackendAPIClient` for the current request.
 
     The backend URL and optional credentials are resolved from the
-    ``api_credentials`` table (label ``'default'``).  If no credentials are
-    stored the client is returned without authentication headers, preserving
-    backward compatibility with an unauthenticated backend (Phase 1).
-
-    SSL verification is controlled by the ``API_VERIFY_SSL`` config setting
-    (env var, default ``true``).  When the ``api_credentials`` row has a
-    ``verify_ssl`` column, its value overrides the env var — mirroring the
-    existing ``base_url`` precedence logic.
+    ``api_credentials`` table (label ``'default'``).  Until an admin saves
+    API Config, the client has an empty base URL and backend calls will fail
+    gracefully as "not configured/unreachable".
 
     Returns:
         A configured :class:`BackendAPIClient` instance.
     """
-    from db.db import query_db
-
-    base_url: str = current_app.config.get("BACKEND_URL", "http://localhost:8000")
+    base_url: str = current_app.config.get("BACKEND_URL", "")
     verify_ssl: bool = current_app.config.get("API_VERIFY_SSL", False)
     api_username: str | None = None
     api_key: str | None = None
@@ -526,13 +531,10 @@ def get_api_client() -> BackendAPIClient:
     )
 
     if row and isinstance(row, dict):
-        # Only use the stored URL if the app config is still the bare default,
-        # so that BACKEND_URL env var always wins over stale DB values.
         stored_url = row.get("base_url", "")
-        if stored_url and base_url == "http://localhost:8000":
+        if stored_url:
             base_url = str(stored_url)
 
-        # DB verify_ssl overrides env var when the column is present.
         db_verify = row.get("verify_ssl")
         if db_verify is not None:
             verify_ssl = bool(db_verify)
@@ -541,8 +543,6 @@ def get_api_client() -> BackendAPIClient:
         enc_pass = row.get("encrypted_password")
         if enc_user and enc_pass:
             try:
-                from db.crypto import decrypt
-
                 api_username = decrypt(str(enc_user))
                 api_key = decrypt(str(enc_pass))
             except Exception:

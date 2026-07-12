@@ -19,7 +19,6 @@ from __future__ import annotations
 
 from utils.env_helpers import env_float, env_int
 
-
 # ── Confidence Score Deductions ──────────────────────────────────────────────
 # Each entry maps a signal to the points deducted from the starting score
 # of 100.  The builder checks conditions in order and applies deductions.

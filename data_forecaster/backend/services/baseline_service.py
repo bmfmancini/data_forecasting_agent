@@ -23,9 +23,7 @@ from core.logging_config import get_logger
 logger = get_logger(__name__)
 
 
-def _calculate_metrics(
-    y_true: pd.Series, y_pred: pd.Series
-) -> dict[str, float]:
+def _calculate_metrics(y_true: pd.Series, y_pred: pd.Series) -> dict[str, float]:
     """Calculate standard forecast error metrics.
 
     Args:
@@ -67,9 +65,7 @@ def run_baseline_models(
         A dictionary mapping baseline model names to their error metrics.
     """
     # Use an 80/20 split, ensuring test set is at least the horizon length
-    split_point = max(
-        int(len(series) * 0.8), len(series) - forecast_horizon
-    )
+    split_point = max(int(len(series) * 0.8), len(series) - forecast_horizon)
     train, test = series[:split_point], series[split_point:]
 
     # Ensure test set matches horizon if it's longer
@@ -91,14 +87,8 @@ def run_baseline_models(
 
     # 2. Seasonal Naive Forecast
     if len(train) >= seasonal_period:
-        snaive_forecast = []
-        for i in range(1, h + 1):
-            idx = len(train) + i - seasonal_period
-            if idx < len(train):
-                snaive_forecast.append(train.iloc[idx])
-            else: # pragma: no cover
-                # This case is hard to hit with typical data but is a safeguard
-                snaive_forecast.append(train.iloc[-seasonal_period])
+        final_season = train.iloc[-seasonal_period:]
+        snaive_forecast = [final_season.iloc[i % seasonal_period] for i in range(h)]
         snaive_pred = pd.Series(snaive_forecast, index=test.index)
         metrics["Seasonal Naive"] = _calculate_metrics(test, snaive_pred)
 
@@ -110,9 +100,7 @@ def run_baseline_models(
     # 4. Drift Forecast
     if len(train) > 1:
         drift = (train.iloc[-1] - train.iloc[0]) / (len(train) - 1)
-        drift_pred_values = [
-            train.iloc[-1] + i * drift for i in range(1, h + 1)
-        ]
+        drift_pred_values = [train.iloc[-1] + i * drift for i in range(1, h + 1)]
         drift_pred = pd.Series(drift_pred_values, index=test.index)
         metrics["Drift"] = _calculate_metrics(test, drift_pred)
 

@@ -7,21 +7,12 @@ parser to override the LLM's explicit model choice.
 
 from __future__ import annotations
 
-import os
-import sys
 from types import SimpleNamespace
 
 import pytest
 
-# Add the backend directory to the path so that backend-internal imports
-# (e.g. ``from core.logging_config import ...``) resolve correctly.
-sys.path.insert(
-    0,
-    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "backend")),
-)
-
-from agents.model_selection_agent import run_model_selection_agent  # noqa: E402
-from schemas import StatisticalResult  # noqa: E402
+from agents.model_selection_agent import run_model_selection_agent
+from schemas import StatisticalResult
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 

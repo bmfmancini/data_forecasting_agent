@@ -16,6 +16,10 @@ from __future__ import annotations
 import os
 from datetime import timedelta
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 class BaseConfig:
     """Shared settings inherited by all environment configurations."""
@@ -24,21 +28,8 @@ class BaseConfig:
     DATABASE: str = os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "instance", "forecaster.db"
     )
-    BACKEND_URL: str = os.environ.get("BACKEND_URL", "http://localhost:8000")
-    API_VERIFY_SSL: bool = os.environ.get("API_VERIFY_SSL", "false").lower() == "true"
-    # Pre-shared service-account credentials for the FastAPI backend.
-    # Defaults to empty strings — development/testing subclasses provide
-    # the ``frontend``/``frontend`` defaults so the stack works out-of-the-box.
-    # In production these MUST be set via environment variables; the admin
-    # panel can also be used to configure credentials after first boot.
-    FRONTEND_API_USERNAME: str = os.environ.get("FRONTEND_API_USERNAME", "")
-    FRONTEND_API_KEY: str = os.environ.get("FRONTEND_API_KEY", "")
-    # Default admin login credentials for the Flask frontend.
-    # Defaults to empty strings — development/testing subclasses provide
-    # the ``admin``/``admin`` defaults so the stack works out-of-the-box.
-    # In production these MUST be set via environment variables.
-    FRONTEND_ADMIN_USERNAME: str = os.environ.get("FRONTEND_ADMIN_USERNAME", "")
-    FRONTEND_ADMIN_PASSWORD: str = os.environ.get("FRONTEND_ADMIN_PASSWORD", "")
+    BACKEND_URL: str = ""
+    API_VERIFY_SSL: bool = False
     DEMO_DATA_PATH: str = os.environ.get(
         "DEMO_DATA_PATH",
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "demo_data.csv"),
@@ -55,7 +46,7 @@ class BaseConfig:
     WTF_CSRF_ENABLED: bool = True
     WTF_CSRF_TIME_LIMIT: int = 3600
 
-    MAX_CONTENT_LENGTH: int = int(os.environ.get("MAX_UPLOAD_MB", "200")) * 1024 * 1024
+    MAX_CONTENT_LENGTH: int = 100 * 1024 * 1024
 
 
 class DevelopmentConfig(BaseConfig):
@@ -63,12 +54,6 @@ class DevelopmentConfig(BaseConfig):
 
     DEBUG: bool = True
     TESTING: bool = False
-
-    # Development defaults so the stack works out-of-the-box.
-    FRONTEND_API_USERNAME: str = os.environ.get("FRONTEND_API_USERNAME", "frontend")
-    FRONTEND_API_KEY: str = os.environ.get("FRONTEND_API_KEY", "frontend")
-    FRONTEND_ADMIN_USERNAME: str = os.environ.get("FRONTEND_ADMIN_USERNAME", "admin")
-    FRONTEND_ADMIN_PASSWORD: str = os.environ.get("FRONTEND_ADMIN_PASSWORD", "admin")
 
 
 class ProductionConfig(BaseConfig):
@@ -107,12 +92,6 @@ class TestingConfig(BaseConfig):
     WTF_CSRF_ENABLED: bool = False
     DATABASE: str = ":memory:"
     SESSION_TYPE: str = "filesystem"
-
-    # Testing defaults so tests can authenticate without env vars.
-    FRONTEND_API_USERNAME: str = os.environ.get("FRONTEND_API_USERNAME", "frontend")
-    FRONTEND_API_KEY: str = os.environ.get("FRONTEND_API_KEY", "frontend")
-    FRONTEND_ADMIN_USERNAME: str = os.environ.get("FRONTEND_ADMIN_USERNAME", "admin")
-    FRONTEND_ADMIN_PASSWORD: str = os.environ.get("FRONTEND_ADMIN_PASSWORD", "admin")
 
 
 _CONFIG_MAP: dict[str, type[BaseConfig]] = {

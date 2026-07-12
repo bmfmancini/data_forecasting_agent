@@ -1,3 +1,5 @@
+"""Report generation agent for turning forecast results into review narratives."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -101,9 +103,7 @@ def run_report_agent(
         reasoning_steps.append(
             {
                 "thought": "Stage 2 complete: Narratives generated",
-                "observation": (
-                    f"Tokens: {token_usage.get('total_tokens', 0)}"
-                ),
+                "observation": (f"Tokens: {token_usage.get('total_tokens', 0)}"),
             }
         )
     except Exception as exc:
@@ -126,13 +126,16 @@ def run_report_agent(
         # Ensure all narrative fields have a fallback value
         report.executive_summary.narrative = _fallback_narrative("executive_summary")
         report.data_quality.narrative = _fallback_narrative("data_quality")
-        report.historical_analysis.narrative = _fallback_narrative("historical_analysis")
+        report.historical_analysis.narrative = _fallback_narrative(
+            "historical_analysis"
+        )
         report.forecast_outlook.narrative = _fallback_narrative("forecast_outlook")
         report.model_comparison.narrative = _fallback_narrative("model_comparison")
         report.statistical_audit.narrative = _fallback_narrative("statistical_audit")
         report.explainability.narrative = _fallback_narrative("explainability")
         report.recommendations = [
-            rec.model_copy(update={"narrative": _fallback_narrative("recommendation")}) for rec in report.recommendations
+            rec.model_copy(update={"narrative": _fallback_narrative("recommendation")})
+            for rec in report.recommendations
         ]
 
     # ── Visual strategy (retained for pipeline compatibility) ─────────────
@@ -205,7 +208,10 @@ def _compute_visual_strategy(
                 ),
             }
         )
-    if statistical.has_trend and abs(statistical.trend_slope) > VISUAL_STRATEGY_THRESHOLDS["trend_slope_min"]:
+    if (
+        statistical.has_trend
+        and abs(statistical.trend_slope) > VISUAL_STRATEGY_THRESHOLDS["trend_slope_min"]
+    ):
         strategy.append(
             {
                 "chart": "Trend Analysis",

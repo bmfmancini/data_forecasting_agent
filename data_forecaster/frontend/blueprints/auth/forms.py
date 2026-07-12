@@ -11,10 +11,7 @@ from wtforms.validators import DataRequired, EqualTo, Length, Regexp
 PASSWORD_COMPLEXITY_MESSAGE = (
     "Password must include uppercase, lowercase, number, and special character."
 )
-PASSWORD_COMPLEXITY_RE = (
-    r"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)"
-    r"(?=.*[^A-Za-z0-9]).+$"
-)
+PASSWORD_COMPLEXITY_RE = r"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)" r"(?=.*[^A-Za-z0-9]).+$"
 PASSWORD_VALIDATORS = [
     DataRequired(),
     Length(min=8),

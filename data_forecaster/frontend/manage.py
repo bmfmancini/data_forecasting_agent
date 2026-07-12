@@ -16,10 +16,13 @@ from __future__ import annotations
 import re
 
 import click
+from cryptography.fernet import Fernet
 from flask import Flask
 from werkzeug.security import generate_password_hash
 
 from blueprints.auth.forms import PASSWORD_COMPLEXITY_MESSAGE, PASSWORD_COMPLEXITY_RE
+from db.crypto import encrypt
+from db.db import execute_db, query_db
 
 
 def register_commands(app: Flask) -> None:
@@ -40,8 +43,6 @@ def register_commands(app: Flask) -> None:
     )
     def user_create(username: str, password: str, role: str) -> None:
         """Create a new application user."""
-        from db.db import execute_db, query_db
-
         with app.app_context():
             role_row = query_db(
                 "SELECT id FROM roles WHERE name = ?", (role,), one=True
@@ -77,15 +78,15 @@ def register_commands(app: Flask) -> None:
     @app.cli.command("user-list")
     def user_list() -> None:
         """List all application users."""
-        from db.db import query_db
-
         with app.app_context():
-            rows = query_db("""
+            rows = query_db(
+                """
                 SELECT u.id, u.username, r.name AS role, u.active, u.created_at
                 FROM users u
                 JOIN roles r ON r.id = u.role_id
                 ORDER BY u.id
-                """)
+                """
+            )
             if not rows or not isinstance(rows, list):
                 click.echo("No users found.")
                 return
@@ -115,15 +116,11 @@ def register_commands(app: Flask) -> None:
         timeout: int,
     ) -> None:
         """Create or update an API credential entry."""
-        from db.db import execute_db
-
         with app.app_context():
             enc_user: str | None = None
             enc_pass: str | None = None
 
             if username or password:
-                from db.crypto import encrypt
-
                 if username:
                     enc_user = encrypt(username)
                 if password:
@@ -147,8 +144,6 @@ def register_commands(app: Flask) -> None:
     @app.cli.command("credentials-list")
     def credentials_list() -> None:
         """List stored API credentials (passwords redacted)."""
-        from db.db import query_db
-
         with app.app_context():
             rows = query_db(
                 "SELECT id, label, base_url, timeout, created_at FROM api_credentials"
@@ -168,8 +163,6 @@ def register_commands(app: Flask) -> None:
     @click.option("--label", required=True, help="Label of the credential to delete.")
     def credentials_delete(label: str) -> None:
         """Delete an API credential entry by label."""
-        from db.db import execute_db
-
         with app.app_context():
             execute_db("DELETE FROM api_credentials WHERE label = ?", (label,))
             click.echo(f"Credential '{label}' deleted.")
@@ -177,7 +170,5 @@ def register_commands(app: Flask) -> None:
     @app.cli.command("generate-key")
     def generate_key() -> None:
         """Generate a new Fernet encryption key for FLASK_ENCRYPTION_KEY."""
-        from cryptography.fernet import Fernet
-
         key = Fernet.generate_key().decode()
         click.echo(f"Generated key (set as FLASK_ENCRYPTION_KEY):\n{key}")

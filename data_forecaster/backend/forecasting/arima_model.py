@@ -1,28 +1,15 @@
+"""ARIMA forecasting adapter backed by pmdarima auto_arima."""
+
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
 
-# Compatibility shim: pmdarima 2.0.x uses sklearn's force_all_finite which was
-# removed in scikit-learn 1.6. Translate it to ensure_all_finite.
-import sklearn.utils.validation as _skval  # noqa: E402
-
-if not hasattr(_skval, "_patched_for_pmdarima"):
-    _orig = _skval.check_array
-
-    def _patched(*args, **kwargs):  # noqa: E306
-        if "force_all_finite" in kwargs:
-            kwargs.setdefault("ensure_all_finite", kwargs.pop("force_all_finite"))
-        return _orig(*args, **kwargs)
-
-    _skval.check_array = _patched
-    _skval._patched_for_pmdarima = True
-
-import pmdarima as pm
-
 from core.logging_config import get_logger
+from forecasting.metrics import calculate_holdout_metrics
+from forecasting.pmdarima_compat import import_pmdarima
 
 logger = get_logger(__name__)
+pm = import_pmdarima()
 
 
 def _calculate_metrics(test: pd.Series, model) -> tuple[float, float, float]:
@@ -35,17 +22,8 @@ def _calculate_metrics(test: pd.Series, model) -> tuple[float, float, float]:
     Returns:
         tuple[float, float, float]: RMSE, MAE, and MAPE metrics.
     """
-    if len(test) == 0 or model is None:
-        return 0.0, 0.0, 0.0
-
     try:
-        test_fc, _ = model.predict(n_periods=len(test), return_conf_int=True)
-        rmse = float(np.sqrt(np.mean((test.values - test_fc) ** 2)))
-        mae = float(np.mean(np.abs(test.values - test_fc)))
-        mape = float(
-            np.mean(np.abs((test.values - test_fc) / (test.values + 1e-8))) * 100
-        )
-        return rmse, mae, mape
+        return calculate_holdout_metrics(test, model)
     except Exception as exc:
         logger.warning("ARIMA metrics calculation failed: %s", exc)
         return 0.0, 0.0, 0.0

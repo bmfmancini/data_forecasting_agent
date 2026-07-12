@@ -2,20 +2,12 @@
 
 from __future__ import annotations
 
-import os
-import sys
 from types import SimpleNamespace
 
 import pytest
 from langchain_core.prompts import ChatPromptTemplate
 
-# Add the backend directory to the path
-backend_dir = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "..", "backend"
-)
-sys.path.insert(0, backend_dir)
-
-from utils.token_tracking import extract_token_usage, estimate_input_text  # noqa: E402
+from utils.token_tracking import extract_token_usage, estimate_input_text
 
 
 class TestExtractTokenUsage:
@@ -120,34 +112,42 @@ class TestEstimateInputText:
 
     def test_formats_template_correctly(self):
         """Test that the template is formatted with inputs."""
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", "You are a helpful assistant."),
-            ("human", "Analyze this: {data}"),
-        ])
+        prompt = ChatPromptTemplate.from_messages(
+            [
+                ("system", "You are a helpful assistant."),
+                ("human", "Analyze this: {data}"),
+            ]
+        )
         result = estimate_input_text(prompt, {"data": "test data"})
         assert "test data" in result
         assert "helpful assistant" in result
 
     def test_returns_string(self):
         """Test that the result is a string."""
-        prompt = ChatPromptTemplate.from_messages([
-            ("human", "Hello {name}"),
-        ])
+        prompt = ChatPromptTemplate.from_messages(
+            [
+                ("human", "Hello {name}"),
+            ]
+        )
         result = estimate_input_text(prompt, {"name": "World"})
         assert isinstance(result, str)
 
     def test_format_error_returns_empty_string(self):
         """Test that formatting errors return an empty string."""
-        prompt = ChatPromptTemplate.from_messages([
-            ("human", "Hello {missing_key}"),
-        ])
+        prompt = ChatPromptTemplate.from_messages(
+            [
+                ("human", "Hello {missing_key}"),
+            ]
+        )
         result = estimate_input_text(prompt, {"wrong_key": "value"})
         assert result == ""
 
     def test_none_inputs_handled(self):
         """Test that None inputs don't raise."""
-        prompt = ChatPromptTemplate.from_messages([
-            ("human", "Hello"),
-        ])
+        prompt = ChatPromptTemplate.from_messages(
+            [
+                ("human", "Hello"),
+            ]
+        )
         result = estimate_input_text(prompt, {})
         assert isinstance(result, str)
