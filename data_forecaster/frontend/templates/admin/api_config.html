@@ -50,7 +50,7 @@
                             </tr>
                         </thead>
                         <tbody>
-                            <tr id="api-config-summary-row" role="button" tabindex="0">
+                            <tr id="api-config-summary-row" tabindex="0" onkeydown="handleApiConfigSummaryKeydown(event)">
                                 <td>{{ current_api_config.username or '—' }}</td>
                                 <td>{{ current_api_config.base_url }}</td>
                                 <td>{{ current_api_config.timeout }}s</td>

@@ -18,7 +18,6 @@ from binascii import Error as BinasciiError
 from typing import Any
 
 from fpdf import FPDF
-from PIL import UnidentifiedImageError
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +87,7 @@ def _fetch_chart_png(
         return None
     try:
         return base64.b64decode(b64_data)
-    except (BinasciiError, ValueError) as exc:
+    except BinasciiError as exc:
         logger.warning("Failed to decode base64 for chart tag '%s': %s", tag, exc)
         return None
 
@@ -107,7 +106,7 @@ def _embed_image(pdf: FPDF, png_bytes: bytes, max_width: float) -> None:
             tmp.write(png_bytes)
             tmp_path = tmp.name
         pdf.image(tmp_path, w=max_width)
-    except (RuntimeError, UnidentifiedImageError, OSError) as exc:
+    except (RuntimeError, OSError) as exc:
         logger.warning("Failed to embed image in PDF (path: %s): %s", tmp_path, exc)
     finally:
         if tmp_path and os.path.exists(tmp_path):

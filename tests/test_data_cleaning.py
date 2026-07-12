@@ -169,6 +169,18 @@ class TestImputeMissing:
         imputed = impute_missing(series_with_missing, "seasonal-decompose")
         assert imputed.isna().sum() == 0
 
+    def test_impute_missing_seasonal_decompose_handles_edge_gaps(self):
+        """Seasonal decomposition should not receive leading/trailing NaNs."""
+        index = pd.date_range("2020-01-01", periods=30, freq="D")
+        values = pd.Series(range(30), index=index, dtype=float)
+        values.iloc[0] = pd.NA
+        values.iloc[-1] = pd.NA
+        values.iloc[10:13] = pd.NA
+
+        imputed = impute_missing(values, "seasonal-decompose")
+
+        assert imputed.isna().sum() == 0
+
     def test_impute_missing_unsupported_method(self, series_with_missing):
         """Test impute_missing with an unsupported method."""
         with pytest.raises(ValueError, match="Unsupported imputation method"):

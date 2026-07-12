@@ -105,6 +105,79 @@ async def _cleanup_job_history() -> None:
             logger.info("Deleted %d expired forecast job records.", deleted_count)
 
 
+def _service_credentials_configured() -> bool:
+    """Return whether frontend service-user credentials are configured."""
+    return bool(settings.FRONTEND_API_USERNAME and settings.FRONTEND_API_KEY)
+
+
+def _reconcile_frontend_service_user() -> None:
+    """Reconcile the frontend service user from environment configuration."""
+    if not _service_credentials_configured():
+        return
+
+    try:
+        reconciled = reconcile_service_user(
+            settings.FRONTEND_API_USERNAME,
+            settings.FRONTEND_API_KEY,
+        )
+    except ValueError as exc:
+        logger.warning("Failed to reconcile frontend API user: %s", exc)
+        return
+
+    if reconciled:
+        logger.info(
+            "Frontend API user '%s' reconciled from env.",
+            settings.FRONTEND_API_USERNAME,
+        )
+
+
+def _create_frontend_service_user_from_env() -> None:
+    """Create the first API user from frontend service env vars when present."""
+    if not _service_credentials_configured():
+        logger.info("No API users — auth disabled (open mode).")
+        return
+
+    try:
+        create_first_user(
+            username=settings.FRONTEND_API_USERNAME,
+            api_key=settings.FRONTEND_API_KEY,
+        )
+    except ValueError as exc:
+        logger.warning("Failed to auto-create frontend API user: %s", exc)
+        logger.info("No API users — auth disabled (open mode).")
+        return
+
+    set_api_key_enabled(True)
+    logger.info(
+        "Frontend API user '%s' auto-created from env vars — auth enabled.",
+        settings.FRONTEND_API_USERNAME,
+    )
+    if settings.FRONTEND_API_KEY == "frontend":
+        logger.warning(
+            "SECURITY: The frontend API key is the default 'frontend'. "
+            "Rotate it via the admin panel and update the stored "
+            "frontend credentials before production use."
+        )
+        return
+
+    logger.warning(
+        "The initial API key was sourced from the FRONTEND_API_KEY "
+        "env var.  For production security, rotate this key via the "
+        "admin panel and update the stored frontend credentials."
+    )
+
+
+def _configure_startup_auth() -> None:
+    """Enable or bootstrap API authentication during startup."""
+    if has_any_users():
+        _reconcile_frontend_service_user()
+        set_api_key_enabled(True)
+        logger.info("API users found — auth enabled.")
+        return
+
+    _create_frontend_service_user_from_env()
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """Manage the lifecycle of the job worker queue.
@@ -117,52 +190,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     init_database()
     cleanup_terminal_jobs()
     init_storage()
-    if has_any_users():
-        if settings.FRONTEND_API_USERNAME and settings.FRONTEND_API_KEY:
-            try:
-                reconciled = reconcile_service_user(
-                    settings.FRONTEND_API_USERNAME,
-                    settings.FRONTEND_API_KEY,
-                )
-                if reconciled:
-                    logger.info(
-                        "Frontend API user '%s' reconciled from env.",
-                        settings.FRONTEND_API_USERNAME,
-                    )
-            except ValueError as exc:
-                logger.warning("Failed to reconcile frontend API user: %s", exc)
-        set_api_key_enabled(True)
-        logger.info("API users found — auth enabled.")
-    elif settings.FRONTEND_API_USERNAME and settings.FRONTEND_API_KEY:
-        # Auto-create the frontend service account from pre-shared env vars.
-        # This eliminates the need to scrape bootstrap keys from logs.
-        try:
-            create_first_user(
-                username=settings.FRONTEND_API_USERNAME,
-                api_key=settings.FRONTEND_API_KEY,
-            )
-            set_api_key_enabled(True)
-            logger.info(
-                "Frontend API user '%s' auto-created from env vars — auth enabled.",
-                settings.FRONTEND_API_USERNAME,
-            )
-            if settings.FRONTEND_API_KEY == "frontend":
-                logger.warning(
-                    "SECURITY: The frontend API key is the default 'frontend'. "
-                    "Rotate it via the admin panel and update the stored "
-                    "frontend credentials before production use."
-                )
-            else:
-                logger.warning(
-                    "The initial API key was sourced from the FRONTEND_API_KEY "
-                    "env var.  For production security, rotate this key via the "
-                    "admin panel and update the stored frontend credentials."
-                )
-        except ValueError as exc:
-            logger.warning("Failed to auto-create frontend API user: %s", exc)
-            logger.info("No API users — auth disabled (open mode).")
-    else:
-        logger.info("No API users — auth disabled (open mode).")
+    _configure_startup_auth()
     init_job_queue()
     worker_tasks = [
         asyncio.create_task(job_worker())

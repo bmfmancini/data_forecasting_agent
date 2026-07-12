@@ -596,7 +596,7 @@ def _forward_upload(file: Any) -> Response:
             jsonify({"error": _safe_error_detail(resp, "Upload failed.")}),
             resp.status_code,
         )
-    except (requests.RequestException, ValueError, OSError):
+    except (requests.RequestException, ValueError):
         logger.exception("Backend connection error during upload")
         return make_response(jsonify({"error": _BACKEND_CONN_ERROR}), 503)
 
@@ -902,7 +902,7 @@ def api_job_status() -> Response:
         session["job_id"] = None
         session["analysis_error"] = _BACKEND_CONN_ERROR
         return make_response(jsonify({"error": _BACKEND_CONN_ERROR}), 503)
-    except (requests.RequestException, KeyError, ValueError):
+    except (KeyError, ValueError):
         logger.exception("Status poll error")
         return make_response(jsonify({"error": "Status poll error."}), 503)
 
@@ -1045,5 +1045,5 @@ def _parse_preview(content: Any, filename: str) -> list[dict[str, Any]]:
         else:
             df = pandas.read_csv(buffer).head(20)
         return df.astype(str).to_dict(orient="records")
-    except (OSError, ValueError, pandas.errors.ParserError):
+    except (OSError, ValueError):
         return []
