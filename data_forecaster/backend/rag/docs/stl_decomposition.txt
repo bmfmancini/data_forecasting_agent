@@ -1,39 +1,39 @@
 STL Decomposition: Seasonal-Trend decomposition using Loess
 
-STL (Seasonal-Trend decomposition using Loess) is a robust method for 
-decomposing a time series into three components: Trend, Seasonal, and 
+STL (Seasonal-Trend decomposition using Loess) is a robust method for
+decomposing a time series into three components: Trend, Seasonal, and
 Remainder (Residual).
 
 Components:
-1. Trend: The long-term progression of the series. It captures low-frequency 
+1. Trend: The long-term progression of the series. It captures low-frequency
    variations and structural shifts.
-2. Seasonal: The periodic patterns that repeat at regular intervals (e.g., 
+2. Seasonal: The periodic patterns that repeat at regular intervals (e.g.,
    daily, weekly, or monthly).
-3. Remainder: The 'noise' or irregular component. It represents what is left 
+3. Remainder: The 'noise' or irregular component. It represents what is left
    over after the trend and seasonality are removed.
 
 Advantages of STL:
 - Handles any type of seasonality, not just monthly or quarterly.
-- The seasonal component is allowed to change over time (evolutionary 
+- The seasonal component is allowed to change over time (evolutionary
   seasonality).
-- Robust to outliers; occasional unusual observations do not distort the trend 
+- Robust to outliers; occasional unusual observations do not distort the trend
   or seasonal components significantly.
 - Provides a clear visualization of the underlying structure of the data.
 
 Interpretation for Forecasting:
-- Trend Strength: Calculated as 1 - Var(Remainder) / Var(Trend + Remainder). 
+- Trend Strength: Calculated as 1 - Var(Remainder) / Var(Trend + Remainder).
   Values close to 1 indicate a strong trend.
-- Seasonal Strength: Calculated as 1 - Var(Remainder) / Var(Seasonal + Remainder). 
+- Seasonal Strength: Calculated as 1 - Var(Remainder) / Var(Seasonal + Remainder).
   Values close to 1 indicate strong seasonality.
 
 Business Implications:
 - Understanding the trend helps in long-term capacity planning and strategy.
-- Identifying the seasonal component allows for better scheduling, inventory 
+- Identifying the seasonal component allows for better scheduling, inventory
   management, and understanding of cyclical demand.
-- Analysing the remainder helps identify anomalies or "black swan" events that 
+- Analysing the remainder helps identify anomalies or "black swan" events that
   may require specific investigation.
 
 Relationship to Models:
-STL is often used as a preprocessing step. For instance, one can seasonally 
-adjust data (remove the STL seasonal component) before fitting a non-seasonal 
+STL is often used as a preprocessing step. For instance, one can seasonally
+adjust data (remove the STL seasonal component) before fitting a non-seasonal
 ARIMA model.
