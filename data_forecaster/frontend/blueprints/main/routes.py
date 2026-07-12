@@ -37,6 +37,7 @@ from blueprints.decorators import password_change_required
 from blueprints.main import main_bp
 from services.api_client import get_api_client
 from services.markdown_service import markdown_to_safe_html
+from services.pdf_service import report_to_pdf
 from services.report_service import (
     ReportLimitError,
     delete_report_for_user,
@@ -535,8 +536,6 @@ def report_export() -> Response:
 
 def _send_report_pdf(result: dict[str, Any], filename: str) -> Response:
     """Generate a PDF response from a current or persisted final report."""
-    from services.pdf_service import report_to_pdf
-
     report_text: str = result.get("report", "Report not available.")
     base_name = filename.rsplit(".", 1)[0] if "." in filename else filename
     pdf_filename = f"forecast_report_{base_name or 'data'}.pdf"

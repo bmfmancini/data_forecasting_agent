@@ -15,6 +15,9 @@ from typing import Any
 import requests
 from flask import current_app
 
+from db.crypto import decrypt
+from db.db import query_db
+
 UPLOAD_TIMEOUT: int = 60
 PREFLIGHT_TIMEOUT: int = 15
 ANALYSIS_TIMEOUT: int = 30
@@ -508,8 +511,6 @@ def get_api_client() -> BackendAPIClient:
     Returns:
         A configured :class:`BackendAPIClient` instance.
     """
-    from db.db import query_db
-
     base_url: str = current_app.config.get("BACKEND_URL", "http://localhost:8000")
     verify_ssl: bool = current_app.config.get("API_VERIFY_SSL", False)
     api_username: str | None = None
@@ -541,8 +542,6 @@ def get_api_client() -> BackendAPIClient:
         enc_pass = row.get("encrypted_password")
         if enc_user and enc_pass:
             try:
-                from db.crypto import decrypt
-
                 api_username = decrypt(str(enc_user))
                 api_key = decrypt(str(enc_pass))
             except Exception:

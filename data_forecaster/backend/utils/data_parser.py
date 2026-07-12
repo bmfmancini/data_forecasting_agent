@@ -1,3 +1,5 @@
+"""Upload parsing utilities for CSV, JSON, and Excel time series files."""
+
 from __future__ import annotations
 
 import io

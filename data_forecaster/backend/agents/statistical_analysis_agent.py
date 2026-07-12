@@ -1,3 +1,5 @@
+"""Statistical analysis agent for interpreting time series diagnostics."""
+
 from __future__ import annotations
 
 import re

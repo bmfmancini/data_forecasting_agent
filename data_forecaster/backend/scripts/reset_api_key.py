@@ -24,11 +24,12 @@ from __future__ import annotations
 import argparse
 import getpass
 import os
+from pathlib import Path
 import sqlite3
 import sys
 
-# Ensure local modules are importable when run as ``python -m`` or directly.
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from auth.argon2_helpers import hash_api_key
 from core.config import BACKEND_DB_PATH

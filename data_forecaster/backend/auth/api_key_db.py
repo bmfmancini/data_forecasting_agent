@@ -12,7 +12,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
-from auth.argon2_helpers import generate_api_key, hash_api_key
+from auth.argon2_helpers import generate_api_key, hash_api_key, verify_api_key as verify_hash
 from core.database import get_connection
 from core.logging_config import get_logger
 
@@ -118,8 +118,6 @@ def verify_api_key(
         when the username does not exist, the account is disabled, or
         the key does not match.
     """
-    from auth.argon2_helpers import verify_api_key as _verify
-
     conn: sqlite3.Connection = get_connection()
     try:
         row: sqlite3.Row | None = conn.execute(
@@ -138,7 +136,7 @@ def verify_api_key(
         if not int(row["enabled"]):
             return None
 
-        if not _verify(api_key, str(row["api_key_hash"])):
+        if not verify_hash(api_key, str(row["api_key_hash"])):
             return None
 
         conn.execute(

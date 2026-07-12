@@ -16,6 +16,11 @@ from __future__ import annotations
 import os
 from datetime import timedelta
 
+from dotenv import load_dotenv
+
+
+load_dotenv()
+
 
 class BaseConfig:
     """Shared settings inherited by all environment configurations."""

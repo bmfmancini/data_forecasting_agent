@@ -13,6 +13,7 @@ from typing import Any, AsyncIterator, Annotated
 
 import aiofiles
 import anyio
+import httpx
 
 from fastapi import (
     Body,
@@ -39,7 +40,14 @@ from auth.api_key_db import (
     set_user_enabled,
 )
 from auth.dependency import require_admin_api_key, require_api_key
-from core.config import set_api_key_enabled
+from core.config import (
+    GOOGLE_API_KEY,
+    OLLAMA_API_KEY,
+    OLLAMA_MODEL,
+    USE_OLLAMA,
+    USE_OLLAMA_CLOUD,
+    set_api_key_enabled,
+)
 from core.database import init_database
 from core.logging_config import get_logger
 from schemas import (
@@ -236,9 +244,6 @@ async def _check_ollama_reachable() -> bool:
 
     Handles both Ollama Cloud (with optional API key) and local Ollama.
     """
-    from core.config import OLLAMA_API_KEY, USE_OLLAMA_CLOUD
-    import httpx
-
     try:
         if USE_OLLAMA_CLOUD:
             ollama_url = f"{settings.OLLAMA_BASE_URL}/api/version"
@@ -258,9 +263,6 @@ async def _check_ollama_reachable() -> bool:
 
 async def _check_gemini_reachable() -> bool:
     """Return whether the Gemini API responds to a lightweight probe."""
-    from core.config import GOOGLE_API_KEY
-    import httpx
-
     try:
         gemini_url = (
             "https://generativelanguage.googleapis.com/v1beta/models/"
@@ -289,9 +291,6 @@ def llm_health() -> dict[str, Any]:
             - "llm_provider": str indicating the configured LLM provider ("gemini" or "ollama").
             - "error": str containing error message if any, otherwise None.
     """
-    from core.config import USE_OLLAMA, GOOGLE_API_KEY, OLLAMA_MODEL
-    import asyncio
-
     result: dict[str, Any] = {
         "llm_configured": False,
         "llm_reachable": False,

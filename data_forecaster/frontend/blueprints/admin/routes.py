@@ -31,7 +31,9 @@ from blueprints.admin.forms import (
     UserCreateForm,
     UserEditForm,
 )
+from db.crypto import encrypt
 from db.db import execute_db, query_db
+from services.api_client import get_api_client
 from services.report_service import (
     delete_all_reports_for_admin,
     delete_report_for_admin,
@@ -104,8 +106,6 @@ def dashboard() -> str:
     api_key_count: int = 0
     has_bootstrap: bool = False
     try:
-        from services.api_client import get_api_client
-
         client = get_api_client()
         resp = client.list_api_users()
         if resp.status_code == 200:
@@ -396,8 +396,6 @@ def settings() -> str | Response:
             flash("Enter a job limit of at least 1 and select a valid retention option.", "danger")
             return redirect(url_for("admin.settings"))
         try:
-            from services.api_client import get_api_client
-
             response = get_api_client().update_job_settings(
                 {
                     "max_running_jobs_per_user": max_running_jobs,
@@ -495,8 +493,6 @@ def _load_forecast_job_settings() -> dict[str, Any]:
         "cleanup_enabled": True,
     }
     try:
-        from services.api_client import get_api_client
-
         response = get_api_client().get_job_settings()
         if response.status_code == 200:
             return response.json()
@@ -520,8 +516,6 @@ def job_queue() -> str:
     jobs: list[dict[str, Any]] = []
     queue_error: str | None = None
     try:
-        from services.api_client import get_api_client
-
         response = get_api_client().list_recent_jobs()
         if response.status_code == 200:
             jobs = response.json()
@@ -538,8 +532,6 @@ def job_queue() -> str:
 def clear_terminal_jobs() -> Response:
     """Clear all completed and failed jobs through the protected backend API."""
     try:
-        from services.api_client import get_api_client
-
         response = get_api_client().clear_terminal_jobs()
         if response.status_code == 200:
             deleted_count = int(response.json().get("deleted_count", 0))
@@ -568,8 +560,6 @@ def _fetch_backend_auth_status() -> dict[str, Any]:
     """Return the backend's auth status, or defaults if unreachable."""
     auth_status: dict[str, Any] = {"auth_enabled": False, "has_users": False}
     try:
-        from services.api_client import get_api_client
-
         client = get_api_client()
         resp = client.get_auth_status()
         if resp.status_code == 200:
@@ -584,8 +574,6 @@ def _encrypt_credentials(
 ) -> tuple[str, str] | tuple[None, None]:
     """Encrypt API credentials, flashing and returning None on failure."""
     try:
-        from db.crypto import encrypt
-
         return encrypt(username), encrypt(password)
     except RuntimeError as exc:
         flash(str(exc), "danger")
@@ -701,8 +689,6 @@ def api_config_test() -> Response:
         JSON with ``ok`` (bool) and ``message`` (str) keys.
     """
     try:
-        from services.api_client import get_api_client
-
         client = get_api_client()
         resp = client.health_check()
         if resp.status_code == 200:
@@ -741,8 +727,6 @@ def api_config_enable_auth() -> Response:
         flash("Username and API key are required.", "danger")
         return redirect(url_for(_ADMIN_API_CONFIG_ENDPOINT))
 
-    from services.api_client import get_api_client
-
     client = get_api_client()
     try:
         resp = client.bootstrap_api_user(api_username, api_key, admin_key)
@@ -776,8 +760,6 @@ def api_config_enable_auth() -> Response:
 
     # Success — store the credentials encrypted in the frontend DB
     try:
-        from db.crypto import encrypt
-
         enc_user = encrypt(api_username)
         enc_pass = encrypt(api_key)
         execute_db(
@@ -808,8 +790,6 @@ def _check_backend_health() -> bool:
         ``True`` when ``GET /health`` returns HTTP 200, ``False`` otherwise.
     """
     try:
-        from services.api_client import get_api_client
-
         client = get_api_client()
         resp = client.health_check()
         return resp.status_code == 200
@@ -850,8 +830,6 @@ def api_keys() -> str | Response:
         Rendered HTML for the API key management list page, or a redirect
         with an error message when the backend is unreachable.
     """
-    from services.api_client import get_api_client
-
     client = get_api_client()
     try:
         resp = client.list_api_users()
@@ -896,8 +874,6 @@ def api_key_new() -> str | Response:
         description: str = str(form.description.data or "").strip()
         is_admin: bool = bool(form.is_admin.data)
 
-        from services.api_client import get_api_client
-
         client = get_api_client()
         try:
             resp = client.create_api_user(username, description, is_admin)
@@ -936,8 +912,6 @@ def api_key_rotate(user_id: int) -> Response:
         Redirect to the API keys list with the new key flashed once, or
         a redirect with an error message on failure.
     """
-    from services.api_client import get_api_client
-
     client = get_api_client()
     try:
         # Check if this is the active user — warn if so
@@ -968,8 +942,6 @@ def api_key_rotate(user_id: int) -> Response:
                 # in its own try/except so a credential-update failure does
                 # not mask the successful backend rotation.
                 try:
-                    from db.crypto import encrypt
-
                     execute_db(
                         "UPDATE api_credentials"
                         " SET encrypted_username = ?, encrypted_password = ?"
@@ -1022,8 +994,6 @@ def api_key_toggle(user_id: int) -> Response:
     Returns:
         Redirect to the API keys list with a flash message.
     """
-    from services.api_client import get_api_client
-
     enabled: bool = request.form.get("enabled", "").lower() in ("true", "1", "on")
     client = get_api_client()
     try:
@@ -1056,8 +1026,6 @@ def api_key_set_admin(user_id: int) -> Response:
     Returns:
         Redirect to the API keys list with a flash message.
     """
-    from services.api_client import get_api_client
-
     is_admin: bool = request.form.get("is_admin", "").lower() in ("true", "1", "on")
     client = get_api_client()
     try:
@@ -1115,8 +1083,6 @@ def api_key_delete(user_id: int) -> Response:
     Returns:
         Redirect to the API keys list with a flash message.
     """
-    from services.api_client import get_api_client
-
     # ── Guard: don't allow deleting the user the frontend is actively using ──
     try:
         client = get_api_client()

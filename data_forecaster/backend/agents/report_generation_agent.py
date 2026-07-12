@@ -1,3 +1,5 @@
+"""Report generation agent for turning forecast results into review narratives."""
+
 from __future__ import annotations
 
 from typing import Any

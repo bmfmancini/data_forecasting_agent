@@ -1,3 +1,5 @@
+"""Statistical helper functions for trend, seasonality, and distribution checks."""
+
 from __future__ import annotations
 
 import warnings

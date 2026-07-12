@@ -1,0 +1,50 @@
+"""Tests for ordering-sensitive compatibility bootstrap modules."""
+
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
+import pytest
+
+_backend_dir = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "data_forecaster", "backend")
+)
+if _backend_dir not in sys.path:
+    sys.path.insert(0, _backend_dir)
+
+from forecasting import pmdarima_compat  # noqa: E402
+
+
+def test_pmdarima_patch_translates_removed_keyword(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The compatibility patch maps pmdarima's old keyword before delegation."""
+    calls: list[dict[str, object]] = []
+
+    def fake_check_array(*args: object, **kwargs: object) -> str:
+        calls.append(kwargs)
+        return "ok"
+
+    monkeypatch.delattr(
+        pmdarima_compat.sk_validation,
+        "_patched_for_pmdarima",
+        raising=False,
+    )
+    monkeypatch.setattr(pmdarima_compat.sk_validation, "check_array", fake_check_array)
+
+    pmdarima_compat.patch_sklearn_check_array()
+    result = pmdarima_compat.sk_validation.check_array(
+        [1, 2, 3],
+        force_all_finite=False,
+    )
+
+    assert result == "ok"
+    assert calls == [{"ensure_all_finite": False}]
+
+
+def test_matplotlib_uses_noninteractive_backend() -> None:
+    """Server-side visualization bootstrap configures Agg before pyplot import."""
+    source = Path("data_forecaster/backend/utils/matplotlib_backend.py").read_text()
+
+    assert 'matplotlib.use("Agg")' in source
+    assert source.index('matplotlib.use("Agg")') < source.index("matplotlib.pyplot")

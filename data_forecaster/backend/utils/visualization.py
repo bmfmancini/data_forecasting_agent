@@ -1,3 +1,5 @@
+"""Plotly and Matplotlib visualization helpers for forecast outputs."""
+
 from __future__ import annotations
 
 import base64
@@ -5,10 +7,6 @@ import json
 from io import BytesIO
 from typing import Any
 
-import matplotlib
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
@@ -16,6 +14,7 @@ from plotly.subplots import make_subplots
 
 from core.logging_config import get_logger
 from schemas import ForecastResult
+from utils.matplotlib_backend import pyplot as plt
 
 logger = get_logger(__name__)
 

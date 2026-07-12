@@ -12,18 +12,19 @@ import logging
 import os
 from typing import Any
 
-from dotenv import load_dotenv
 from flask import Flask, jsonify, redirect, request, session, url_for
 from flask_login import current_user
 from flask_session import Session  # type: ignore[import-untyped]
 from werkzeug.wrappers import Response
 
-
-load_dotenv()
-
+from blueprints.admin import admin_bp
+from blueprints.auth import auth_bp
+from blueprints.main import main_bp
+from db.crypto import encrypt
 from config import get_config
-from db.db import init_app as db_init_app, init_db, query_db
+from db.db import execute_db, init_app as db_init_app, init_db, query_db
 from extensions import csrf, login_manager
+from manage import register_commands
 from models import User
 from services.markdown_service import markdown_to_safe_html
 
@@ -73,8 +74,6 @@ def create_app(config_name: str | None = None) -> Flask:
     _register_context_processors(app)
     _register_user_loader()
     _register_password_change(app)
-
-    from manage import register_commands
 
     register_commands(app)
 
@@ -144,9 +143,6 @@ def _auto_configure_api_credentials(app: Flask) -> None:
         logger.info("API credentials already stored — skipping env auto-config.")
         return
 
-    from db.crypto import encrypt
-    from db.db import execute_db
-
     backend_url = app.config.get("BACKEND_URL", "http://localhost:8000")
     enc_user = encrypt(username)
     enc_key = encrypt(api_key)
@@ -201,10 +197,6 @@ def _register_blueprints(app: Flask) -> None:
     Args:
         app: The Flask application instance.
     """
-    from blueprints.auth import auth_bp
-    from blueprints.main import main_bp
-    from blueprints.admin import admin_bp
-
     app.register_blueprint(auth_bp)
     app.register_blueprint(main_bp)
     app.register_blueprint(admin_bp)
@@ -254,14 +246,12 @@ def _register_user_loader() -> None:
         Returns:
             A :class:`~models.User` instance or ``None`` when not found.
         """
-        from db.db import query_db as _query
-
         try:
             user_pk = int(user_id)
         except (TypeError, ValueError):
             return None
 
-        row = _query(
+        row = query_db(
             """
             SELECT u.id, u.username, r.name AS role_name, u.active,
                    u.must_change_password, u.session_version

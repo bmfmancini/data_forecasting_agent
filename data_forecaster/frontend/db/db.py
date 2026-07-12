@@ -15,6 +15,8 @@ import click
 from flask import Flask, current_app, g
 from werkzeug.security import generate_password_hash
 
+from db.crypto import encrypt
+
 
 def get_db() -> sqlite3.Connection:
     """Return the SQLite connection for the current application context.
@@ -143,8 +145,6 @@ def init_db() -> None:
     enc_pass: str | None = None
     if seed_user and seed_key:
         try:
-            from db.crypto import encrypt
-
             enc_user = encrypt(seed_user)
             enc_pass = encrypt(seed_key)
         except RuntimeError:

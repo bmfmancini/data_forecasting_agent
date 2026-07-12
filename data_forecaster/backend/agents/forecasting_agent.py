@@ -1,3 +1,5 @@
+"""Forecasting agent that selects and runs statistical model implementations."""
+
 from __future__ import annotations
 
 from typing import Any

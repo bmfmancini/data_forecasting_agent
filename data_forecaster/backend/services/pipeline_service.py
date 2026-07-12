@@ -19,6 +19,7 @@ from agents.report_generation_agent import run_report_agent
 from agents.statistical_analysis_agent import run_statistical_agent
 from agents.statistical_review_agent import run_statistical_review_agent
 from core.logging_config import get_logger
+from exceptions import DataValidationError
 from report.renderers import HTMLRenderer, MarkdownRenderer
 from schemas import AnalysisResponse, ModelSelectionResult
 from services.baseline_service import run_baseline_models
@@ -86,7 +87,9 @@ def run_pipeline(
     )
 
     if (preflight_options or {}).get("continue_short_series") == "stop":
-        raise ValueError("Analysis stopped because the selected series is too short.")
+        raise DataValidationError(
+            "Analysis stopped because the selected series is too short."
+        )
 
     statistical_tuning = (preflight_options or {}).get("statistical_tuning") or {}
     disabled_statistical_tests = statistical_tuning.get("disabled_tests") or []
@@ -144,8 +147,8 @@ def run_pipeline(
                 "\n\n(Note: A Box-Cox transformation was applied to stabilize "
                 "variance based on agent recommendation.)"
             )
-        except Exception as e:
-            logger.warning("Box-Cox application failed: %s", e)
+        except (TypeError, ValueError) as exc:
+            logger.warning("Box-Cox application failed: %s", exc)
 
     if (
         "change_point_analysis" in stat_result.recommended_remediation
