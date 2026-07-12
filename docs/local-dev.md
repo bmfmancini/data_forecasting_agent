@@ -21,7 +21,7 @@ pip install -r requirements.txt
 # uv pip install -r uv.txt
 
 # Set up environment variables
-cp ../.env .  # or symlink it
+cp .env.example .env
 
 # Start the backend
 uvicorn main:app --reload --port 8000
@@ -38,12 +38,10 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-# Point the frontend at the local backend
-export BACKEND_URL=http://localhost:8000
-export API_VERIFY_SSL=false
-export FLASK_ENV=development
-export SECRET_KEY=dev-secret
-export FLASK_ENCRYPTION_KEY=$(python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
+# Set up environment variables
+cp .env.example .env
+# Then set FLASK_ENCRYPTION_KEY in frontend/.env:
+# python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 
 # Initialize the database
 flask --app app init-db
@@ -92,5 +90,5 @@ export OLLAMA_MODEL=llama3
 - The backend uses `--reload` which watches for file changes and auto-restarts. Great for iterating on agents or API endpoints.
 - The frontend in development mode has Flask debug enabled — you get the interactive debugger in the browser on errors.
 - The `FLASK_ENCRYPTION_KEY` is used to encrypt stored API credentials at rest. Generate one with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`.
-- If you change the `FRONTEND_API_KEY` in `.env`, delete the stale `backend.db` and restart the backend — it only auto-creates the user when no users exist.
+- If you change the `FRONTEND_API_KEY` in `backend/.env`, keep the matching value in `frontend/.env`, delete the stale `backend.db`, and restart the backend — it only auto-creates the user when no users exist.
 - ChromaDB persists to `./chroma_db` by default. Delete that directory if you want a clean RAG knowledge base.

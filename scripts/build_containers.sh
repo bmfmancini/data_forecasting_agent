@@ -41,7 +41,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 COMPOSE_DIR="${REPO_ROOT}/data_forecaster/docker"
-ENV_FILE="${REPO_ROOT}/data_forecaster/.env"
+BACKEND_ENV_FILE="${REPO_ROOT}/data_forecaster/backend/.env"
+FRONTEND_ENV_FILE="${REPO_ROOT}/data_forecaster/frontend/.env"
+LEGACY_ENV_FILE="${REPO_ROOT}/data_forecaster/.env"
 
 # ── Defaults ────────────────────────────────────────────────────────────
 MODE=""
@@ -89,7 +91,8 @@ Actions (default: --up --build):
   --logs           Tail container logs.
   --help, -h       Show this help.
 
-Environment variables (set in data_forecaster/.env or exported):
+Environment variables (set in data_forecaster/backend/.env,
+data_forecaster/frontend/.env, or exported):
   REMOTE_BACKEND_URL  Backend URL for distributed frontend mode.
   API_VERIFY_SSL       Verify backend TLS cert (false for self-signed).
   SSL_DOMAIN           CN/SAN for auto-generated self-signed certs.
@@ -104,9 +107,37 @@ Examples:
   # Distributed: backend host
   ./scripts/build_containers.sh --distributed --role backend
 
-  # Distributed: frontend host (set REMOTE_BACKEND_URL in .env first)
+  # Distributed: frontend host (set REMOTE_BACKEND_URL in frontend/.env first)
   ./scripts/build_containers.sh --distributed --role frontend
 EOF
+}
+
+load_env_file() {
+    local file="$1"
+
+    if [ ! -f "${file}" ]; then
+        return 0
+    fi
+
+    # Export values so Docker Compose can use them for ${VAR} interpolation.
+    set -a
+    # shellcheck disable=SC1090
+    . "${file}"
+    set +a
+}
+
+warn_missing_env_file() {
+    local file="$1"
+    local example="$2"
+
+    if [ ! -f "${file}" ]; then
+        warn "Env file not found at ${file} — using compose and application defaults."
+        warn "Create it with: cp ${example} ${file}"
+
+        if [ -f "${file} " ]; then
+            warn "Found '${file} ' with a trailing space in the filename; rename it to '${file}'."
+        fi
+    fi
 }
 
 # ── Argument parsing ────────────────────────────────────────────────────
@@ -178,8 +209,8 @@ if [ ! -f "${COMPOSE_DIR}/docker-compose.yml" ]; then
     exit 1
 fi
 
-if [ ! -f "${ENV_FILE}" ]; then
-    warn ".env file not found at ${ENV_FILE} — using compose defaults."
+if [ -f "${LEGACY_ENV_FILE}" ]; then
+    warn "Legacy env file found at ${LEGACY_ENV_FILE}; this script now uses backend/.env and frontend/.env."
 fi
 
 # ── Compose file selection ──────────────────────────────────────────────
@@ -187,11 +218,17 @@ COMPOSE_FILES=(-f "${COMPOSE_DIR}/docker-compose.yml")
 
 case "${MODE}" in
     single)
+        warn_missing_env_file "${BACKEND_ENV_FILE}" "${REPO_ROOT}/data_forecaster/backend/.env.example"
+        warn_missing_env_file "${FRONTEND_ENV_FILE}" "${REPO_ROOT}/data_forecaster/frontend/.env.example"
+        load_env_file "${BACKEND_ENV_FILE}"
+        load_env_file "${FRONTEND_ENV_FILE}"
         log "Mode: ${BOLD}single-machine${RESET}"
         ;;
     distributed)
         case "${ROLE}" in
             backend)
+                warn_missing_env_file "${BACKEND_ENV_FILE}" "${REPO_ROOT}/data_forecaster/backend/.env.example"
+                load_env_file "${BACKEND_ENV_FILE}"
                 if [ ! -f "${COMPOSE_DIR}/docker-compose.backend.yml" ]; then
                     err "Backend compose file not found: ${COMPOSE_DIR}/docker-compose.backend.yml"
                     err "Ensure the distributed compose files have been created."
@@ -207,17 +244,19 @@ case "${MODE}" in
                     exit 1
                 fi
                 COMPOSE_FILES+=(-f "${COMPOSE_DIR}/docker-compose.distributed.yml")
+                warn_missing_env_file "${FRONTEND_ENV_FILE}" "${REPO_ROOT}/data_forecaster/frontend/.env.example"
+                load_env_file "${FRONTEND_ENV_FILE}"
                 log "Mode: ${BOLD}distributed${RESET} (role: ${BOLD}frontend${RESET})"
 
                 if [ -z "${REMOTE_BACKEND_URL:-}" ]; then
-                    # Try to read it from .env if not exported.
-                    if [ -f "${ENV_FILE}" ]; then
-                        REMOTE_BACKEND_URL="$(grep -E '^REMOTE_BACKEND_URL=' "${ENV_FILE}" 2>/dev/null | cut -d= -f2- || true)"
+                    # Try to read it from frontend/.env if not exported or loaded.
+                    if [ -f "${FRONTEND_ENV_FILE}" ]; then
+                        REMOTE_BACKEND_URL="$(grep -E '^REMOTE_BACKEND_URL=' "${FRONTEND_ENV_FILE}" 2>/dev/null | cut -d= -f2- || true)"
                     fi
                 fi
                 if [ -z "${REMOTE_BACKEND_URL:-}" ]; then
                     err "REMOTE_BACKEND_URL is not set. The frontend will not be able to reach the backend."
-                    err "Set it in ${ENV_FILE} or export it before running this script."
+                    err "Set it in ${FRONTEND_ENV_FILE} or export it before running this script."
                     exit 1
                 else
                     log "Remote backend URL: ${REMOTE_BACKEND_URL}"

@@ -1,5 +1,3 @@
-version: "3.9"
-
 # Single-machine deployment.
 #
 # Both frontend and backend run on one host, each fronted by its own
@@ -17,7 +15,7 @@ services:
       context: ../backend
       dockerfile: ../docker/Dockerfile.backend
     env_file:
-      - ../.env
+      - ../backend/.env
     volumes:
       - logs_data:/app/logs
       - chroma_data:/app/chroma_db
@@ -41,7 +39,7 @@ services:
       context: ../frontend
       dockerfile: ../docker/Dockerfile.flask
     env_file:
-      - ../.env
+      - ../frontend/.env
     environment:
       - FLASK_ENV=production
       - BACKEND_URL=https://nginx-backend:${BACKEND_HTTPS_PORT:-8443}

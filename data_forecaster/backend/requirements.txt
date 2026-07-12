@@ -1,6 +1,7 @@
 uvicorn[standard]>=0.29.0
 fastapi>=0.111.0
 python-multipart>=0.0.31
+aiofiles>=23.2.1
 pydantic>=2.0.0
 numpy>=1.26.0
 pandas>=2.2.0

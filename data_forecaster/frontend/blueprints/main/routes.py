@@ -669,22 +669,28 @@ def load_demo() -> Response:
 
 
 def _forward_upload(file: Any) -> Response:
-    """Forward a validated upload to the backend and store session state."""
+    """Forward a validated upload to the backend and store session state.
+
+    Streams the file to the backend without loading the entire file into
+    memory.  A small preview is read separately for the overview tab.
+    """
     filename: str = file.filename
-    content: bytes = file.read()
     content_type: str = file.content_type or "application/octet-stream"
 
     _clear_analysis_state()
 
     try:
         client = get_api_client()
-        resp = client.upload_file(filename, content, content_type)
+        resp = client.upload_file_stream(filename, file.stream, content_type)
         if resp.status_code == 200:
             upload_info: dict[str, Any] = resp.json()
             session["upload_info"] = upload_info
             session["date_col"] = upload_info.get("detected_date_col")
             session["value_col"] = upload_info.get("detected_value_col")
-            session["preview_data"] = _parse_preview(content, filename)
+            # Read a small preview for the overview tab.  This seeks back
+            # to the beginning of the stream after the upload completes.
+            file.stream.seek(0)
+            session["preview_data"] = _parse_preview(file.stream, filename)
             return make_response(jsonify(upload_info), 200)
         return make_response(
             jsonify({"error": _safe_error_detail(resp, "Upload failed.")}),
@@ -1115,20 +1121,27 @@ def _preflight_defaults(preflight: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _parse_preview(content: bytes, filename: str) -> list[dict[str, Any]]:
+def _parse_preview(content: Any, filename: str) -> list[dict[str, Any]]:
     """Parse the first 20 rows of an uploaded file for the overview tab.
 
     Args:
-        content:  Raw file bytes (CSV or XLSX).
+        content:  Raw file bytes or a seekable file-like object.
         filename: Original filename used to determine the parser.
 
     Returns:
         List of row dicts (at most 20 rows), or an empty list on parse error.
     """
     try:
-        buffer = io.BytesIO(content)
-        if filename.lower().endswith(".xlsx"):
+        if hasattr(content, "seek"):
+            content.seek(0)
+            buffer = content
+        else:
+            buffer = io.BytesIO(content)
+        lower = filename.lower()
+        if lower.endswith(".xlsx"):
             df = pandas.read_excel(buffer).head(20)
+        elif lower.endswith(".json"):
+            df = pandas.read_json(buffer).head(20)
         else:
             df = pandas.read_csv(buffer).head(20)
         return df.astype(str).to_dict(orient="records")
