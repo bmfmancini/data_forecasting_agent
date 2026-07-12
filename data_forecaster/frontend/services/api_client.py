@@ -316,6 +316,15 @@ class BackendAPIClient:
             verify=self._verify,
         )
 
+    def auth_check(self) -> requests.Response:
+        """Validate configured API credentials against the backend."""
+        return requests.get(
+            f"{self._base_url}/auth-check",
+            headers=self._headers(),
+            timeout=5,
+            verify=self._verify,
+        )
+
     def get_llm_health(self) -> requests.Response:
         """Check LLM connectivity and configuration.
 

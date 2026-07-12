@@ -65,10 +65,13 @@
 <script>
 document.getElementById("btn-test-conn").addEventListener("click", function() {
     var resultEl = document.getElementById("test-result");
+    var form = document.querySelector("form[method='post'][novalidate]");
+    var formData = new FormData(form);
     resultEl.innerHTML = '<span style="color:var(--text-muted-custom);">Testing…</span>';
     fetch("{{ url_for('admin.api_config_test') }}", {
         method: "POST",
-        headers: { "X-CSRFToken": document.querySelector('meta[name="csrf-token"]').getAttribute("content") }
+        headers: { "X-CSRFToken": document.querySelector('meta[name="csrf-token"]').getAttribute("content") },
+        body: formData
     }).then(function(r) { return r.json(); })
     .then(function(data) {
         var cls = data.ok ? "alert-success" : "alert-danger";

@@ -33,7 +33,7 @@ from blueprints.admin.forms import (
 )
 from db.crypto import encrypt
 from db.db import execute_db, query_db
-from services.api_client import get_api_client
+from services.api_client import BackendAPIClient, get_api_client
 from services.report_service import (
     delete_all_reports_for_admin,
     delete_report_for_admin,
@@ -625,6 +625,27 @@ def _save_api_credentials(
         )
 
 
+def _client_from_api_config_form() -> BackendAPIClient | None:
+    """Build a temporary API client from posted API Config form values."""
+    base_url = str(request.form.get("base_url", "")).strip().rstrip("/")
+    if not base_url:
+        return None
+
+    username = str(request.form.get("api_username", "")).strip()
+    api_key = str(request.form.get("api_password", "")).strip()
+    verify_ssl = request.form.get("verify_ssl") in {"y", "on", "true", "1"}
+
+    if bool(username) != bool(api_key):
+        return None
+
+    return BackendAPIClient(
+        base_url=base_url,
+        api_username=username or None,
+        api_key=api_key or None,
+        verify=verify_ssl,
+    )
+
+
 @admin_bp.route("/api-config", methods=["GET", "POST"])
 @admin_required
 def api_config() -> str | Response:
@@ -660,6 +681,12 @@ def api_config() -> str | Response:
     timeout: int = int(form.timeout.data or 30)
     verify_ssl: int = 1 if form.verify_ssl.data else 0
 
+    if bool(api_username) != bool(api_password):
+        flash("Enter both API username and API key, or leave both blank.", "danger")
+        return render_template(
+            "admin/api_config.html", form=form, auth_status=auth_status
+        )
+
     enc_user: str | None = None
     enc_pass: str | None = None
     if api_username and api_password:
@@ -681,7 +708,9 @@ def api_config() -> str | Response:
 def api_config_test() -> Response:
     """Test connectivity to the currently configured backend API.
 
-    Calls ``GET /health`` on the backend using the stored credentials.
+    Calls ``GET /auth-check`` on the backend using either the credentials
+    currently typed into the form or the stored credentials when the form
+    did not include a full username/key pair.
     Returns a sanitised result without exposing raw credential or
     connection details.
 
@@ -689,10 +718,30 @@ def api_config_test() -> Response:
         JSON with ``ok`` (bool) and ``message`` (str) keys.
     """
     try:
-        client = get_api_client()
-        resp = client.health_check()
+        client = _client_from_api_config_form() or get_api_client()
+        resp = client.auth_check()
         if resp.status_code == 200:
-            return jsonify({"ok": True, "message": "Connection successful."})
+            data = resp.json()
+            if data.get("authenticated"):
+                return jsonify(
+                    {
+                        "ok": True,
+                        "message": "Connection and API credentials successful.",
+                    }
+                )
+            return jsonify(
+                {
+                    "ok": True,
+                    "message": "Connection successful; backend auth is disabled.",
+                }
+            )
+        if resp.status_code == 401:
+            return jsonify(
+                {
+                    "ok": False,
+                    "message": "Authentication failed. Check the configured credentials.",
+                }
+            )
         return jsonify(
             {
                 "ok": False,

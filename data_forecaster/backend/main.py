@@ -35,6 +35,7 @@ from auth.api_key_db import (
     has_any_users,
     has_bootstrap_user,
     list_api_users,
+    reconcile_service_user,
     rotate_api_key,
     set_user_admin,
     set_user_enabled,
@@ -117,6 +118,19 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     cleanup_terminal_jobs()
     init_storage()
     if has_any_users():
+        if settings.FRONTEND_API_USERNAME and settings.FRONTEND_API_KEY:
+            try:
+                reconciled = reconcile_service_user(
+                    settings.FRONTEND_API_USERNAME,
+                    settings.FRONTEND_API_KEY,
+                )
+                if reconciled:
+                    logger.info(
+                        "Frontend API user '%s' reconciled from env.",
+                        settings.FRONTEND_API_USERNAME,
+                    )
+            except ValueError as exc:
+                logger.warning("Failed to reconcile frontend API user: %s", exc)
         set_api_key_enabled(True)
         logger.info("API users found — auth enabled.")
     elif settings.FRONTEND_API_USERNAME and settings.FRONTEND_API_KEY:
@@ -217,6 +231,18 @@ async def global_exception_handler(request: Request, exc: Exception) -> Response
 def health() -> dict[str, str]:
     """Health check endpoint."""
     return {"status": "ok"}
+
+
+@app.get("/auth-check")
+def auth_check(
+    current_user: Annotated[dict[str, Any], Depends(require_api_key)],
+) -> dict[str, Any]:
+    """Validate API credentials without performing a privileged operation."""
+    return {
+        "authenticated": bool(current_user),
+        "username": current_user.get("username"),
+        "is_admin": bool(current_user.get("is_admin")),
+    }
 
 
 @app.get("/llm-health")
