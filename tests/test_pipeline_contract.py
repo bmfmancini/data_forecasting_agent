@@ -57,5 +57,7 @@ def test_pipeline_progress_events_stay_in_expected_order() -> None:
         "Generating report\u2026",
         "Report complete",
     ]
-    assert progress_steps("_build_visualizations") == ["Generating visualizations\u2026"]
+    assert progress_steps("_build_visualizations") == [
+        "Generating visualizations\u2026"
+    ]
     assert progress_steps("run_pipeline")[-1] == "Analysis complete"

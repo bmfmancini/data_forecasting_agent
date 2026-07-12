@@ -283,8 +283,7 @@ def run_statistical_agent(
 
     if disabled and "Disabled by user for this forecast" not in summary:
         summary += (
-            "\n\nDisabled by user for this forecast: "
-            f"{', '.join(sorted(disabled))}."
+            "\n\nDisabled by user for this forecast: " f"{', '.join(sorted(disabled))}."
         )
 
     logger.info(

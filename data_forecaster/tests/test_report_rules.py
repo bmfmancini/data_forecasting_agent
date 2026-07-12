@@ -113,6 +113,5 @@ class TestConfidenceDeductions:
 
     def test_review_fail_greater_than_warn(self) -> None:
         assert (
-            CONFIDENCE_DEDUCTIONS["review_fail"]
-            > CONFIDENCE_DEDUCTIONS["review_warn"]
+            CONFIDENCE_DEDUCTIONS["review_fail"] > CONFIDENCE_DEDUCTIONS["review_warn"]
         )

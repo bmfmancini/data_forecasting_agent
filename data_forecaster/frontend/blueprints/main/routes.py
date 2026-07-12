@@ -144,9 +144,7 @@ def _custom_settings_from_session() -> list[dict[str, str]]:
         if value not in _DEFAULT_SETTING_VALUES:
             settings.append({"label": label, "value": value})
 
-    disabled_tests = (options.get("statistical_tuning") or {}).get(
-        "disabled_tests", []
-    )
+    disabled_tests = (options.get("statistical_tuning") or {}).get("disabled_tests", [])
     if isinstance(disabled_tests, list) and disabled_tests:
         settings.append(
             {
@@ -394,9 +392,7 @@ def trace() -> str:
         },
     ]
     token_usage: dict[str, Any] = result.get("pipeline_token_usage") or {}
-    return render_template(
-        "main/trace.html", agents=agents, token_usage=token_usage
-    )
+    return render_template("main/trace.html", agents=agents, token_usage=token_usage)
 
 
 @main_bp.route("/report")

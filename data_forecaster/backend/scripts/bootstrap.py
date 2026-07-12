@@ -20,7 +20,6 @@ import sys
 from pathlib import Path
 from typing import Callable
 
-
 SCRIPT_PATH = Path(__file__).resolve()
 BACKEND_ROOT = SCRIPT_PATH.parents[1]
 PROJECT_ROOT = SCRIPT_PATH.parents[2]
@@ -152,7 +151,9 @@ def maybe_set_secret(
         print(f"Set {key} in {display_path(path)}.")
         return value
 
-    if confirm(f"{key} already exists in {path.name}. Replace it?", assume_yes=assume_yes):
+    if confirm(
+        f"{key} already exists in {path.name}. Replace it?", assume_yes=assume_yes
+    ):
         value = value_factory()
         write_env_value(path, key, value)
         values[key] = value
@@ -173,7 +174,9 @@ def prompt_secret(label: str, current: str | None, *, force: bool) -> str | None
     return value or None
 
 
-def sync_value(source: str, target_path: Path, target_values: dict[str, str], key: str) -> None:
+def sync_value(
+    source: str, target_path: Path, target_values: dict[str, str], key: str
+) -> None:
     """Write a value to an env file and its in-memory mapping."""
     write_env_value(target_path, key, source)
     target_values[key] = source
@@ -206,7 +209,9 @@ def reset_backend_service_user_if_present(username: str, api_key: str) -> None:
             (hash_api_key(api_key), int(row["id"])),
         )
         conn.commit()
-        print(f"Reset existing backend API user '{username}' to match FRONTEND_API_KEY.")
+        print(
+            f"Reset existing backend API user '{username}' to match FRONTEND_API_KEY."
+        )
     finally:
         conn.close()
 
@@ -218,7 +223,9 @@ def collect_llm_credentials(
     assume_yes: bool,
 ) -> None:
     """Optionally collect provider credentials for the backend."""
-    if not confirm("Configure LLM provider credentials now?", default=False, assume_yes=assume_yes):
+    if not confirm(
+        "Configure LLM provider credentials now?", default=False, assume_yes=assume_yes
+    ):
         return
 
     use_ollama = confirm("Use Ollama instead of Google Gemini?", default=True)
@@ -230,7 +237,9 @@ def collect_llm_credentials(
         write_env_value(BACKEND_ENV, "USE_OLLAMA_CLOUD", str(use_cloud).lower())
         backend_values["USE_OLLAMA_CLOUD"] = str(use_cloud).lower()
         if use_cloud:
-            key = prompt_secret("OLLAMA_API_KEY", backend_values.get("OLLAMA_API_KEY"), force=force)
+            key = prompt_secret(
+                "OLLAMA_API_KEY", backend_values.get("OLLAMA_API_KEY"), force=force
+            )
             if key:
                 write_env_value(BACKEND_ENV, "OLLAMA_API_KEY", key)
         model = input(
@@ -245,7 +254,9 @@ def collect_llm_credentials(
             write_env_value(BACKEND_ENV, "OLLAMA_BASE_URL", base_url)
         return
 
-    key = prompt_secret("GOOGLE_API_KEY", backend_values.get("GOOGLE_API_KEY"), force=force)
+    key = prompt_secret(
+        "GOOGLE_API_KEY", backend_values.get("GOOGLE_API_KEY"), force=force
+    )
     if key:
         write_env_value(BACKEND_ENV, "GOOGLE_API_KEY", key)
     model = input(
@@ -306,11 +317,15 @@ def bootstrap(args: argparse.Namespace) -> int:
     service_username = backend_values.get("FRONTEND_API_USERNAME") or "frontend"
     if args.force or is_placeholder(backend_values.get("FRONTEND_API_KEY")):
         service_key = generate_secret_urlsafe()
-        sync_value(service_username, BACKEND_ENV, backend_values, "FRONTEND_API_USERNAME")
+        sync_value(
+            service_username, BACKEND_ENV, backend_values, "FRONTEND_API_USERNAME"
+        )
         sync_value(service_key, BACKEND_ENV, backend_values, "FRONTEND_API_KEY")
         reset_backend_service_user_if_present(service_username, service_key)
         if FRONTEND_ENV is not None and not args.backend_only:
-            sync_value(service_username, FRONTEND_ENV, frontend_values, "FRONTEND_API_USERNAME")
+            sync_value(
+                service_username, FRONTEND_ENV, frontend_values, "FRONTEND_API_USERNAME"
+            )
             sync_value(service_key, FRONTEND_ENV, frontend_values, "FRONTEND_API_KEY")
             print("Generated matching frontend/backend service credentials.")
         else:
@@ -319,7 +334,9 @@ def bootstrap(args: argparse.Namespace) -> int:
         service_key = backend_values["FRONTEND_API_KEY"]
         reset_backend_service_user_if_present(service_username, service_key)
         if FRONTEND_ENV is not None and not args.backend_only:
-            sync_value(service_username, FRONTEND_ENV, frontend_values, "FRONTEND_API_USERNAME")
+            sync_value(
+                service_username, FRONTEND_ENV, frontend_values, "FRONTEND_API_USERNAME"
+            )
             sync_value(service_key, FRONTEND_ENV, frontend_values, "FRONTEND_API_KEY")
             print("Synced existing backend service credentials into frontend env.")
 
@@ -333,9 +350,16 @@ def bootstrap(args: argparse.Namespace) -> int:
             else:
                 admin_password = getpass.getpass("Frontend admin password: ").strip()
             if admin_password:
-                sync_value(admin_password, FRONTEND_ENV, frontend_values, "FRONTEND_ADMIN_PASSWORD")
+                sync_value(
+                    admin_password,
+                    FRONTEND_ENV,
+                    frontend_values,
+                    "FRONTEND_ADMIN_PASSWORD",
+                )
             else:
-                print("Skipped frontend admin password; current value was left unchanged.")
+                print(
+                    "Skipped frontend admin password; current value was left unchanged."
+                )
 
     if not args.skip_llm:
         collect_llm_credentials(backend_values, force=args.force, assume_yes=args.yes)
@@ -350,18 +374,32 @@ def bootstrap(args: argparse.Namespace) -> int:
         print(f"  docker compose -f {COMPOSE_FILE.relative_to(PROJECT_ROOT)} restart")
     else:
         print("Restart the backend container so env changes take effect.")
-        print("Note: /app/.env changes are container-local unless .env is bind-mounted.")
+        print(
+            "Note: /app/.env changes are container-local unless .env is bind-mounted."
+        )
     return 0
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--yes", action="store_true", help="accept default yes/no prompts")
-    parser.add_argument("--force", action="store_true", help="replace existing non-placeholder secrets")
-    parser.add_argument("--backend-only", action="store_true", help="only update the backend .env")
-    parser.add_argument("--skip-llm", action="store_true", help="do not prompt for LLM credentials")
-    parser.add_argument("--restart", action="store_true", help="restart Docker Compose services when done")
+    parser.add_argument(
+        "--yes", action="store_true", help="accept default yes/no prompts"
+    )
+    parser.add_argument(
+        "--force", action="store_true", help="replace existing non-placeholder secrets"
+    )
+    parser.add_argument(
+        "--backend-only", action="store_true", help="only update the backend .env"
+    )
+    parser.add_argument(
+        "--skip-llm", action="store_true", help="do not prompt for LLM credentials"
+    )
+    parser.add_argument(
+        "--restart",
+        action="store_true",
+        help="restart Docker Compose services when done",
+    )
     return parser.parse_args(argv)
 
 

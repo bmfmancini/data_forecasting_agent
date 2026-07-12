@@ -42,7 +42,7 @@ def _calculate_additional_metrics(
     if sum_of_actuals != 0:
         metrics["wape"] = np.sum(absolute_errors) / sum_of_actuals
     else:
-        metrics["wape"] = np.nan # Avoid division by zero
+        metrics["wape"] = np.nan  # Avoid division by zero
 
     # MASE: Mean Absolute Error / MAE of a naive seasonal forecast on training data
     # The gold standard for comparing forecast accuracy across different series.
@@ -54,7 +54,7 @@ def _calculate_additional_metrics(
         if mae_naive != 0:
             metrics["mase"] = mae / mae_naive
         else:
-            metrics["mase"] = np.inf # Should be rare
+            metrics["mase"] = np.inf  # Should be rare
     else:
         # Fallback for very short series where seasonal naive is not possible
         mae_naive = np.mean(np.abs(np.diff(y_train)))
@@ -63,6 +63,7 @@ def _calculate_additional_metrics(
         else:
             metrics["mase"] = np.inf
     return metrics
+
 
 def run_forecasting_agent(
     series: pd.Series,
@@ -106,7 +107,7 @@ def run_forecasting_agent(
                     "y_train",
                     series[: len(series) - len(y_test)],
                 )
-                
+
                 additional_metrics = _calculate_additional_metrics(
                     y_test, forecast, y_train, seasonal_period
                 )
@@ -121,11 +122,9 @@ def run_forecasting_agent(
             comparison_summary += f"- {name}: required metrics unavailable\n"
             continue
         wape_text = (
-            f", WAPE={res.get('wape', np.nan) * 100:.2f}%"
-            if "wape" in res
-            else ""
+            f", WAPE={res.get('wape', np.nan) * 100:.2f}%" if "wape" in res else ""
         )
-        mase_text = f", MASE={res.get('mase', np.nan):.4f}" if 'mase' in res else ""
+        mase_text = f", MASE={res.get('mase', np.nan):.4f}" if "mase" in res else ""
         comparison_summary += (
             f"- {name}: RMSE={res['rmse']:.4f}, MAE={res['mae']:.4f}, "
             f"MAPE={res['mape']:.2f}%{wape_text}{mase_text}\n"
@@ -213,7 +212,8 @@ def run_forecasting_agent(
             "WAPE": r.get("wape", np.nan),
             "MASE": r.get("mase", np.nan),
         }
-        for name, r in results_store.items() if _has_required_metrics(r)
+        for name, r in results_store.items()
+        if _has_required_metrics(r)
     }
     # Merge any pre-existing metrics (e.g. baselines) passed in by the caller
     # so re-runs preserve previously computed results.

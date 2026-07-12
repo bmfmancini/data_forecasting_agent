@@ -412,7 +412,10 @@ def settings() -> str | Response:
             if max_running_jobs < 1:
                 raise ValueError
         except (KeyError, ValueError):
-            flash("Enter a job limit of at least 1 and select a valid retention option.", "danger")
+            flash(
+                "Enter a job limit of at least 1 and select a valid retention option.",
+                "danger",
+            )
             return redirect(url_for("admin.settings"))
         try:
             response = get_api_client().update_job_settings(
@@ -427,7 +430,10 @@ def settings() -> str | Response:
                 return redirect(url_for("admin.settings"))
         except requests.RequestException:
             logger.exception("Failed to save forecast job settings")
-            flash("The backend is unavailable; forecast job settings were not saved.", "danger")
+            flash(
+                "The backend is unavailable; forecast job settings were not saved.",
+                "danger",
+            )
             return redirect(url_for("admin.settings"))
         _save_app_config_values(app_config_updates)
         current_app.config["MAX_CONTENT_LENGTH"] = max_upload_mb * 1024 * 1024
@@ -873,7 +879,9 @@ def api_config_test() -> Response:
         safe_message = _sanitise_connection_error(str(exc))
         return jsonify({"ok": False, "message": safe_message})
     except ValueError:
-        return jsonify({"ok": False, "message": "Backend returned an invalid response."})
+        return jsonify(
+            {"ok": False, "message": "Backend returned an invalid response."}
+        )
 
 
 @admin_bp.route("/api-config/enable-auth", methods=["POST"])

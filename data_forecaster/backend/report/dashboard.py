@@ -87,9 +87,7 @@ def build_dashboard(
                 title="Primary Risk",
                 value=risk_label,
                 status=risk_status,
-                description=(
-                    "The most significant risk identified from the analysis."
-                ),
+                description=("The most significant risk identified from the analysis."),
                 icon="⚠️",
                 priority=6,
             ),

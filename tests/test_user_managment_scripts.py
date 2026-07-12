@@ -10,7 +10,6 @@ from typing import Any
 import pytest
 from werkzeug.security import check_password_hash
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BACKEND_ROOT = REPO_ROOT / "data_forecaster" / "backend"
 FRONTEND_ROOT = REPO_ROOT / "data_forecaster" / "frontend"
@@ -62,8 +61,7 @@ def test_backend_script_add_disable_reset_and_delete(
     module = _load_backend_script()
 
     assert (
-        module.main(["--db-path", str(db_path), "--add--user", "alice", "--admin"])
-        == 0
+        module.main(["--db-path", str(db_path), "--add--user", "alice", "--admin"]) == 0
     )
     output = capsys.readouterr().out
     assert "Created API user 'alice'." in output
@@ -179,15 +177,13 @@ def test_frontend_script_add_disable_reset_and_delete(
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
-        row = conn.execute(
-            """
+        row = conn.execute("""
             SELECT u.id, u.password_hash, u.active, u.must_change_password,
                    u.session_version, r.name AS role
             FROM users u
             JOIN roles r ON r.id = u.role_id
             WHERE u.username = 'alice'
-            """
-        ).fetchone()
+            """).fetchone()
         assert row is not None
         assert row["role"] == "admin"
         assert int(row["active"]) == 1

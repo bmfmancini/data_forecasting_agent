@@ -189,13 +189,11 @@ def rename_report_for_user(report_id: int, user_id: int, title: str) -> bool:
 
 def list_report_owners() -> list[dict[str, Any]]:
     """List application users who currently own at least one report."""
-    rows = query_db(
-        """
+    rows = query_db("""
         SELECT u.id, u.username, COUNT(fr.id) AS report_count
         FROM users u JOIN forecast_reports fr ON fr.user_id = u.id
         GROUP BY u.id, u.username ORDER BY u.username COLLATE NOCASE
-        """
-    )
+        """)
     return rows if isinstance(rows, list) else []
 
 

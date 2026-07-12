@@ -41,7 +41,9 @@ def _broad_exception_handlers(tree: ast.Module) -> list[tuple[str, int]]:
         def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
             caught = node.type
             if isinstance(caught, ast.Name) and caught.id == "Exception":
-                handlers.append((function_stack[-1] if function_stack else "", node.lineno))
+                handlers.append(
+                    (function_stack[-1] if function_stack else "", node.lineno)
+                )
             self.generic_visit(node)
 
     Visitor().visit(tree)
@@ -62,13 +64,21 @@ def test_remaining_broad_catches_are_documented_boundaries() -> None:
     job_handlers = _broad_exception_handlers(job_tree)
 
     assert _broad_exception_handlers(main_tree) == []
-    assert [handler[0] for handler in backend_handlers] == ["chat_explorer", "chat_explorer"]
+    assert [handler[0] for handler in backend_handlers] == [
+        "chat_explorer",
+        "chat_explorer",
+    ]
     assert [handler[0] for handler in job_handlers] == ["_run_job"]
 
 
 def test_services_do_not_add_undocumented_broad_exception_handlers() -> None:
     """Service modules should use specific exception categories by default."""
-    for source_path in (_CHAT_SERVICE, _FILE_SERVICE, _PIPELINE_SERVICE, _VISUALIZATION):
+    for source_path in (
+        _CHAT_SERVICE,
+        _FILE_SERVICE,
+        _PIPELINE_SERVICE,
+        _VISUALIZATION,
+    ):
         tree = ast.parse(source_path.read_text())
         assert _broad_exception_handlers(tree) == [], source_path
 

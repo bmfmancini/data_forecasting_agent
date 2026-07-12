@@ -121,8 +121,12 @@ def test_non_admin_user_job_limit_queues_additional_work(storage_dir: str) -> No
         application_username="forecast-user",
     )
 
-    assert job_service._claim_job(first_job_id) is not None  # pylint: disable=protected-access
-    assert job_service._claim_job(second_job_id) is None  # pylint: disable=protected-access
+    assert (
+        job_service._claim_job(first_job_id) is not None
+    )  # pylint: disable=protected-access
+    assert (
+        job_service._claim_job(second_job_id) is None
+    )  # pylint: disable=protected-access
     pending = job_service.get_job_status_only(second_job_id)
     assert pending is not None
     assert pending["status"] == "pending"
@@ -132,7 +136,11 @@ def test_clear_terminal_jobs_preserves_active_work(storage_dir: str) -> None:
     """Manual queue cleanup deletes terminal jobs without affecting pending work."""
     connection = get_connection()
     try:
-        for job_id, status in (("done-job", "done"), ("error-job", "error"), ("pending-job", "pending")):
+        for job_id, status in (
+            ("done-job", "done"),
+            ("error-job", "error"),
+            ("pending-job", "pending"),
+        ):
             connection.execute(
                 """
                 INSERT INTO forecast_jobs (job_id, file_id, date_col, value_col,

@@ -78,9 +78,7 @@ class MarkdownRenderer:
         lines.append("| Metric | Value | Status |")
         lines.append("|--------|-------|--------|")
         for item in report.dashboard.widgets:
-            lines.append(
-                f"| {item.icon} {item.title} | {item.value} | {item.status} |"
-            )
+            lines.append(f"| {item.icon} {item.title} | {item.value} | {item.status} |")
         lines.append("")
         return "\n".join(lines)
 
@@ -146,13 +144,17 @@ class MarkdownRenderer:
             lines.append(f"**Seasonal Pattern:** Every {h.seasonal_period} periods")
         else:
             lines.append("**Seasonal Pattern:** None detected")
-        lines.append(f"**Statistical Stability:** {'Stable' if h.is_stationary else 'Changing over time'}")
+        lines.append(
+            f"**Statistical Stability:** {'Stable' if h.is_stationary else 'Changing over time'}"
+        )
         if h.narrative:
             lines.append("")
             lines.append(h.narrative)
         lines.append("")
         lines.append("**Figure: Historical Data**")
-        lines.append("The historical time series showing the underlying trend and seasonal patterns.")
+        lines.append(
+            "The historical time series showing the underlying trend and seasonal patterns."
+        )
         lines.append("")
         lines.append("[VISUAL:HISTORICAL]")
         lines.append("")
@@ -165,7 +167,9 @@ class MarkdownRenderer:
         """Render forecast outlook with prediction intervals table."""
         m = report.forecast_outlook.metrics
         lines = ["## 5. Future Growth & Forecast Outlook", ""]
-        lines.append(f"**Forecast Horizon:** {m.horizon} periods ({m.first_date} → {m.last_date})")
+        lines.append(
+            f"**Forecast Horizon:** {m.horizon} periods ({m.first_date} → {m.last_date})"
+        )
         lines.append(f"**Projected Change:** {m.pct_change:+.1f}%")
         lines.append(f"**Start Value:** {m.first_value}")
         lines.append(f"**End Value:** {m.last_value}")
@@ -199,8 +203,12 @@ class MarkdownRenderer:
         if mc.narrative:
             lines.append(mc.narrative)
             lines.append("")
-        lines.append("| Model | RMSE | MAE | MAPE | WAPE | MASE | Selected | Rejected Reason |")
-        lines.append("|-------|------|-----|------|------|------|----------|-----------------|")
+        lines.append(
+            "| Model | RMSE | MAE | MAPE | WAPE | MASE | Selected | Rejected Reason |"
+        )
+        lines.append(
+            "|-------|------|-----|------|------|------|----------|-----------------|"
+        )
         for entry in mc.entries:
             selected = "✓" if entry.selected else ""
             rejected = _sanitize_cell(entry.rejected_reason or "")
@@ -231,9 +239,7 @@ class MarkdownRenderer:
         lines.append("|-----------|--------|--------|")
         for hi in report.health_indicators:
             detail = _sanitize_cell(hi.detail)
-            lines.append(
-                f"| {hi.indicator} | {hi.status} | {detail} |"
-            )
+            lines.append(f"| {hi.indicator} | {hi.status} | {detail} |")
         lines.append("")
         lines.append("**Contributing Factors:**")
         for factor in c.contributing_factors:
@@ -336,7 +342,9 @@ class MarkdownRenderer:
             return "\n".join(lines)
         for i, assumption in enumerate(report.assumptions, 1):
             lines.append(f"{i}. **{assumption.assumption}**")
-            lines.append(f"   *Consequence if false:* {assumption.consequence_if_false}")
+            lines.append(
+                f"   *Consequence if false:* {assumption.consequence_if_false}"
+            )
             lines.append("")
         return "\n".join(lines)
 

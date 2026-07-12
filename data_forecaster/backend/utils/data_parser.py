@@ -201,9 +201,7 @@ def _json_to_dataframe(data: Any) -> pd.DataFrame:
             return pd.DataFrame(data)
         # Single record: {"date": ..., "value": ...}
         return pd.DataFrame([data])
-    raise ValueError(
-        "JSON must be an array of objects or an object with array values."
-    )
+    raise ValueError("JSON must be an array of objects or an object with array values.")
 
 
 def _finalize_parse(

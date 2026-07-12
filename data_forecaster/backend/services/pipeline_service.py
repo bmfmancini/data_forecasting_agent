@@ -140,6 +140,7 @@ def run_pipeline(
     Returns:
         The complete :class:`AnalysisResponse`.
     """
+
     def _progress(pct: int, step: str) -> None:
         if progress_callback:
             progress_callback(pct, step)
@@ -619,9 +620,7 @@ def _render_report_outputs(executive_report: Any) -> tuple[str, str]:
             executive_report
         )
     except (AttributeError, KeyError, TypeError, ValueError) as exc:
-        logger.warning(
-            "Report rendering failed: %s — using empty render output.", exc
-        )
+        logger.warning("Report rendering failed: %s — using empty render output.", exc)
         return "", ""
 
 
@@ -655,9 +654,7 @@ def _build_visualizations(
         historical_png=_chart_to_png(chart_historical, "Historical"),
         stl_png=_chart_to_png(chart_stl, "STL"),
         forecast_png=_chart_to_png(chart_forecast, "Forecast"),
-        model_comparison_png=_chart_to_png(
-            chart_model_comparison, "Model comparison"
-        ),
+        model_comparison_png=_chart_to_png(chart_model_comparison, "Model comparison"),
     )
 
 
@@ -756,8 +753,8 @@ def _merge_token_usage(
     merged: dict[str, int | bool] = {}
     for key in ("input_tokens", "output_tokens", "total_tokens"):
         merged[key] = int(first.get(key, 0)) + int(second.get(key, 0))
-    merged["estimated"] = (
-        first.get("estimated", False) or second.get("estimated", False)
+    merged["estimated"] = first.get("estimated", False) or second.get(
+        "estimated", False
     )
     return merged
 

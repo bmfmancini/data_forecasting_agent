@@ -9,7 +9,9 @@ import pytest
 from forecasting import pmdarima_compat
 
 
-def test_pmdarima_patch_translates_removed_keyword(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_pmdarima_patch_translates_removed_keyword(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The compatibility patch maps pmdarima's old keyword before delegation."""
     calls: list[dict[str, object]] = []
 

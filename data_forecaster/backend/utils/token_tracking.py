@@ -80,10 +80,8 @@ def extract_token_usage(
             input_tokens = int(usage.get("input_tokens", 0) or 0)
             output_tokens = int(usage.get("output_tokens", 0) or 0)
             total_tokens = int(usage.get("total_tokens", 0) or 0)
-            input_tokens, output_tokens, total_tokens = (
-                _reconcile_partial_usage(
-                    input_tokens, output_tokens, total_tokens
-                )
+            input_tokens, output_tokens, total_tokens = _reconcile_partial_usage(
+                input_tokens, output_tokens, total_tokens
             )
             return {
                 "input_tokens": input_tokens,
@@ -104,11 +102,7 @@ def extract_token_usage(
         content = ""
 
     output_tokens = max(1, len(content) // _CHARS_PER_TOKEN) if content else 0
-    input_tokens = (
-        max(1, len(input_text) // _CHARS_PER_TOKEN)
-        if input_text
-        else 0
-    )
+    input_tokens = max(1, len(input_text) // _CHARS_PER_TOKEN) if input_text else 0
     total = input_tokens + output_tokens
     return {
         "input_tokens": input_tokens,
@@ -137,9 +131,7 @@ def estimate_input_text(
     """
     try:
         messages = prompt_template.format_messages(**inputs)
-        return "\n".join(
-            msg.content for msg in messages if hasattr(msg, "content")
-        )
+        return "\n".join(msg.content for msg in messages if hasattr(msg, "content"))
     except Exception as exc:
         logger.debug("estimate_input_text formatting failed: %s", exc)
         return ""

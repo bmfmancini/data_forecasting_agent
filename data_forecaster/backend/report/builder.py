@@ -94,43 +94,67 @@ class ExecutiveReportBuilder:
             "change_point_analysis" in statistical.recommended_remediation
         )
         confidence = self._compute_confidence(
-            forecast, statistical, validation, statistical_review,
+            forecast,
+            statistical,
+            validation,
+            statistical_review,
             has_structural_breaks,
         )
         data_quality = self._compute_data_quality(validation, statistical)
         health_indicators = self._compute_health_indicators(
-            statistical, validation, forecast, statistical_review, confidence,
-            data_quality, has_structural_breaks,
+            statistical,
+            validation,
+            forecast,
+            statistical_review,
+            confidence,
+            data_quality,
+            has_structural_breaks,
         )
         forecast_metrics = self._build_forecast_metrics(forecast)
-        model_comparison = self._build_model_comparison(
-            all_metrics, model_selection
-        )
+        model_comparison = self._build_model_comparison(all_metrics, model_selection)
         recommendations = self._build_recommendations(
-            statistical, forecast, statistical_review, confidence, data_quality,
+            statistical,
+            forecast,
+            statistical_review,
+            confidence,
+            data_quality,
             has_structural_breaks,
         )
         risks = self._build_risks(
-            statistical, forecast, statistical_review, data_quality,
+            statistical,
+            forecast,
+            statistical_review,
+            data_quality,
             has_structural_breaks,
         )
         assumptions = self._build_assumptions(statistical, validation)
-        explainability = self._build_explainability(
-            statistical, forecast, confidence
-        )
+        explainability = self._build_explainability(statistical, forecast, confidence)
         statistical_audit = self._build_statistical_audit(statistical_review)
         historical = self._build_historical_analysis(statistical)
         forecast_outlook = ForecastOutlook(metrics=forecast_metrics)
         dashboard = self._build_dashboard(
-            forecast, statistical, model_selection, confidence, data_quality,
-            statistical_review, has_structural_breaks,
+            forecast,
+            statistical,
+            model_selection,
+            confidence,
+            data_quality,
+            statistical_review,
+            has_structural_breaks,
         )
         executive_summary = self._build_executive_summary(
-            forecast, statistical, confidence, data_quality,
-            statistical_review, has_structural_breaks,
+            forecast,
+            statistical,
+            confidence,
+            data_quality,
+            statistical_review,
+            has_structural_breaks,
         )
         metadata = self._build_metadata(
-            validation, forecast, model_selection, all_metrics, data_quality,
+            validation,
+            forecast,
+            model_selection,
+            all_metrics,
+            data_quality,
         )
         appendix = self._build_appendix(forecast, all_metrics)
 
@@ -202,9 +226,7 @@ class ExecutiveReportBuilder:
 
         if statistical.outlier_ratio > 0.05:
             score -= CONFIDENCE_DEDUCTIONS["outlier_ratio_high"]
-            factors.append(
-                f"Outlier ratio {statistical.outlier_ratio:.1%} exceeds 5%"
-            )
+            factors.append(f"Outlier ratio {statistical.outlier_ratio:.1%} exceeds 5%")
 
         if validation.missing_values > 0 or validation.missing_timestamps > 0:
             score -= CONFIDENCE_DEDUCTIONS["missing_data"]
@@ -231,9 +253,7 @@ class ExecutiveReportBuilder:
 
         top_factors = factors[:2]
         explanation = (
-            f"Confidence is {label.lower()} based on: "
-            + "; ".join(top_factors)
-            + "."
+            f"Confidence is {label.lower()} based on: " + "; ".join(top_factors) + "."
         )
 
         return ConfidenceAssessment(
@@ -338,7 +358,9 @@ class ExecutiveReportBuilder:
         # Trend Stability
         if statistical.has_trend and not statistical.is_stationary_adf:
             trend_status = HEALTH_STATUS["trend_stability"]["changing"]
-            trend_detail = "A statistically significant trend is changing the baseline over time."
+            trend_detail = (
+                "A statistically significant trend is changing the baseline over time."
+            )
         else:
             trend_status = HEALTH_STATUS["trend_stability"]["stable"]
             trend_detail = "The underlying trend is stable across the observed period."
@@ -347,7 +369,9 @@ class ExecutiveReportBuilder:
         sp = statistical.seasonal_period
         if sp and sp > 1:
             seasonality_status = HEALTH_STATUS["seasonality"]["strong"]
-            seasonality_detail = f"A recurring seasonal pattern repeats every {sp} periods."
+            seasonality_detail = (
+                f"A recurring seasonal pattern repeats every {sp} periods."
+            )
         else:
             seasonality_status = HEALTH_STATUS["seasonality"]["none"]
             seasonality_detail = "No strong seasonal pattern was detected."
@@ -431,9 +455,7 @@ class ExecutiveReportBuilder:
         first_val = forecast.forecast[0] if forecast.forecast else 0.0
         last_val = forecast.forecast[-1] if forecast.forecast else 0.0
         pct_change = (
-            ((last_val - first_val) / abs(first_val)) * 100
-            if first_val != 0
-            else 0.0
+            ((last_val - first_val) / abs(first_val)) * 100 if first_val != 0 else 0.0
         )
         return first_val, last_val, pct_change
 
@@ -450,20 +472,14 @@ class ExecutiveReportBuilder:
             :class:`ForecastMetrics` with per-period prediction intervals.
         """
         first_val, last_val, pct_change = self._forecast_pct_change(forecast)
-        first_date = (
-            forecast.forecast_dates[0] if forecast.forecast_dates else "N/A"
-        )
-        last_date = (
-            forecast.forecast_dates[-1] if forecast.forecast_dates else "N/A"
-        )
+        first_date = forecast.forecast_dates[0] if forecast.forecast_dates else "N/A"
+        last_date = forecast.forecast_dates[-1] if forecast.forecast_dates else "N/A"
 
         intervals: list[PredictionInterval] = []
         for i, date in enumerate(forecast.forecast_dates):
             lower = forecast.lower_ci[i] if i < len(forecast.lower_ci) else 0.0
             upper = forecast.upper_ci[i] if i < len(forecast.upper_ci) else 0.0
-            point = (
-                forecast.forecast[i] if i < len(forecast.forecast) else 0.0
-            )
+            point = forecast.forecast[i] if i < len(forecast.forecast) else 0.0
             intervals.append(
                 PredictionInterval(
                     date=date,
@@ -527,7 +543,9 @@ class ExecutiveReportBuilder:
                     rmse=round(metrics.get("RMSE", 0.0), 4),
                     mae=round(metrics.get("MAE", 0.0), 4),
                     mape=round(metrics.get("MAPE", 0.0), 2),
-                    wape=round(metrics.get("WAPE", 0.0) * 100, 2), # Convert to percentage
+                    wape=round(
+                        metrics.get("WAPE", 0.0) * 100, 2
+                    ),  # Convert to percentage
                     mase=round(metrics.get("MASE", 0.0), 4),
                     selected=(name == selected),
                     rejected_reason=(
@@ -934,9 +952,7 @@ class ExecutiveReportBuilder:
                 f"predictably."
             )
         else:
-            seasonal_note = (
-                "No significant seasonality is assumed for this projection."
-            )
+            seasonal_note = "No significant seasonality is assumed for this projection."
         assumptions.append(
             Assumption(
                 assumption=f"Seasonal stability: {seasonal_note}",
@@ -1027,14 +1043,10 @@ class ExecutiveReportBuilder:
         strongest = list(review.endorsements)
         concerns = self._review_concerns(review)
         follow_up = [
-            f.get("recommendation", "")
-            for f in review.flags
-            if f.get("recommendation")
+            f.get("recommendation", "") for f in review.flags if f.get("recommendation")
         ]
         if not follow_up:
-            follow_up = [
-                "Validate the forecast against next period's actuals."
-            ]
+            follow_up = ["Validate the forecast against next period's actuals."]
 
         return StatisticalAudit(
             verdict=review.verdict,
@@ -1144,9 +1156,7 @@ class ExecutiveReportBuilder:
             direction = FORECAST_DIRECTIONS["downward"]
         else:
             direction = FORECAST_DIRECTIONS["flat"]
-        is_stationary = (
-            statistical.is_stationary_adf and statistical.is_stationary_kpss
-        )
+        is_stationary = statistical.is_stationary_adf and statistical.is_stationary_kpss
         return HistoricalAnalysis(
             trend_direction=direction,
             trend_slope=statistical.trend_slope,

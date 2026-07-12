@@ -21,9 +21,7 @@ from fpdf import FPDF
 
 logger = logging.getLogger(__name__)
 
-_VISUAL_TAG_LINE_RE: re.Pattern[str] = re.compile(
-    r"^\s*\[VISUAL:([A-Z_]+)\]\s*$"
-)
+_VISUAL_TAG_LINE_RE: re.Pattern[str] = re.compile(r"^\s*\[VISUAL:([A-Z_]+)\]\s*$")
 
 # Maps visual tags to base64 PNG fields in the analysis result.
 _CHART_PNG_FIELD_BY_TAG: dict[str, str] = {
@@ -113,7 +111,9 @@ def _embed_image(pdf: FPDF, png_bytes: bytes, max_width: float) -> None:
             try:
                 os.unlink(tmp_path)
             except OSError as exc:
-                logger.warning("Failed to clean up temp image file %s: %s", tmp_path, exc)
+                logger.warning(
+                    "Failed to clean up temp image file %s: %s", tmp_path, exc
+                )
 
 
 def _process_line(
@@ -130,6 +130,7 @@ def _process_line(
         result:         Analysis result dict for chart data.
         max_img_width:  Max image width in mm.
     """
+
     def _cell(height: int, text: str) -> None:
         pdf.set_x(pdf.l_margin)
         pdf.multi_cell(0, height, text)
@@ -211,7 +212,10 @@ def report_to_pdf(
 
     for raw_line in report_md.splitlines():
         _process_line(
-            pdf, raw_line.rstrip(), result, max_img_width,
+            pdf,
+            raw_line.rstrip(),
+            result,
+            max_img_width,
         )
 
     return bytes(pdf.output())

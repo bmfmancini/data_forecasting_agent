@@ -23,12 +23,10 @@ def _report_db(path: Path) -> sqlite3.Connection:
     connection.row_factory = sqlite3.Row
     connection.executescript(schema.read_text(encoding="utf-8"))
     connection.execute("INSERT INTO roles (id, name) VALUES (1, 'admin')")
-    connection.execute(
-        """
+    connection.execute("""
         INSERT INTO users (id, username, password_hash, role_id)
         VALUES (1, 'alice', 'hash', 1)
-        """
-    )
+        """)
     connection.execute(
         "INSERT INTO app_config (key, value) VALUES ('max_reports_per_user', '10')"
     )

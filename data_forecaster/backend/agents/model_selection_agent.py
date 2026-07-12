@@ -250,7 +250,8 @@ def _heuristic_preference(stat_result: StatisticalResult) -> list[str]:
 
 
 def _heuristic_rejection_reason(
-    stat_result: StatisticalResult, model: str,
+    stat_result: StatisticalResult,
+    model: str,
 ) -> str:
     """Return the heuristic rejection reason for a non-preferred model.
 
@@ -313,9 +314,7 @@ def _adjust_excluded_fallback(
     """
     if not exclude_model or fallback_model != exclude_model:
         return fallback_model
-    preference = [
-        m for m in _heuristic_preference(stat_result) if m != exclude_model
-    ]
+    preference = [m for m in _heuristic_preference(stat_result) if m != exclude_model]
     if preference:
         adjusted = preference[0]
         logger.info(
@@ -596,9 +595,7 @@ def _business_selection_reasons(
         if model == selected_model:
             reasons[model] = None
             continue
-        metric_reason = _metric_rejection_reason(
-            model, selected_model, all_metrics
-        )
+        metric_reason = _metric_rejection_reason(model, selected_model, all_metrics)
         fit_reason = _statistical_fit_reason(stat_result, model, selected=False)
         reasons[model] = (
             f"{metric_reason} {fit_reason}" if metric_reason else fit_reason
@@ -633,7 +630,10 @@ def _format_metrics_text(
         lines.append(
             f"- {name}: RMSE={rmse:.4f}, MAE={mae:.4f}, MAPE={mape:.2f}%, WAPE={wape:.2f}%, MASE={mase:.4f}"
         )
-    return "\n".join(lines) + "\n(WAPE is a robust alternative to MAPE; MASE < 1 is better than a naive forecast)"
+    return (
+        "\n".join(lines)
+        + "\n(WAPE is a robust alternative to MAPE; MASE < 1 is better than a naive forecast)"
+    )
 
 
 def _select_best_metric_model(
@@ -653,13 +653,14 @@ def _select_best_metric_model(
     Returns:
         The name of the best model, or ``None`` if no metrics are available.
     """
-    candidates = {
-        k: v for k, v in all_metrics.items() if k != exclude_model
-    }
+    candidates = {k: v for k, v in all_metrics.items() if k != exclude_model}
     if not candidates:
         return None
+
     # Select by MASE (primary), then WAPE, RMSE, MAE, then MAPE as tie-breakers
-    def _metric_key(item: tuple[str, dict[str, float]]) -> tuple[float, float, float, float, float]:
+    def _metric_key(
+        item: tuple[str, dict[str, float]],
+    ) -> tuple[float, float, float, float, float]:
         m = item[1]
         return (
             m.get("MASE", float("inf")),
@@ -668,6 +669,7 @@ def _select_best_metric_model(
             m.get("MAE", float("inf")),
             m.get("MAPE", float("inf")),
         )
+
     return min(candidates.items(), key=_metric_key)[0]
 
 
@@ -748,7 +750,9 @@ def _invoke_llm(
         )
         return str(response.content), token_usage
     except Exception as exc:  # pylint: disable=broad-except
-        logger.warning("Model selection agent LLM call failed: %s — using heuristic.", exc)
+        logger.warning(
+            "Model selection agent LLM call failed: %s — using heuristic.", exc
+        )
         return None
 
 
@@ -812,9 +816,7 @@ def run_model_selection_agent(
                 + metrics_text
                 + f"\n\n[Statistical Review Feedback]: {review_feedback or 'N/A'}"
             )
-            reasons = _business_selection_reasons(
-                best_model, stat_result, all_metrics
-            )
+            reasons = _business_selection_reasons(best_model, stat_result, all_metrics)
             return ModelSelectionResult(
                 selected_model=best_model,
                 explanation=explanation,
@@ -840,9 +842,7 @@ def run_model_selection_agent(
     llm_result = _invoke_llm(suitability_input)
 
     if llm_result is None:
-        return _build_heuristic_result(
-            fallback_model, fallback_reasoning, stat_result
-        )
+        return _build_heuristic_result(fallback_model, fallback_reasoning, stat_result)
 
     output, token_usage = llm_result
     selected_model = _parse_selected_model(output, fallback_model)

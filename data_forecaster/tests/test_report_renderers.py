@@ -16,7 +16,6 @@ from schemas import (
     ValidationResult,
 )
 
-
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
 
@@ -99,17 +98,13 @@ def sample_report() -> "object":
 class TestMarkdownRenderer:
     """Tests for the MarkdownRenderer."""
 
-    def test_render_produces_non_empty_string(
-        self, sample_report: "object"
-    ) -> None:
+    def test_render_produces_non_empty_string(self, sample_report: "object") -> None:
         renderer = MarkdownRenderer()
         md = renderer.render(sample_report)
         assert isinstance(md, str)
         assert len(md) > 0
 
-    def test_all_twelve_sections_present(
-        self, sample_report: "object"
-    ) -> None:
+    def test_all_twelve_sections_present(self, sample_report: "object") -> None:
         renderer = MarkdownRenderer()
         md = renderer.render(sample_report)
         for i in range(1, 13):
@@ -120,9 +115,7 @@ class TestMarkdownRenderer:
         md = renderer.render(sample_report)
         assert "## Appendix" in md
 
-    def test_prediction_intervals_table_present(
-        self, sample_report: "object"
-    ) -> None:
+    def test_prediction_intervals_table_present(self, sample_report: "object") -> None:
         renderer = MarkdownRenderer()
         md = renderer.render(sample_report)
         assert "Prediction Intervals" in md
@@ -145,9 +138,7 @@ class TestMarkdownRenderer:
         assert "Forecast Direction" in md
         assert "Expected Growth" in md
 
-    def test_confidence_score_in_output(
-        self, sample_report: "object"
-    ) -> None:
+    def test_confidence_score_in_output(self, sample_report: "object") -> None:
         renderer = MarkdownRenderer()
         md = renderer.render(sample_report)
         assert "Confidence Score:" in md
@@ -160,9 +151,7 @@ class TestMarkdownRenderer:
         assert "Data Quality" in md
         assert "Trend Stability" in md
 
-    def test_recommendations_with_evidence(
-        self, sample_report: "object"
-    ) -> None:
+    def test_recommendations_with_evidence(self, sample_report: "object") -> None:
         renderer = MarkdownRenderer()
         md = renderer.render(sample_report)
         assert "## 11. Executive Recommendations" in md
@@ -186,9 +175,9 @@ class TestMarkdownRenderer:
             r"\$\s?\d[\d,]*\.?\d*\s*(?:million|billion|trillion)",
             re.IGNORECASE,
         )
-        assert not financial_pattern.search(md), (
-            "Rendered markdown contains fabricated financial figures."
-        )
+        assert not financial_pattern.search(
+            md
+        ), "Rendered markdown contains fabricated financial figures."
 
 
 # ── HTML Renderer Tests ──────────────────────────────────────────────────────
@@ -197,9 +186,7 @@ class TestMarkdownRenderer:
 class TestHTMLRenderer:
     """Tests for the HTMLRenderer."""
 
-    def test_render_produces_html_string(
-        self, sample_report: "object"
-    ) -> None:
+    def test_render_produces_html_string(self, sample_report: "object") -> None:
         renderer = HTMLRenderer()
         html = renderer.render(sample_report)
         assert isinstance(html, str)
@@ -224,17 +211,13 @@ class TestHTMLRenderer:
         assert "<table" in html
         assert "Data Quality" in html
 
-    def test_prediction_intervals_table(
-        self, sample_report: "object"
-    ) -> None:
+    def test_prediction_intervals_table(self, sample_report: "object") -> None:
         renderer = HTMLRenderer()
         html = renderer.render(sample_report)
         assert "Prediction Intervals" in html
         assert "Lower Bound" in html
 
-    def test_recommendations_with_evidence(
-        self, sample_report: "object"
-    ) -> None:
+    def test_recommendations_with_evidence(self, sample_report: "object") -> None:
         renderer = HTMLRenderer()
         html = renderer.render(sample_report)
         assert "Executive Recommendations" in html

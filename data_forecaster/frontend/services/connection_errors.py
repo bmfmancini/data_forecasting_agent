@@ -24,6 +24,7 @@ def sanitize_connection_error(error_message: str) -> str:
         A generic, user-actionable message that does not include credentials,
         tokens, stack traces, or internal request details.
     """
+
     def _redact_header(match: re.Match[str]) -> str:
         if match.group(1):
             return f"{match.group(1)}{match.group(2)}[redacted]"

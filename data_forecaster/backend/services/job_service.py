@@ -30,14 +30,12 @@ def init_job_queue() -> None:
     JOB_QUEUE = asyncio.Queue()
     connection = get_connection()
     try:
-        connection.execute(
-            """
+        connection.execute("""
             UPDATE forecast_jobs
             SET status = 'error', error = 'Backend restarted during processing.',
                 step = 'Interrupted by backend restart.', completed_at = datetime('now')
             WHERE status = 'running'
-            """
-        )
+            """)
         pending_rows = connection.execute(
             "SELECT job_id, file_id FROM forecast_jobs WHERE status = 'pending' "
             "ORDER BY queued_at, rowid"
@@ -63,17 +61,19 @@ def get_job_settings() -> dict[str, Any]:
     """Return the current persistent job scheduler settings."""
     connection = get_connection()
     try:
-        row = connection.execute(
-            """
+        row = connection.execute("""
             SELECT max_running_jobs_per_user, retention_days, cleanup_enabled
             FROM forecast_job_settings WHERE singleton = 1
-            """
-        ).fetchone()
-        return dict(row) if row else {
-            "max_running_jobs_per_user": 1,
-            "retention_days": 30,
-            "cleanup_enabled": 1,
-        }
+            """).fetchone()
+        return (
+            dict(row)
+            if row
+            else {
+                "max_running_jobs_per_user": 1,
+                "retention_days": 30,
+                "cleanup_enabled": 1,
+            }
+        )
     finally:
         connection.close()
 
@@ -210,11 +210,18 @@ def _insert_job(
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
             """,
             (
-                job_id, owner_id, application_user_id, application_username,
-                int(application_user_is_admin), request_data["file_id"],
-                request_data["date_col"], request_data["value_col"],
-                request_data["forecast_horizon"], request_data["forced_model"],
-                request_data["user_prompt"], json.dumps(request_data["preflight_options"]),
+                job_id,
+                owner_id,
+                application_user_id,
+                application_username,
+                int(application_user_is_admin),
+                request_data["file_id"],
+                request_data["date_col"],
+                request_data["value_col"],
+                request_data["forecast_horizon"],
+                request_data["forced_model"],
+                request_data["user_prompt"],
+                json.dumps(request_data["preflight_options"]),
                 "Queued — waiting for an available slot…",
             ),
         )
@@ -283,12 +290,18 @@ def _job_record(job_id: str) -> dict[str, Any] | None:
         connection.close()
 
 
-def get_job(job_id: str, requester: dict[str, Any] | None = None) -> dict[str, Any] | None:
+def get_job(
+    job_id: str, requester: dict[str, Any] | None = None
+) -> dict[str, Any] | None:
     """Return a job's current state when the requester owns it or is an admin."""
     record = _job_record(job_id)
     if record is None:
         return None
-    if requester and not requester.get("is_admin") and record["backend_owner_id"] != requester.get("id"):
+    if (
+        requester
+        and not requester.get("is_admin")
+        and record["backend_owner_id"] != requester.get("id")
+    ):
         return None
     cached = _job_store.get(job_id, {})
     return {**record, "result": cached.get("result")}
@@ -378,10 +391,14 @@ async def _run_job(job_id: str, job: dict[str, Any]) -> None:
 
     def run_pipeline_sync() -> AnalysisResponse:
         return _run_pipeline(
-            df=stored["df"], file_id=str(job["file_id"]),
-            date_col=str(job["date_col"]), value_col=str(job["value_col"]),
-            freq=stored["freq"], forecast_horizon=int(job["forecast_horizon"]),
-            forced_model=job["forced_model"], user_prompt=job["user_prompt"],
+            df=stored["df"],
+            file_id=str(job["file_id"]),
+            date_col=str(job["date_col"]),
+            value_col=str(job["value_col"]),
+            freq=stored["freq"],
+            forecast_horizon=int(job["forecast_horizon"]),
+            forced_model=job["forced_model"],
+            user_prompt=job["user_prompt"],
             preflight_options=json.loads(str(job["preflight_options"])),
             chroma_persist_dir=settings.CHROMA_PERSIST_DIR,
             progress_callback=lambda pct, step: _update_job_progress(job_id, pct, step),
@@ -394,8 +411,11 @@ async def _run_job(job_id: str, job: dict[str, Any]) -> None:
             _job_store.setdefault(job_id, {})["result"] = result.model_dump()
         try:
             await asyncio.to_thread(
-                index_analysis_results, str(job["file_id"]), job["backend_owner_id"],
-                result, settings.CHROMA_PERSIST_DIR,
+                index_analysis_results,
+                str(job["file_id"]),
+                job["backend_owner_id"],
+                result,
+                settings.CHROMA_PERSIST_DIR,
             )
         except (RuntimeError, TypeError, ValueError, OSError):
             logger.exception("Analysis result indexing failed for job_id=%s", job_id)
@@ -431,7 +451,9 @@ def _run_pipeline(**kwargs: Any) -> AnalysisResponse:
 
 
 def index_analysis_results(
-    file_id: str, owner_id: int | None, analysis_result: AnalysisResponse,
+    file_id: str,
+    owner_id: int | None,
+    analysis_result: AnalysisResponse,
     chroma_persist_dir: str,
 ) -> None:
     """Index completed analysis results without making indexing job-critical."""
@@ -446,5 +468,11 @@ def index_analysis_results(
     if hasattr(rag_kb, "add_texts"):
         rag_kb.add_texts(
             texts=[summary],
-            metadatas=[{"file_id": file_id, "owner_id": str(owner_id or ""), "type": "analysis_result"}],
+            metadatas=[
+                {
+                    "file_id": file_id,
+                    "owner_id": str(owner_id or ""),
+                    "type": "analysis_result",
+                }
+            ],
         )

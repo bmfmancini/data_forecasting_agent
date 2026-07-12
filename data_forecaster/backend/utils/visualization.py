@@ -156,7 +156,13 @@ def plot_forecast(series: pd.Series, forecast_result: ForecastResult) -> dict[st
         xaxis_title="Date",
         yaxis_title="Value",
         template="plotly_white",
-        legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "right", "x": 1},
+        legend={
+            "orientation": "h",
+            "yanchor": "bottom",
+            "y": 1.02,
+            "xanchor": "right",
+            "x": 1,
+        },
     )
     return _fig_to_dict(fig)
 
@@ -181,7 +187,13 @@ def plot_model_comparison(all_metrics: dict[str, dict[str, float]]) -> dict[str,
         yaxis_title="Error",
         barmode="group",
         template="plotly_white",
-        legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "right", "x": 1},
+        legend={
+            "orientation": "h",
+            "yanchor": "bottom",
+            "y": 1.02,
+            "xanchor": "right",
+            "x": 1,
+        },
     )
     return _fig_to_dict(fig)
 
@@ -252,11 +264,7 @@ def chart_dict_to_png_b64(chart_dict: dict[str, Any]) -> str:
     traces = chart_dict.get("data", [])
     layout = chart_dict.get("layout", {})
     title_obj = layout.get("title", "")
-    title = (
-        title_obj.get("text", "")
-        if isinstance(title_obj, dict)
-        else str(title_obj)
-    )
+    title = title_obj.get("text", "") if isinstance(title_obj, dict) else str(title_obj)
     x_title = layout.get("xaxis", {}).get("title", {}).get("text", "")
     y_title = layout.get("yaxis", {}).get("title", {}).get("text", "")
 
@@ -300,23 +308,27 @@ def _render_trace(ax: Any, trace: dict[str, Any]) -> None:
         xs = trace.get("x", [])
         half = len(ys) // 2
         ax.fill_between(
-            xs[:half], ys[:half], ys[half:][::-1],
-            alpha=0.15, color="red", label=name,
+            xs[:half],
+            ys[:half],
+            ys[half:][::-1],
+            alpha=0.15,
+            color="red",
+            label=name,
         )
     else:
         style = trace.get("line", {})
-        color = (
-            style.get("color", "#2563EB")
-            if isinstance(style, dict)
-            else "#2563EB"
-        )
+        color = style.get("color", "#2563EB") if isinstance(style, dict) else "#2563EB"
         dash = style.get("dash", "") if isinstance(style, dict) else ""
         linestyle = "--" if dash == "dash" else "-"
         xs = trace.get("x", [])
         x_vals = [str(x) for x in xs] if xs else range(len(ys))
         ax.plot(
-            x_vals, ys, label=name, color=color,
-            linestyle=linestyle, linewidth=2,
+            x_vals,
+            ys,
+            label=name,
+            color=color,
+            linestyle=linestyle,
+            linewidth=2,
         )
 
 

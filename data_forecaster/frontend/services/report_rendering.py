@@ -31,9 +31,7 @@ def render_analysis_report(
     report_md: str = result.get("report", "Report not available.")
     web_report_md = _remove_web_dashboard_section(report_md)
     base_name = (
-        source_filename.rsplit(".", 1)[0]
-        if "." in source_filename
-        else source_filename
+        source_filename.rsplit(".", 1)[0] if "." in source_filename else source_filename
     )
     pdf_filename = f"forecast_report_{base_name or 'data'}.pdf"
     return render_template(

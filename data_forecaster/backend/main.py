@@ -193,8 +193,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     _configure_startup_auth()
     init_job_queue()
     worker_tasks = [
-        asyncio.create_task(job_worker())
-        for _ in range(settings.MAX_CONCURRENT_JOBS)
+        asyncio.create_task(job_worker()) for _ in range(settings.MAX_CONCURRENT_JOBS)
     ]
     cleanup_task = asyncio.create_task(_cleanup_job_history())
     yield

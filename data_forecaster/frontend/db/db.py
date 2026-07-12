@@ -107,7 +107,9 @@ def init_db() -> None:
 
     user_columns = {row["name"] for row in db.execute("PRAGMA table_info(users)")}
     if "session_version" not in user_columns:
-        db.execute("ALTER TABLE users ADD COLUMN session_version INTEGER NOT NULL DEFAULT 0")
+        db.execute(
+            "ALTER TABLE users ADD COLUMN session_version INTEGER NOT NULL DEFAULT 0"
+        )
 
     db.execute("INSERT OR IGNORE INTO roles (id, name) VALUES (1, 'admin')")
     db.execute("INSERT OR IGNORE INTO roles (id, name) VALUES (2, 'user')")
@@ -126,13 +128,11 @@ def init_db() -> None:
             ("admin", admin_hash),
         )
 
-    db.execute(
-        """
+    db.execute("""
         INSERT INTO api_credentials (label, base_url, timeout, verify_ssl)
         VALUES ('default', '', 30, 0)
         ON CONFLICT(label) DO NOTHING
-        """
-    )
+        """)
 
     db.execute("""
         INSERT OR IGNORE INTO app_config (key, value)

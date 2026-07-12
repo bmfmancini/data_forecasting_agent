@@ -7,7 +7,6 @@ from collections.abc import Callable
 import numpy as np
 import pandas as pd
 
-
 ForecastFunction = Callable[[pd.Series, int], pd.Series]
 
 

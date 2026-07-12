@@ -141,9 +141,7 @@ def generate_narratives(
             extra,
         )
 
-    logger.info(
-        "Narrative generation complete. Tokens: %s", total_usage
-    )
+    logger.info("Narrative generation complete. Tokens: %s", total_usage)
     return report, total_usage
 
 
@@ -170,9 +168,7 @@ def _generate_section(
     Returns:
         Narrative text string.
     """
-    section_json = json.dumps(
-        section.model_dump(), default=str, indent=2
-    )
+    section_json = json.dumps(section.model_dump(), default=str, indent=2)
     if extra_instructions:
         section_json += extra_instructions
 
@@ -226,8 +222,7 @@ def _fallback_forecast_outlook(data: dict[str, Any]) -> str:
             f"prediction range should be used for planning."
         )
     return (
-        f"The forecast projects {pct_change:+.1f}% change "
-        f"over {horizon} periods."
+        f"The forecast projects {pct_change:+.1f}% change " f"over {horizon} periods."
     )
 
 
@@ -255,8 +250,7 @@ def _fallback_narrative(section: Any, section_name: str) -> str:
         )
     if section_name == "data_quality":
         return (
-            f"Data quality is rated {data['rating']}. "
-            f"{data['rating_explanation']}"
+            f"Data quality is rated {data['rating']}. " f"{data['rating_explanation']}"
         )
     if section_name == "historical_analysis":
         return (
@@ -289,9 +283,7 @@ def _fallback_narrative(section: Any, section_name: str) -> str:
             )
         )
     if section_name == "explainability":
-        findings = "; ".join(
-            item["finding"] for item in data.get("findings", [])
-        )
+        findings = "; ".join(item["finding"] for item in data.get("findings", []))
         return (
             f"The forecast is based on the following findings: {findings}. "
             "These patterns were detected in the historical data and "
