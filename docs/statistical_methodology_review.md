@@ -331,15 +331,15 @@ def fit_arima(series: pd.Series, forecast_horizon: int) -> dict:
     series = series.dropna().astype(float)
     split = max(int(len(series) * 0.8), len(series) - forecast_horizon)
     train, test = series[:split], series[split:]
-    
+
     model = auto_arima(train, stepwise=True, suppress_warnings=True)
     forecast = model.predict(n_periods=forecast_horizon)
-    
+
     # Calculate metrics
     rmse = np.sqrt(mean_squared_error(test, forecast[:len(test)]))
     mae = mean_absolute_error(test, forecast[:len(test)])
     mape = mean_absolute_percentage_error(test, forecast[:len(test)])
-    
+
     return {
         "forecast": forecast,
         "lower_ci": forecast - 1.96 * rmse,
@@ -358,18 +358,18 @@ def fit_holt_winters(series: pd.Series, forecast_horizon: int) -> dict:
     series = series.dropna().astype(float)
     split = max(int(len(series) * 0.8), len(series) - forecast_horizon)
     train, test = series[:split], series[split:]
-    
+
     model = ExponentialSmoothing(
         train,
         trend="add",
         seasonal="add",
         seasonal_periods=_infer_seasonal_period(series),
     ).fit()
-    
+
     forecast = model.forecast(forecast_horizon)
     residuals = test - model.fittedvalues
     rmse = np.sqrt(mean_squared_error(test, model.fittedvalues))
-    
+
     return {
         "forecast": forecast,
         "lower_ci": forecast - 1.96 * rmse,
