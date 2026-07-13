@@ -194,7 +194,7 @@ def missing_timestamps_series(n: int = 36, missing_count: int = 5) -> pd.Series:
     Returns:
         A series with an irregular index (some periods missing).
     """
-    full = pd.Series(np.arange(n, dtype=float), index=_index(n), name="missing_ts")
+    full = pd.Series(np.arange(n, dtype=float), index=_index(n), name="missing_timestamps")
     rng = np.random.default_rng(_FIXTURE_SEED)
     drop_idx = rng.choice(n, size=missing_count, replace=False)
     return full.drop(full.index[drop_idx])
@@ -213,7 +213,7 @@ def duplicate_timestamps_series(n: int = 30) -> pd.Series:
     # Duplicate the last 3 timestamps
     dup_idx = idx.append(idx[-3:])
     values = np.arange(len(dup_idx), dtype=float)
-    return pd.Series(values, index=dup_idx, name="duplicate_ts")
+    return pd.Series(values, index=dup_idx, name="duplicate_timestamps")
 
 
 def short_seasonal_series(period: int = 12) -> pd.Series:

@@ -147,7 +147,7 @@ def fit_arima(series: pd.Series, forecast_horizon: int) -> ForecastAdapterResult
         fitted_configuration={
             "model": "ARIMA",
             "order": list(full_model.order),
-            "trend": getattr(full_model.model, "trend", None),
+            "trend": "c" if with_intercept else "n",
             "with_intercept": with_intercept,
             "refit_order": list(order),
         },

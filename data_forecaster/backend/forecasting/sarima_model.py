@@ -158,7 +158,7 @@ def fit_sarima(
             "model": "SARIMA",
             "order": list(full_model.order),
             "seasonal_order": list(full_model.seasonal_order),
-            "trend": getattr(full_model.model, "trend", None),
+            "trend": "c" if with_intercept else "n",
             "with_intercept": with_intercept,
             "seasonal_period": seasonal_period,
             "used_seasonal": use_seasonal,
