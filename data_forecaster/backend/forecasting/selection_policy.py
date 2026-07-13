@@ -40,7 +40,7 @@ _METRIC_PRIORITY = ("mase", "wape", "rmse", "mae", "mape")
 _SIMPLICITY_ORDER = ("EWMA", "Holt-Winters", "ARIMA", "SARIMA")
 
 # Baseline model names that are retained when no complex model adds value.
-_BASELINE_MODELS = ("Naive", "Seasonal Naive", "Mean Forecast", "Drift")
+_BASELINE_MODELS = ("Constant", "Naive", "Seasonal Naive", "Mean Forecast", "Drift")
 
 # Threshold for "negligibly different" RMSE (relative).
 _NEGLIGIBLE_RMSE_RATIO = 1.05

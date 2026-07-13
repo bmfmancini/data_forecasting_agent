@@ -26,7 +26,9 @@ from utils.token_tracking import estimate_input_text, extract_token_usage
 logger = get_logger(__name__)
 
 
-def _status_maps(*evidence: tuple[str, object]) -> tuple[dict[str, str], dict[str, list[str]]]:
+def _status_maps(
+    *evidence: tuple[str, object]
+) -> tuple[dict[str, str], dict[str, list[str]]]:
     """Return serializable diagnostic statuses and warnings."""
     statuses: dict[str, str] = {}
     warnings: dict[str, list[str]] = {}
@@ -139,9 +141,7 @@ def run_statistical_agent(
 
     # LLM prose cannot request transformations. Structured change-point
     # evidence may request a follow-up analysis but never mutates observations.
-    remediation = (
-        ["change_point_analysis"] if change_points.n_change_points > 0 else []
-    )
+    remediation = ["change_point_analysis"] if change_points.n_change_points > 0 else []
     adf_p = stationarity.adf_p_value
     kpss_p = stationarity.kpss_p_value
     return StatisticalResult(

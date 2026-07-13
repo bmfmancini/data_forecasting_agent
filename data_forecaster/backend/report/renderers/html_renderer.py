@@ -172,14 +172,31 @@ class HTMLRenderer:
         f = report.forecast_outlook
         m = f.metrics
         narrative = f"<p>{escape(f.narrative)}</p>" if f.narrative else ""
+        final_rmse = f.metrics.final_test_metrics.get("rmse")
+        final_mae = f.metrics.final_test_metrics.get("mae")
+        provenance = (
+            "<p class='small text-muted'>Model selection used rolling-origin "
+            "metrics. Untouched final-test metrics were not used for ranking: "
+            f"RMSE {format_metric(final_rmse)}, MAE {format_metric(final_mae)}.</p>"
+        )
+        peak_context = ""
+        if m.peak_value is not None:
+            peak_date = f" on {escape(m.peak_date)}" if m.peak_date else ""
+            peak_context = (
+                f"<p><strong>Seasonal Peak:</strong> {m.peak_value}{peak_date} "
+                f"({format_metric(m.peak_change_pct, '+.1f')}% versus the first "
+                "forecast period).</p>"
+            )
         return (
             '<section class="report-forecast-outlook mb-3">'
             "<h5>Future Growth & Forecast Outlook</h5>"
-            f"<p><strong>Projected Change:</strong> {m.pct_change:+.1f}% over {m.horizon} periods.</p>"
-            f"{narrative}"
+            f"<p><strong>Endpoint Change:</strong> {m.pct_change:+.1f}% "
+            f"({escape(m.endpoint_direction)}) over {m.horizon} periods.</p>"
+            f"<p><strong>Forecast Pattern:</strong> {escape(m.forecast_pattern)}.</p>"
+            f"{peak_context}"
+            f"{provenance}{narrative}"
             '<p class="mt-3"><strong>Figure: Forecast with Prediction Intervals</strong></p>'
             "<p>[VISUAL:FORECAST]</p>"
-            f"{narrative}"
             "</section>"
         )
 

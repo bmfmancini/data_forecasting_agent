@@ -183,12 +183,19 @@ class ForecastMetrics(BaseModel):
     first_value: float
     last_value: float
     pct_change: float
+    endpoint_direction: str = "Flat"
+    forecast_pattern: str = "Flat"
+    peak_value: float | None = None
+    peak_date: str | None = None
+    peak_change_pct: float | None = None
     rmse: float | None = None
     mae: float | None = None
     mape: float | None = None
     wape: float | None = None
     mase: float | None = None
     prediction_intervals: list[PredictionInterval] = Field(default_factory=list)
+    selection_metrics: dict[str, float | None] = Field(default_factory=dict)
+    final_test_metrics: dict[str, object] = Field(default_factory=dict)
 
 
 # ── Model Comparison ─────────────────────────────────────────────────────────

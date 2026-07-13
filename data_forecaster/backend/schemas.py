@@ -234,6 +234,7 @@ class ForecastCandidateResult(BaseModel):
     validation_design: dict[str, Any] = Field(default_factory=dict)
     metric_intervals: dict[str, list[float]] = Field(default_factory=dict)
     skill_scores: dict[str, float] = Field(default_factory=dict)
+    final_test_metrics: dict[str, Any] = Field(default_factory=dict)
 
 
 class ForecastResult(BaseModel):
@@ -260,6 +261,8 @@ class ForecastResult(BaseModel):
     token_usage: dict[str, Any] = Field(default_factory=dict)
     interval_label: str = "prediction_interval"
     validation_design: dict[str, Any] = Field(default_factory=dict)
+    selection_metrics: dict[str, float | None] = Field(default_factory=dict)
+    final_test_metrics: dict[str, Any] = Field(default_factory=dict)
 
 
 class StatisticalReviewResult(BaseModel):

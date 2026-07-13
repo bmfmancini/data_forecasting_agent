@@ -25,15 +25,14 @@ from report.renderers import HTMLRenderer, MarkdownRenderer
 from schemas import (
     AnalysisResponse,
     ForecastResult,
-    ForecastCandidateResult,
     ModelSelectionResult,
     StatisticalResult,
     StatisticalReviewResult,
     ValidationResult,
 )
-from services.baseline_service import run_baseline_models
 from services.rag_service import get_rag_kb
 from utils.data_cleaning import apply_iqr_clipping, apply_zscore_clipping
+from utils.data_cleaning import impute_missing
 from utils.preflight import prepare_series_frame
 from utils.statistical import apply_boxcox, compute_acf_pacf, run_stl_decomposition
 from utils.visualization import (
@@ -69,6 +68,7 @@ class StatisticalStageOutput:
     validation: ValidationResult
     statistical: StatisticalResult
     series: pd.Series
+    forecasting_series: pd.Series
 
 
 @dataclass(frozen=True)
@@ -165,7 +165,7 @@ def run_pipeline(
         prepared, date_col, value_col, preflight_options, _progress
     )
     forecast_stage = _run_forecast_stages(
-        statistical_stage.series,
+        statistical_stage.forecasting_series,
         statistical_stage.statistical,
         prepared.freq,
         prepared.seasonal_period,
@@ -274,8 +274,16 @@ def _run_statistical_stages(
     logger.info("Agent 2: Statistical Analysis")
     progress(20, "Running statistical analysis…")
     user_domain = (preflight_options or {}).get("data_domain", "Skip / Let AI Guess")
+    options = preflight_options or {}
+    missing_strategy = options.get("missing_strategy", "interpolate")
+    if missing_strategy == "Let AI Decide":
+        missing_strategy = "interpolate"
+    analysis_series = prepared.series
+    if missing_strategy != "drop":
+        analysis_series = impute_missing(analysis_series, missing_strategy)
+    analysis_series = analysis_series.dropna()
     stat_result = run_statistical_agent(
-        prepared.series,
+        analysis_series,
         prepared.seasonal_period,
         user_domain=user_domain,
         disabled_tests=prepared.disabled_statistical_tests,
@@ -283,7 +291,7 @@ def _run_statistical_stages(
     progress(35, "Statistical analysis complete")
 
     series = _apply_agent_remediation(
-        prepared.series,
+        analysis_series,
         stat_result,
         prepared.disabled_statistical_tests,
         preflight_options,
@@ -292,6 +300,7 @@ def _run_statistical_stages(
         validation=validation_result,
         statistical=stat_result,
         series=series,
+        forecasting_series=prepared.series,
     )
 
 
@@ -404,48 +413,7 @@ def _run_forecast_stages(
         )
     progress(75, "Forecast complete")
 
-    logger.info("Running baseline model comparisons")
-    baseline_results = run_baseline_models(series, forecast_horizon, seasonal_period)
-    for name, result in baseline_results.items():
-        all_metrics.setdefault(
-            name,
-            {
-                "RMSE": result.metrics.rmse,
-                "MAE": result.metrics.mae,
-                "MAPE": result.metrics.mape,
-                "WAPE": result.metrics.wape,
-                "MASE": result.metrics.mase,
-            },
-        )
-    forecast_result = forecast_result.model_copy(
-        update={
-            "candidate_results": [
-                *forecast_result.candidate_results,
-                *[
-                    ForecastCandidateResult(
-                        model=name,
-                        status=result.status,
-                        failure_reason=result.failure_reason,
-                        is_fallback=result.is_fallback,
-                        rmse=all_metrics[name].get("RMSE"),
-                        mae=all_metrics[name].get("MAE"),
-                        mape=all_metrics[name].get("MAPE"),
-                        wape=all_metrics[name].get("WAPE"),
-                        mase=all_metrics[name].get("MASE"),
-                        n_evaluated=result.metrics.n_evaluated,
-                        n_missing=result.metrics.n_missing,
-                        fitted_configuration=result.fitted_configuration,
-                        warnings=result.warnings,
-                        interval_label=result.interval_label,
-                    )
-                    for name, result in baseline_results.items()
-                    if name
-                    not in {item.model for item in forecast_result.candidate_results}
-                ],
-            ]
-        }
-    )
-    logger.info("Baseline models complete")
+    logger.info("Baseline comparisons included in common rolling-origin evaluation")
 
     statistical_review = _run_statistical_review(
         stat_result, model_selection, forecast_result, all_metrics, progress

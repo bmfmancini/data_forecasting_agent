@@ -84,7 +84,7 @@ class MarkdownRenderer:
         lines = ["## 2. Executive Summary", ""]
         lines.append(f"**Strategic Outlook:** {s.strategic_outlook}")
         lines.append("")
-        lines.append(f"**Expected Growth:** {s.expected_growth}")
+        lines.append(f"**Forecast Endpoint Change:** {s.expected_growth}")
         lines.append("")
         lines.append(f"**Confidence Level:** {s.confidence_level}")
         lines.append("")
@@ -164,9 +164,27 @@ class MarkdownRenderer:
         lines.append(
             f"**Forecast Horizon:** {m.horizon} periods ({m.first_date} → {m.last_date})"
         )
-        lines.append(f"**Projected Change:** {m.pct_change:+.1f}%")
+        lines.append(f"**Endpoint Change:** {m.pct_change:+.1f}%")
+        lines.append(f"**Endpoint Direction:** {m.endpoint_direction}")
+        lines.append(f"**Forecast Pattern:** {m.forecast_pattern}")
+        if m.peak_value is not None:
+            peak_context = f" on {m.peak_date}" if m.peak_date else ""
+            lines.append(
+                f"**Seasonal Peak:** {m.peak_value}{peak_context} "
+                f"({format_metric(m.peak_change_pct, '+.1f')}% versus the first forecast period)"
+            )
         lines.append(f"**Start Value:** {m.first_value}")
         lines.append(f"**End Value:** {m.last_value}")
+        lines.append(
+            "**Metric Provenance:** Model selection used rolling-origin metrics; "
+            "the untouched final-test metrics below were not used for ranking."
+        )
+        final_rmse = m.final_test_metrics.get("rmse")
+        final_mae = m.final_test_metrics.get("mae")
+        lines.append(
+            f"**Untouched Final Test:** RMSE {format_metric(final_rmse)}, "
+            f"MAE {format_metric(final_mae)}"
+        )
         if report.forecast_outlook.narrative:
             lines.append("")
             lines.append(report.forecast_outlook.narrative)

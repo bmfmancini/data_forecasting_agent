@@ -28,9 +28,11 @@ from forecasting.selection_policy import CandidateEvidence, select_model_determi
 from forecasting.sarima_model import fit_sarima
 from forecasting.preprocessing import (
     BoxCoxTransform,
-    IQRClipping,
+    FoldSafeImputer,
+    FoldSafeOutlierTreatment,
     YeoJohnsonTransform,
     bias_adjusted_inverse,
+    smooth_training_series,
 )
 from prompts.forecasting_prompt import FORECASTING_PROMPT
 from schemas import (
@@ -101,13 +103,25 @@ def run_forecasting_agent(
     """
     seasonal_period = max(1, stat_result.seasonal_period or 1)
     preprocessing_options = preprocessing_options or {}
-    use_iqr_clip = preprocessing_options.get("outlier_strategy") in {
-        "Clip (Winsorize)",
-        "clip",
-    }
-    production_series = series
-    if use_iqr_clip:
-        production_series = IQRClipping().fit(series).transform_series(series)
+    outlier_strategy = {
+        "Clip (Winsorize)": "clip",
+        "clip": "clip",
+        "Remove": "remove",
+        "remove": "remove",
+        "Z-Score Clip": "zscore_clip",
+        "zscore_clip": "zscore_clip",
+    }.get(preprocessing_options.get("outlier_strategy"), "none")
+    imputation_method = preprocessing_options.get("missing_strategy", "interpolate")
+    if imputation_method == "Let AI Decide":
+        imputation_method = "interpolate"
+    smoothing_method = preprocessing_options.get("smoothing", "none")
+    production_series = FoldSafeOutlierTreatment(outlier_strategy).fit(
+        series
+    ).transform_training(series)
+    production_series = FoldSafeImputer(imputation_method).fit(
+        production_series
+    ).transform_training(production_series)
+    production_series = smooth_training_series(production_series, smoothing_method)
     results_store: dict[str, ForecastAdapterResult] = {}
 
     # ── Fit all models directly in Python ─────────────────────────────────────
@@ -144,7 +158,13 @@ def run_forecasting_agent(
     # each adapter remain on the result; the backtest evaluation supplements
     # them with pooled rolling-origin evidence.
     backtest_evals = _run_backtest_evaluation(
-        series, forecast_horizon, seasonal_period, apply_iqr_clip=use_iqr_clip
+        series,
+        forecast_horizon,
+        seasonal_period,
+        apply_iqr_clip=False,
+        imputation_method=imputation_method,
+        smoothing_method=smoothing_method,
+        outlier_strategy=outlier_strategy,
     )
 
     comparison_summary = "Model comparison metrics (lower is better):\n"
@@ -473,6 +493,11 @@ def run_forecasting_agent(
                         if name in backtest_evals
                         else {}
                     ),
+                    final_test_metrics=(
+                        backtest_evals[name].final_test_metrics.model_dump()
+                        if name in backtest_evals
+                        else {}
+                    ),
                 )
                 for name, candidate in results_store.items()
             ],
@@ -497,6 +522,7 @@ def run_forecasting_agent(
                     validation_design=evaluation.validation_design,
                     metric_intervals=evaluation.metric_intervals,
                     skill_scores=evaluation.skill_scores,
+                    final_test_metrics=evaluation.final_test_metrics.model_dump(),
                 )
                 for name, evaluation in backtest_evals.items()
                 if name not in results_store
@@ -508,11 +534,19 @@ def run_forecasting_agent(
         validation_design=(
             selected_evaluation.validation_design if selected_evaluation else {}
         ),
+        selection_metrics=reported_metrics.model_dump(
+            include={"rmse", "mae", "mape", "wape", "mase", "smape", "rmsse"}
+        ),
+        final_test_metrics=(
+            selected_evaluation.final_test_metrics.model_dump()
+            if selected_evaluation is not None
+            else {}
+        ),
     )
     return forecast_result, all_metrics
 
 
-_BASELINE_NAMES = {"Naive", "Seasonal Naive", "Mean Forecast", "Drift"}
+_BASELINE_NAMES = {"Constant", "Naive", "Seasonal Naive", "Mean Forecast", "Drift"}
 
 
 def _fit_baseline_production(
@@ -523,7 +557,9 @@ def _fit_baseline_production(
     evaluation: BacktestEvaluation | None,
 ) -> ForecastAdapterResult:
     """Generate a full-history baseline forecast after common evaluation."""
-    if name == "Naive":
+    if name == "Constant":
+        predictions = np.repeat(float(series.iloc[-1]), horizon)
+    elif name == "Naive":
         predictions = np.repeat(float(series.iloc[-1]), horizon)
     elif name == "Seasonal Naive":
         season = series.iloc[-seasonal_period:].to_numpy(dtype=float)
@@ -591,6 +627,9 @@ def _run_backtest_evaluation(
     seasonal_period: int,
     *,
     apply_iqr_clip: bool = False,
+    imputation_method: str = "interpolate",
+    smoothing_method: str = "none",
+    outlier_strategy: str = "none",
 ) -> dict[str, Any]:
     """Run common rolling-origin backtesting for all four adapters.
 
@@ -615,6 +654,10 @@ def _run_backtest_evaluation(
         max_origins=5,
         mase_period=seasonal_period,
         apply_iqr_clip=apply_iqr_clip,
+        imputation_method=imputation_method,
+        smoothing_method=smoothing_method,
+        outlier_strategy=outlier_strategy,
+        final_test_size=(forecast_horizon if len(series) >= 3 * forecast_horizon else 0),
     )
 
     def _arima_fn(train: pd.Series, fold: BacktestFold) -> FoldPrediction | None:
@@ -845,6 +888,17 @@ def _run_backtest_evaluation(
         "Mean Forecast": _mean_fn,
         "Drift": _drift_fn,
     }
+    finite = series.dropna().astype(float)
+    if not finite.empty and bool(np.isclose(finite.std(ddof=0), 0.0)):
+        candidates = {
+            "Constant": lambda train, fold: FoldPrediction(
+                predictions=np.repeat(float(train.iloc[-1]), fold.horizon),
+                fitted_configuration={
+                    "model": "Constant",
+                    "reason": "constant_series",
+                },
+            )
+        }
     if abs(float(series.skew())) > 1.0:
         transform_name = "Box-Cox" if bool((series > 0).all()) else "Yeo-Johnson"
         transform_type = (

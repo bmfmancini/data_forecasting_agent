@@ -44,6 +44,11 @@ from forecasting.contracts import (
 )
 from forecasting.metrics import calculate_forecast_metrics
 from forecasting.preprocessing import IQRClipping
+from forecasting.preprocessing import (
+    FoldSafeImputer,
+    FoldSafeOutlierTreatment,
+    smooth_training_series,
+)
 
 logger = get_logger(__name__)
 
@@ -111,6 +116,10 @@ class BacktestConfig:
     mase_period: int = 1
     requested_horizon: int | None = None
     apply_iqr_clip: bool = False
+    outlier_strategy: str = "none"
+    imputation_method: str = "interpolate"
+    smoothing_method: str = "none"
+    final_test_size: int = 0
 
 
 # ── Fold generation ──────────────────────────────────────────────────────────
@@ -135,15 +144,16 @@ def generate_folds(
     if horizon < 1:
         horizon = 1
 
+    reserve = max(0, min(config.final_test_size, max(0, n - 2)))
+    end_limit = n - reserve
+
     initial = config.initial_train_size
     if initial is None:
-        initial = max(10, n // 2)
-    initial = max(1, min(initial, n - horizon - config.gap))
+        initial = max(10, end_limit // 2)
+    initial = max(1, min(initial, end_limit - horizon - config.gap))
 
     step = config.step_size or horizon
     step = max(1, step)
-
-    end_limit = n
 
     folds: list[BacktestFold] = []
     fold_index = 0
@@ -224,8 +234,12 @@ def _process_fold(
     by-horizon accumulators are updated in place when predictions succeed.
     """
     train = series.iloc[: fold.train_end_index].copy()
-    if train.isna().any():
-        train = train.interpolate(limit_direction="both").ffill().bfill()
+    strategy = "clip" if config.apply_iqr_clip else config.outlier_strategy
+    outlier = FoldSafeOutlierTreatment(strategy).fit(train)
+    train = outlier.transform_training(train)
+    imputer = FoldSafeImputer(config.imputation_method).fit(train)
+    train = imputer.transform_training(train)
+    train = smooth_training_series(train, config.smoothing_method)
     if config.apply_iqr_clip:
         clipper = IQRClipping().fit(train)
         train = clipper.transform_series(train)
@@ -345,11 +359,21 @@ def evaluate_candidate(
         if result is not None:
             fold_results.append(result)
 
-    initial_training = (
-        series.iloc[: folds[0].train_end_index].values.astype(float)
-        if folds
-        else np.asarray([], dtype=float)
-    )
+    if folds:
+        initial_series = series.iloc[: folds[0].train_end_index].copy()
+        strategy = "clip" if config.apply_iqr_clip else config.outlier_strategy
+        initial_series = FoldSafeOutlierTreatment(strategy).fit(
+            initial_series
+        ).transform_training(initial_series)
+        initial_series = FoldSafeImputer(config.imputation_method).fit(
+            initial_series
+        ).transform_training(initial_series)
+        initial_series = smooth_training_series(
+            initial_series, config.smoothing_method
+        )
+        initial_training = initial_series.to_numpy(dtype=float)
+    else:
+        initial_training = np.asarray([], dtype=float)
     pooled = calculate_forecast_metrics(
         np.asarray(pooled_actuals, dtype=float),
         np.asarray(pooled_preds, dtype=float),
@@ -374,12 +398,61 @@ def evaluate_candidate(
     successful_origins = sum(
         fold.status == ForecastFitStatus.OK for fold in fold_results
     )
+    final_test_metrics = ForecastMetrics(
+        unavailable_reasons={"all": "No untouched final test window was reserved."}
+    )
+    if config.final_test_size > 0 and len(series) > config.final_test_size:
+        final_start = len(series) - config.final_test_size
+        final_fold = BacktestFold(
+            fold_index=len(folds),
+            train_end_index=final_start,
+            test_start_index=final_start,
+            test_end_index=len(series),
+            horizon=config.final_test_size,
+        )
+        final_actuals: list[float] = []
+        final_predictions: list[float] = []
+        final_result = _process_fold(
+            name,
+            series,
+            final_fold,
+            candidate_fn,
+            final_actuals,
+            final_predictions,
+            {},
+            {},
+            warnings,
+            config,
+        )
+        if final_result is not None and final_result.status == ForecastFitStatus.OK:
+            final_training = series.iloc[:final_start].copy()
+            strategy = "clip" if config.apply_iqr_clip else config.outlier_strategy
+            final_training = FoldSafeOutlierTreatment(strategy).fit(
+                final_training
+            ).transform_training(final_training)
+            final_training = FoldSafeImputer(config.imputation_method).fit(
+                final_training
+            ).transform_training(final_training)
+            final_training = smooth_training_series(
+                final_training, config.smoothing_method
+            )
+            final_test_metrics = calculate_forecast_metrics(
+                np.asarray(final_actuals, dtype=float),
+                np.asarray(final_predictions, dtype=float),
+                training=final_training,
+                mase_period=config.mase_period,
+            )
+        else:
+            final_test_metrics = ForecastMetrics(
+                unavailable_reasons={"all": "Candidate failed on the untouched final test window."}
+            )
     evaluated_horizon = folds[0].horizon if folds else 0
     requested_horizon = config.requested_horizon or config.horizon or evaluated_horizon
     return BacktestEvaluation(
         model_name=name,
         folds=fold_results,
         pooled_metrics=pooled,
+        final_test_metrics=final_test_metrics,
         by_horizon_metrics=by_horizon,
         n_origins=successful_origins,
         n_failed_origins=len(fold_results) - successful_origins,
@@ -400,6 +473,11 @@ def evaluate_candidate(
             "n_evaluated": n_evaluated,
             "mase_period": config.mase_period,
             "apply_iqr_clip": config.apply_iqr_clip,
+            "outlier_strategy": config.outlier_strategy,
+            "imputation_method": config.imputation_method,
+            "smoothing_method": config.smoothing_method,
+            "final_test_size": config.final_test_size,
+            "selection_end_index": len(series) - config.final_test_size,
         },
         metric_intervals=_bootstrap_metric_intervals(
             np.asarray(pooled_actuals, dtype=float),

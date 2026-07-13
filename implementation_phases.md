@@ -2,6 +2,12 @@
 
 The production implementation for Phases 1–5 is complete. This file contains only verification work intentionally deferred because the local machine is not suitable for the full forecasting test suite.
 
+The final production hardening pass also reserves an untouched terminal test
+window when the history is long enough, distinguishes selection metrics from
+final-test metrics, defers model-affecting preprocessing to training windows,
+uses the common rolling-origin path for baseline selection, and handles
+constant series through an explicit constant baseline.
+
 ## Deferred verification
 
 Before release, run the complete unit and integration suite on appropriately provisioned hardware and add focused coverage for:
@@ -23,6 +29,10 @@ Before release, run the complete unit and integration suite on appropriately pro
 
 - Rolling-origin metrics are authoritative and carry auditable validation provenance.
 - Complex candidates and simple baselines use common folds.
+- An untouched terminal window is excluded from rolling selection when at
+  least three forecast horizons of history are available.
+- Selection metrics and final-test metrics are exposed separately; final-test
+  evidence never participates in model ranking.
 - Failed folds cannot contaminate pooled scores.
 - Model selection is deterministic, honors the configured loss, and can retain a baseline.
 - LLM output is advisory, validated, and cannot trigger data mutations.
@@ -32,6 +42,8 @@ Before release, run the complete unit and integration suite on appropriately pro
 - SES uses a fitted state-space model; SES and Holt-Winters use bootstrap prediction intervals.
 - Empirical interval calibration is applied only when rolling evidence is available.
 - IQR clipping is fitted within each training fold when explicitly requested.
+- Missing-value imputation and optional smoothing are fitted/applied within
+  each training history rather than to the complete series before splitting.
 - A skew-triggered Box-Cox ARIMA pipeline is compared on the same folds and inverted to the original target scale.
 - High-value forecast context is captured during preflight and attached to selection evidence.
 - Holt-Winters consumes the typed seasonal period and treats period 1 as nonseasonal; it no longer independently defaults unknown frequency to 12.
@@ -46,6 +58,8 @@ Before release, run the complete unit and integration suite on appropriately pro
 - Interval evidence includes an explicitly labeled single-level weighted interval score in addition to coverage, width, and Winkler score.
 - Model-selection, statistical-review, and report narratives are validated; unsupported report narratives fall back to deterministic text.
 - Selection and review results expose structured claims with evidence references and uncertainty labels.
+- Constant and all-zero histories use an explicit constant baseline; unsuitable
+  complex models remain not estimable and unavailable intervals are labelled.
 
 ## Explicitly skipped scope
 

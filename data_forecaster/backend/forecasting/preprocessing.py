@@ -20,11 +20,81 @@ from scipy.stats import boxcox, yeojohnson
 
 from core.logging_config import get_logger
 from forecasting.contracts import PreprocessingTransform
+from utils.data_cleaning import smooth_series
 
 logger = get_logger(__name__)
 
 _MIN_BOXCOX_LENGTH = 5
 _EPSILON = 1e-8
+
+
+class FoldSafeImputer:
+    """Impute a training window without consulting validation observations."""
+
+    def __init__(self, method: str = "interpolate") -> None:
+        self.method = method if method in {"interpolate", "forward-fill", "drop"} else "interpolate"
+        self.leading_value: float | None = None
+
+    def fit(self, train: pd.Series) -> FoldSafeImputer:
+        """Record the last observed training value for boundary-safe filling."""
+        observed = train.dropna().astype(float)
+        self.leading_value = float(observed.iloc[-1]) if not observed.empty else None
+        return self
+
+    def transform_training(self, train: pd.Series) -> pd.Series:
+        """Fill using training observations only."""
+        values = train.astype(float).copy()
+        if self.method == "drop":
+            return values.dropna()
+        if self.method == "forward-fill":
+            return values.ffill().bfill()
+        return values.interpolate(limit_direction="both").ffill().bfill()
+
+    def transform_future_inputs(self, values: pd.Series) -> pd.Series:
+        """Fill future covariate-like values using the fitted training boundary."""
+        result = values.astype(float).copy()
+        if self.method == "drop" or self.leading_value is None:
+            return result
+        return result.fillna(self.leading_value)
+
+
+def smooth_training_series(series: pd.Series, method: str) -> pd.Series:
+    """Apply optional smoothing only to a model's training observations."""
+    if not method or method == "none":
+        return series
+    return smooth_series(series, method)
+
+
+class FoldSafeOutlierTreatment:
+    """Fit clipping/removal thresholds using training observations only."""
+
+    def __init__(self, strategy: str = "none") -> None:
+        self.strategy = strategy
+        self.lower: float | None = None
+        self.upper: float | None = None
+
+    def fit(self, train: pd.Series) -> FoldSafeOutlierTreatment:
+        """Estimate IQR or z-score bounds from the training window."""
+        observed = train.dropna().astype(float)
+        if observed.empty:
+            return self
+        if self.strategy in {"clip", "remove"}:
+            q1, q3 = float(observed.quantile(0.25)), float(observed.quantile(0.75))
+            spread = q3 - q1
+            self.lower, self.upper = q1 - 1.5 * spread, q3 + 1.5 * spread
+        elif self.strategy == "zscore_clip":
+            mean, std = float(observed.mean()), float(observed.std(ddof=0))
+            if np.isfinite(std) and std > 0:
+                self.lower, self.upper = mean - 3.0 * std, mean + 3.0 * std
+        return self
+
+    def transform_training(self, train: pd.Series) -> pd.Series:
+        """Apply fitted bounds without changing validation observations."""
+        if self.lower is None or self.upper is None:
+            return train
+        if self.strategy == "remove":
+            return train.where(train.between(self.lower, self.upper))
+        return train.clip(lower=self.lower, upper=self.upper)
 
 
 class BoxCoxTransform:

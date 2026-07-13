@@ -114,7 +114,9 @@ class ExecutiveReportBuilder:
             has_structural_breaks,
         )
         forecast_metrics = self._build_forecast_metrics(forecast)
-        model_comparison = self._build_model_comparison(all_metrics, model_selection)
+        model_comparison = self._build_model_comparison(
+            all_metrics, model_selection, forecast
+        )
         recommendations = self._build_recommendations(
             statistical,
             forecast,
@@ -464,6 +466,20 @@ class ExecutiveReportBuilder:
         )
         return first_val, last_val, pct_change
 
+    @staticmethod
+    def _forecast_pattern(forecast: ForecastResult) -> str:
+        """Classify the plotted path without confusing endpoints with trend."""
+        values = np.asarray(forecast.forecast, dtype=float)
+        if values.size < 2:
+            return "Flat"
+        changes = np.diff(values)
+        tolerance = max(float(np.nanmax(np.abs(values))) * 1e-9, 1e-12)
+        if np.all(changes >= -tolerance):
+            return "Upward"
+        if np.all(changes <= tolerance):
+            return "Downward"
+        return "Seasonal / variable"
+
     def _build_forecast_metrics(
         self,
         forecast: ForecastResult,
@@ -477,6 +493,25 @@ class ExecutiveReportBuilder:
             :class:`ForecastMetrics` with per-period prediction intervals.
         """
         first_val, last_val, pct_change = self._forecast_pct_change(forecast)
+        forecast_pattern = self._forecast_pattern(forecast)
+        if pct_change > 0:
+            endpoint_direction = "Upward"
+        elif pct_change < 0:
+            endpoint_direction = "Downward"
+        else:
+            endpoint_direction = "Flat"
+        peak_value = max(forecast.forecast) if forecast.forecast else None
+        peak_index = forecast.forecast.index(peak_value) if peak_value is not None else -1
+        peak_date = (
+            forecast.forecast_dates[peak_index]
+            if 0 <= peak_index < len(forecast.forecast_dates)
+            else None
+        )
+        peak_change_pct = (
+            ((peak_value - first_val) / abs(first_val)) * 100
+            if peak_value is not None and first_val != 0
+            else None
+        )
         first_date = forecast.forecast_dates[0] if forecast.forecast_dates else "N/A"
         last_date = forecast.forecast_dates[-1] if forecast.forecast_dates else "N/A"
 
@@ -513,12 +548,21 @@ class ExecutiveReportBuilder:
             first_value=round(first_val, 4),
             last_value=round(last_val, 4),
             pct_change=round(pct_change, 1),
+            endpoint_direction=endpoint_direction,
+            forecast_pattern=forecast_pattern,
+            peak_value=round(peak_value, 4) if peak_value is not None else None,
+            peak_date=peak_date,
+            peak_change_pct=(
+                round(peak_change_pct, 1) if peak_change_pct is not None else None
+            ),
             rmse=round(forecast.rmse, 4) if forecast.rmse is not None else None,
             mae=round(forecast.mae, 4) if forecast.mae is not None else None,
             mape=round(forecast.mape, 2) if forecast.mape is not None else None,
             wape=round(forecast.wape, 2) if forecast.wape is not None else None,
             mase=round(forecast.mase, 4) if forecast.mase is not None else None,
             prediction_intervals=intervals,
+            selection_metrics=forecast.selection_metrics,
+            final_test_metrics=forecast.final_test_metrics,
         )
 
     # ── Model Comparison ──────────────────────────────────────────────────
@@ -527,6 +571,7 @@ class ExecutiveReportBuilder:
         self,
         all_metrics: dict[str, dict[str, float]],
         model_selection: ModelSelectionResult,
+        forecast: ForecastResult | None = None,
     ) -> ModelComparison:
         """Build the model comparison section from all model metrics.
 
@@ -537,7 +582,11 @@ class ExecutiveReportBuilder:
         Returns:
             :class:`ModelComparison` with entries for each evaluated model.
         """
-        selected = model_selection.selected_model
+        selected = (
+            forecast.model_used
+            if forecast is not None
+            else model_selection.selected_model
+        )
         rejection_map = {
             "Holt-Winters": model_selection.holt_winters_rejected_reason,
             "ARIMA": model_selection.arima_rejected_reason,
@@ -590,8 +639,32 @@ class ExecutiveReportBuilder:
         return ModelComparison(
             entries=entries,
             selected_model=selected,
-            selection_rationale=model_selection.explanation[:500],
+            selection_rationale=self._selection_rationale(
+                selected, all_metrics.get(selected, {}), model_selection
+            ),
         )
+
+    @staticmethod
+    def _selection_rationale(
+        selected: str,
+        metrics: dict[str, float],
+        model_selection: ModelSelectionResult,
+    ) -> str:
+        """Return a conservative rationale grounded in production evidence."""
+        available = []
+        for name in ("MASE", "RMSE", "MAE"):
+            value = metrics.get(name)
+            if value is not None and np.isfinite(value):
+                available.append(f"{name} {value:.4f}")
+        evidence = ", ".join(available) or "available rolling-origin evidence"
+        method = model_selection.selection_method or "deterministic"
+        return (
+            f"{selected} is the production forecast model. Its reported selection "
+            f"evidence includes {evidence}. The {method} decision also applies "
+            "candidate eligibility, configured loss, tie-breaking, baseline "
+            "retention, and any typed review constraints; the smallest value in "
+            "one displayed metric alone does not necessarily determine selection."
+        )[:500]
 
     # ── Recommendations ───────────────────────────────────────────────────
 
@@ -1268,20 +1341,19 @@ class ExecutiveReportBuilder:
             :class:`ExecutiveSummary` with empty narrative.
         """
         del has_structural_breaks  # Not used in this summary's risk wording.
+        del statistical  # Historical direction is reported in its own section.
         first_val, last_val, pct_change = self._forecast_pct_change(forecast)
-        if statistical.trend_slope > 0:
-            direction = "upward"
-        elif statistical.trend_slope < 0:
-            direction = "downward"
-        else:
-            direction = "flat"
+        pattern = self._forecast_pattern(forecast).lower()
 
         strategic_outlook = (
-            f"The metric is projected to trend {direction} over the "
-            f"{len(forecast.forecast)}-period horizon, moving from "
-            f"{round(first_val, 2)} to {round(last_val, 2)}."
+            f"The forecast follows a {pattern} path over the "
+            f"{len(forecast.forecast)}-period horizon and ends at "
+            f"{round(last_val, 2)}, compared with {round(first_val, 2)} in "
+            "the first forecast period."
         )
-        expected_growth = f"{pct_change:+.1f}% over the forecast horizon"
+        expected_growth = (
+            f"{pct_change:+.1f}% from the first forecast period to the last"
+        )
         confidence_level = f"{confidence.score}/100 — {confidence.label}"
 
         if review and review.verdict == "fail":
@@ -1334,12 +1406,13 @@ class ExecutiveReportBuilder:
         Returns:
             :class:`ReportMetadata`.
         """
+        del model_selection  # ForecastResult is authoritative after final selection.
         return ReportMetadata(
             engine_version=_ENGINE_VERSION,
             generated_at=datetime.now(timezone.utc).isoformat(),
             forecast_horizon=len(forecast.forecast),
             models_evaluated=list(all_metrics.keys()),
-            selected_model=model_selection.selected_model,
+            selected_model=forecast.model_used,
             dataset_frequency=validation.frequency or "unknown",
             data_quality_rating=data_quality.rating,
             row_count=validation.row_count,

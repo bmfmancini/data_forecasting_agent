@@ -116,7 +116,12 @@ FORECAST_OUTLOOK_NARRATIVE_PROMPT = apply_token_budget(
             (
                 "human",
                 "Write a 3-4 sentence forecast outlook for executives. "
-                "State the projected direction and growth, and emphasise "
+                "State metrics.forecast_pattern and the first-to-last endpoint "
+                "change separately. Never call a seasonal/variable path an "
+                "upward or downward trajectory. If a "
+                "seasonal peak is provided, distinguish that temporary peak "
+                "from the endpoint change. Name only metrics.model_used; do "
+                "not name any other forecasting model. Emphasise "
                 "that forecasts carry uncertainty — reference the "
                 "prediction intervals as the planning range. Do not present "
                 "forecasts as exact numbers without uncertainty.\n\n"
@@ -136,8 +141,9 @@ MODEL_COMPARISON_NARRATIVE_PROMPT = apply_token_budget(
             (
                 "human",
                 "Write a 3-4 sentence explanation of why the selected "
-                "forecasting model was chosen, what characteristics it "
-                "captures, and why it outperformed alternatives. Refer to "
+                "forecasting model was chosen and what characteristics it "
+                "captures. Do not claim it outperformed every alternative "
+                "unless the structured rationale explicitly says so. Refer to "
                 "the model as 'the forecasting model' or 'our predictive "
                 "model' — the model name may appear once. Do not use "
                 "statistical jargon or model order parameters.\n\n"

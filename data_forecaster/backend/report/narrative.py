@@ -14,6 +14,7 @@ LLM.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from core.config import GEMINI_TEMPERATURE
@@ -187,6 +188,29 @@ def _generate_section(
         section_data = section.model_dump()
         valid_models = _models_in_evidence(section_data)
         validation_warnings = validate_llm_output(narrative, valid_models, section_data)
+        if section_name == "forecast_outlook":
+            expected_model = str(section_data.get("metrics", {}).get("model_used", ""))
+            validation_warnings.extend(
+                _unexpected_model_references(narrative, expected_model)
+            )
+            validation_warnings.extend(
+                _contradictory_forecast_pattern(
+                    narrative,
+                    str(section_data.get("metrics", {}).get("forecast_pattern", "")),
+                )
+            )
+        elif section_name == "executive_summary":
+            outlook = str(section_data.get("strategic_outlook", ""))
+            if "seasonal / variable" in outlook.lower():
+                validation_warnings.extend(
+                    _contradictory_forecast_pattern(narrative, "Seasonal / variable")
+                )
+        elif section_name == "model_comparison":
+            validation_warnings.extend(
+                _contradictory_model_selection(
+                    narrative, str(section_data.get("selected_model", ""))
+                )
+            )
         if validation_warnings:
             logger.warning(
                 "Unsupported narrative for %s: %s — using fallback.",
@@ -221,6 +245,66 @@ def _models_in_evidence(value: Any) -> list[str]:
     return [name for name in known if name.lower() in serialized]
 
 
+def _unexpected_model_references(text: str, expected_model: str) -> list[str]:
+    """Reject forecast prose that names a model other than the fitted model."""
+    normalized = re.sub(r"[‐‑‒–—−]", "-", text).lower()
+    known = (
+        "ARIMA",
+        "SARIMA",
+        "Holt-Winters",
+        "EWMA",
+        "Naive",
+        "Seasonal Naive",
+        "Mean Forecast",
+        "Drift",
+        "Constant",
+    )
+    return [
+        f"Narrative referenced {name}; fitted model is {expected_model}."
+        for name in known
+        if re.search(rf"(?<![a-z]){re.escape(name.lower())}(?![a-z])", normalized)
+        and name.lower() != expected_model.lower()
+    ]
+
+
+def _contradictory_model_selection(text: str, expected_model: str) -> list[str]:
+    """Reject prose that attributes selection to a different named model."""
+    normalized = re.sub(r"[‐‑‒–—−]", "-", text)
+    patterns = (
+        r"(?P<model>ARIMA|SARIMA|Holt-Winters|EWMA)\s+(?:was|is)\s+(?:selected|chosen)",
+        r"selected\s+(?:model\s+)?(?:was|is|:)\s*(?P<model>ARIMA|SARIMA|Holt-Winters|EWMA)",
+    )
+    warnings: list[str] = []
+    for pattern in patterns:
+        for match in re.finditer(pattern, normalized, flags=re.IGNORECASE):
+            model = match.group("model")
+            if model.lower() != expected_model.lower():
+                warnings.append(
+                    f"Narrative selected {model}; production model is {expected_model}."
+                )
+    return warnings
+
+
+def _contradictory_forecast_pattern(text: str, pattern: str) -> list[str]:
+    """Reject directional-trajectory claims for a variable forecast path."""
+    if pattern.lower() != "seasonal / variable":
+        return []
+    normalized = re.sub(r"[‐‑‒–—−]", "-", text).lower()
+    directional_claims = (
+        "downward trajectory",
+        "upward trajectory",
+        "downward trend",
+        "upward trend",
+        "trends downward",
+        "trends upward",
+    )
+    return [
+        f"Narrative described a {claim}; forecast pattern is {pattern}."
+        for claim in directional_claims
+        if claim in normalized
+    ]
+
+
 def _fallback_forecast_outlook(data: dict[str, Any]) -> str:
     """Build a deterministic fallback narrative for the forecast outlook.
 
@@ -237,14 +321,22 @@ def _fallback_forecast_outlook(data: dict[str, Any]) -> str:
     first_value = m.get("first_value", "N/A")
     last_value = m.get("last_value", "N/A")
     pct_change = m.get("pct_change", 0.0)
+    peak_value = m.get("peak_value")
+    peak_date = m.get("peak_date")
     horizon = m.get("horizon", 0)
     intervals = m.get("prediction_intervals") or []
     if intervals and isinstance(intervals, list) and len(intervals) > 1:
         conf_level = intervals[0].get("confidence_level", "95%")
+        peak_text = (
+            f" A temporary seasonal peak of {peak_value} is projected"
+            f" for {peak_date}."
+            if peak_value is not None
+            else ""
+        )
         return (
             f"The forecast projects a change from {first_value} to "
-            f"{last_value} ({pct_change:+.1f}%) over "
-            f"{horizon} periods. Forecasts carry uncertainty — "
+            f"{last_value} (a first-to-last change of {pct_change:+.1f}%) over "
+            f"{horizon} periods.{peak_text} Forecasts carry uncertainty — "
             f"the {conf_level} "
             f"prediction range should be used for planning."
         )

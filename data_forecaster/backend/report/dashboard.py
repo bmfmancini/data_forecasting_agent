@@ -25,8 +25,10 @@ def build_dashboard(
     has_structural_breaks: bool = False,
 ) -> Dashboard:
     """Build reusable dashboard widgets for the executive report."""
+    del model_selection  # ForecastResult is authoritative after retries/fallbacks.
     first_val, last_val, pct_change = forecast_change
-    direction, dir_status = direction_status(trend_slope)
+    del trend_slope  # Historical trend is reported separately from forecast direction.
+    pattern, dir_status = forecast_pattern_status(forecast.forecast)
     risk_label, risk_status = primary_risk(
         review, data_quality, forecast, has_structural_breaks
     )
@@ -35,22 +37,22 @@ def build_dashboard(
     return Dashboard(
         widgets=[
             DashboardItem(
-                title="Forecast Direction",
-                value=direction,
+                title="Forecast Pattern",
+                value=pattern,
                 status=dir_status,
                 description=(
-                    f"The metric is projected to trend {direction.lower()} "
+                    f"The plotted forecast follows a {pattern.lower()} path "
                     f"over the {len(forecast.forecast)}-period horizon."
                 ),
                 icon="📈",
                 priority=1,
             ),
             DashboardItem(
-                title="Expected Growth",
+                title="Forecast Endpoint Change",
                 value=f"{pct_change:+.1f}%",
                 status=growth_status(pct_change),
                 description=(
-                    f"Projected change from {round(first_val, 2)} to "
+                    f"Endpoint change from {round(first_val, 2)} to "
                     f"{round(last_val, 2)} over the forecast horizon."
                 ),
                 icon="📊",
@@ -74,7 +76,7 @@ def build_dashboard(
             ),
             DashboardItem(
                 title="Model Selected",
-                value=model_selection.selected_model,
+                value=forecast.model_used,
                 status="info",
                 description=(
                     "Selected based on validation performance and data "
@@ -103,13 +105,26 @@ def build_dashboard(
     )
 
 
-def direction_status(slope: float) -> tuple[str, str]:
-    """Return ``(direction label, status token)`` for a trend slope."""
-    if slope > 0:
+def direction_status(endpoint_change_pct: float) -> tuple[str, str]:
+    """Return direction from first-to-last forecast change."""
+    if endpoint_change_pct > 0:
         return FORECAST_DIRECTIONS["upward"], "positive"
-    if slope < 0:
+    if endpoint_change_pct < 0:
         return FORECAST_DIRECTIONS["downward"], "negative"
     return FORECAST_DIRECTIONS["flat"], "neutral"
+
+
+def forecast_pattern_status(values: list[float]) -> tuple[str, str]:
+    """Classify monotonic direction separately from a variable seasonal path."""
+    if len(values) < 2:
+        return FORECAST_DIRECTIONS["flat"], "neutral"
+    changes = [current - previous for previous, current in zip(values, values[1:])]
+    tolerance = max(max(abs(value) for value in values) * 1e-9, 1e-12)
+    if all(change >= -tolerance for change in changes):
+        return FORECAST_DIRECTIONS["upward"], "positive"
+    if all(change <= tolerance for change in changes):
+        return FORECAST_DIRECTIONS["downward"], "negative"
+    return "Seasonal / Variable", "info"
 
 
 def growth_status(pct_change: float) -> str:

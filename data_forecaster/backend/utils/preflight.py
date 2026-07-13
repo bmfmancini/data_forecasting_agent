@@ -9,11 +9,8 @@ import pandas as pd
 from schemas import PreflightDecision, PreflightResponse
 from utils.data_cleaning import (
     detect_outliers_iqr,
-    impute_missing,
     reindex_series,
     resolve_duplicates,
-    smooth_series,
-    treat_outliers,
 )
 
 AGGREGATION_OPTIONS = ["Let AI Decide", "sum", "mean", "latest"]
@@ -259,11 +256,8 @@ def prepare_series_frame(
     1. Resolve automatic (``"Let AI Decide"``) user selections to defaults.
     2. Aggregate or drop duplicate timestamps.
     3. Reindex the series onto a canonical frequency grid.
-    4. Apply the chosen outlier treatment (clip, winsorize, remove or
-       z-score clip).
-    5. Impute missing values via forward-fill, time interpolation or
-       seasonal decomposition.
-    6. Optionally apply smoothing (EWMA or Savitzky–Golay).
+    4. Preserve missing values and model-affecting preprocessing choices for
+       training-window fitting during rolling-origin evaluation.
 
     Args:
         df: Source DataFrame containing the time series.
@@ -303,25 +297,12 @@ def prepare_series_frame(
         # Diagnostics may flag anomalies, but automatic full-series clipping
         # would leak future distributional information into backtests.
         outlier_strategy = "None"
-    if outlier_strategy != "None":
-        # Convert UI-friendly names to internal strategy names
-        strategy_map = {
-            "Clip (Winsorize)": "clip",
-            "Remove": "remove",
-            "Z-Score Clip": "zscore_clip",
-        }
-        internal_strategy = strategy_map.get(
-            outlier_strategy, outlier_strategy.lower().replace(" ", "_")
-        )
-        series = treat_outliers(series, internal_strategy)
-
-    if missing_strategy != "drop":
-        series = impute_missing(series, missing_strategy)
-    series = series.dropna()
-
-    smoothing = options.get("smoothing", "none")
-    if smoothing != "none":
-        series = smooth_series(series, smoothing)
+    # Model-affecting preprocessing is intentionally deferred. Rolling-origin
+    # evaluation fits imputation, clipping, and smoothing independently within
+    # each training window; the production refit applies them to full history
+    # only after deterministic selection.
+    if missing_strategy == "drop":
+        series = series.dropna()
 
     prepared = series.rename(value_col).reset_index()
     prepared.columns = [date_col, value_col]

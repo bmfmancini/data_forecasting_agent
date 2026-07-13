@@ -93,6 +93,7 @@ def run_baseline_models(
     # Ensure test set matches horizon if it's longer
     if len(test) > forecast_horizon:
         test = test[:forecast_horizon]
+        holdout = TerminalHoldout(train=train, test=test)
 
     # Adjust horizon if test set is shorter
     h = len(test)
