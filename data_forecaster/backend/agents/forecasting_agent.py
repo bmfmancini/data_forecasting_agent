@@ -1,3 +1,5 @@
+"""Forecasting agent that selects and runs statistical model implementations."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -18,19 +20,29 @@ from utils.token_tracking import estimate_input_text, extract_token_usage
 
 logger = get_logger(__name__)
 
+
+def _has_required_metrics(result: dict[str, Any]) -> bool:
+    """Return whether required comparison metrics are present and finite."""
+    for metric in ("rmse", "mae", "mape"):
+        value = result.get(metric)
+        if value is None or not np.isfinite(value):
+            return False
+    return True
+
+
 def _calculate_additional_metrics(
     y_true: pd.Series, y_pred: pd.Series, y_train: pd.Series, seasonal_period: int
 ) -> dict[str, float]:
     """Calculate WAPE and MASE."""
     metrics = {}
-    # WAPE: Sum of absolute errors / sum of actuals
+    # WAPE: Sum of absolute errors / sum of absolute actuals
     # Stable alternative to MAPE, especially with zeros in y_true.
     absolute_errors = np.abs(y_true - y_pred)
-    sum_of_actuals = np.sum(y_true)
+    sum_of_actuals = np.sum(np.abs(y_true))
     if sum_of_actuals != 0:
         metrics["wape"] = np.sum(absolute_errors) / sum_of_actuals
     else:
-        metrics["wape"] = np.nan # Avoid division by zero
+        metrics["wape"] = np.nan  # Avoid division by zero
 
     # MASE: Mean Absolute Error / MAE of a naive seasonal forecast on training data
     # The gold standard for comparing forecast accuracy across different series.
@@ -42,7 +54,7 @@ def _calculate_additional_metrics(
         if mae_naive != 0:
             metrics["mase"] = mae / mae_naive
         else:
-            metrics["mase"] = np.inf # Should be rare
+            metrics["mase"] = np.inf  # Should be rare
     else:
         # Fallback for very short series where seasonal naive is not possible
         mae_naive = np.mean(np.abs(np.diff(y_train)))
@@ -51,6 +63,7 @@ def _calculate_additional_metrics(
         else:
             metrics["mase"] = np.inf
     return metrics
+
 
 def run_forecasting_agent(
     series: pd.Series,
@@ -90,8 +103,11 @@ def run_forecasting_agent(
             if "y_test" in results_store[name] and "forecast" in results_store[name]:
                 y_test = results_store[name]["y_test"]
                 forecast = results_store[name]["forecast"]
-                y_train = results_store[name].get("y_train", series[:len(series) - len(y_test)])
-                
+                y_train = results_store[name].get(
+                    "y_train",
+                    series[: len(series) - len(y_test)],
+                )
+
                 additional_metrics = _calculate_additional_metrics(
                     y_test, forecast, y_train, seasonal_period
                 )
@@ -102,9 +118,17 @@ def run_forecasting_agent(
 
     comparison_summary = "Model comparison metrics (lower is better):\n"
     for name, res in results_store.items():
-        wape_text = f", WAPE={res.get('wape', np.nan)*100:.2f}%" if 'wape' in res else ""
-        mase_text = f", MASE={res.get('mase', np.nan):.4f}" if 'mase' in res else ""
-        comparison_summary += f"- {name}: RMSE={res['rmse']:.4f}, MAE={res['mae']:.4f}, MAPE={res['mape']:.2f}%{wape_text}{mase_text}\n"
+        if not _has_required_metrics(res):
+            comparison_summary += f"- {name}: required metrics unavailable\n"
+            continue
+        wape_text = (
+            f", WAPE={res.get('wape', np.nan) * 100:.2f}%" if "wape" in res else ""
+        )
+        mase_text = f", MASE={res.get('mase', np.nan):.4f}" if "mase" in res else ""
+        comparison_summary += (
+            f"- {name}: RMSE={res['rmse']:.4f}, MAE={res['mae']:.4f}, "
+            f"MAPE={res['mape']:.2f}%{wape_text}{mase_text}\n"
+        )
 
     # ── LLM Setup ────────────────────────────────────────────────────────────
     llm = get_llm(temperature=0)
@@ -188,7 +212,8 @@ def run_forecasting_agent(
             "WAPE": r.get("wape", np.nan),
             "MASE": r.get("mase", np.nan),
         }
-        for name, r in results_store.items() if "rmse" in r # Ensure model ran successfully
+        for name, r in results_store.items()
+        if _has_required_metrics(r)
     }
     # Merge any pre-existing metrics (e.g. baselines) passed in by the caller
     # so re-runs preserve previously computed results.

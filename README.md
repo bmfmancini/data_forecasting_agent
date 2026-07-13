@@ -25,8 +25,10 @@ The easiest way to run this is with Docker. You'll need Docker and Docker Compos
 git clone <repository-url>
 cd data_forecasting_agent/data_forecaster
 
-# The .env file already has sensible defaults — just edit the LLM section
-# to add your API key
+# Copy the service-specific env examples, then edit backend/.env
+# to add your LLM API key.
+cp backend/.env.example backend/.env
+cp frontend/.env.example frontend/.env
 
 # Build and start everything (single-machine mode)
 ./scripts/build_containers.sh --single
@@ -51,14 +53,14 @@ The agents need an LLM to do their analysis. You can use either Google Gemini or
 
 **Gemini** (easiest — just add your key):
 ```bash
-# In .env
+# In backend/.env
 GOOGLE_API_KEY=your_key_here
 USE_OLLAMA=false
 ```
 
 **Ollama** (runs locally or via Ollama Cloud):
 ```bash
-# In .env
+# In backend/.env
 USE_OLLAMA=true
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=llama3
@@ -93,6 +95,7 @@ Detailed docs are split out so this README stays short:
 - [API authentication](docs/api-auth.md) — how API keys work, rotating credentials, the default `frontend` user
 - [API reference](docs/api-reference.md) — endpoint list, error codes, request/response schemas
 - [Local development](docs/local-dev.md) — running without Docker, running the test suite
+- [User management scripts](docs/user-management-scripts.md) — CLI runbook for frontend users and backend API users
 
 ## Tech stack
 

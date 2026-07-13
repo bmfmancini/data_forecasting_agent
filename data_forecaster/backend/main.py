@@ -6,8 +6,14 @@ orchestration, chat, and RAG).
 """
 
 import asyncio
+import os
+import tempfile
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Annotated
+
+import aiofiles
+import anyio
+import httpx
 
 from fastapi import (
     Body,
@@ -29,12 +35,20 @@ from auth.api_key_db import (
     has_any_users,
     has_bootstrap_user,
     list_api_users,
+    reconcile_service_user,
     rotate_api_key,
     set_user_admin,
     set_user_enabled,
 )
 from auth.dependency import require_admin_api_key, require_api_key
-from core.config import set_api_key_enabled
+from core.config import (
+    GOOGLE_API_KEY,
+    OLLAMA_API_KEY,
+    OLLAMA_MODEL,
+    USE_OLLAMA,
+    USE_OLLAMA_CLOUD,
+    set_api_key_enabled,
+)
 from core.database import init_database
 from core.logging_config import get_logger
 from schemas import (
@@ -73,7 +87,7 @@ from services.job_service import (
     list_recent_jobs,
     update_job_settings,
 )
-from utils.data_parser import parse_upload
+from utils.data_parser import parse_upload, parse_upload_from_path
 from utils.preflight import run_preflight_checks
 
 logger = get_logger(__name__)
@@ -91,6 +105,79 @@ async def _cleanup_job_history() -> None:
             logger.info("Deleted %d expired forecast job records.", deleted_count)
 
 
+def _service_credentials_configured() -> bool:
+    """Return whether frontend service-user credentials are configured."""
+    return bool(settings.FRONTEND_API_USERNAME and settings.FRONTEND_API_KEY)
+
+
+def _reconcile_frontend_service_user() -> None:
+    """Reconcile the frontend service user from environment configuration."""
+    if not _service_credentials_configured():
+        return
+
+    try:
+        reconciled = reconcile_service_user(
+            settings.FRONTEND_API_USERNAME,
+            settings.FRONTEND_API_KEY,
+        )
+    except ValueError as exc:
+        logger.warning("Failed to reconcile frontend API user: %s", exc)
+        return
+
+    if reconciled:
+        logger.info(
+            "Frontend API user '%s' reconciled from env.",
+            settings.FRONTEND_API_USERNAME,
+        )
+
+
+def _create_frontend_service_user_from_env() -> None:
+    """Create the first API user from frontend service env vars when present."""
+    if not _service_credentials_configured():
+        logger.info("No API users — auth disabled (open mode).")
+        return
+
+    try:
+        create_first_user(
+            username=settings.FRONTEND_API_USERNAME,
+            api_key=settings.FRONTEND_API_KEY,
+        )
+    except ValueError as exc:
+        logger.warning("Failed to auto-create frontend API user: %s", exc)
+        logger.info("No API users — auth disabled (open mode).")
+        return
+
+    set_api_key_enabled(True)
+    logger.info(
+        "Frontend API user '%s' auto-created from env vars — auth enabled.",
+        settings.FRONTEND_API_USERNAME,
+    )
+    if settings.FRONTEND_API_KEY == "frontend":
+        logger.warning(
+            "SECURITY: The frontend API key is the default 'frontend'. "
+            "Rotate it via the admin panel and update the stored "
+            "frontend credentials before production use."
+        )
+        return
+
+    logger.warning(
+        "The initial API key was sourced from the FRONTEND_API_KEY "
+        "env var.  For production security, rotate this key via the "
+        "admin panel and update the stored frontend credentials."
+    )
+
+
+def _configure_startup_auth() -> None:
+    """Enable or bootstrap API authentication during startup."""
+    if has_any_users():
+        _reconcile_frontend_service_user()
+        set_api_key_enabled(True)
+        logger.info("API users found — auth enabled.")
+        return
+
+    _create_frontend_service_user_from_env()
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """Manage the lifecycle of the job worker queue.
@@ -103,43 +190,10 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     init_database()
     cleanup_terminal_jobs()
     init_storage()
-    if has_any_users():
-        set_api_key_enabled(True)
-        logger.info("API users found — auth enabled.")
-    elif settings.FRONTEND_API_USERNAME and settings.FRONTEND_API_KEY:
-        # Auto-create the frontend service account from pre-shared env vars.
-        # This eliminates the need to scrape bootstrap keys from logs.
-        try:
-            create_first_user(
-                username=settings.FRONTEND_API_USERNAME,
-                api_key=settings.FRONTEND_API_KEY,
-            )
-            set_api_key_enabled(True)
-            logger.info(
-                "Frontend API user '%s' auto-created from env vars — auth enabled.",
-                settings.FRONTEND_API_USERNAME,
-            )
-            if settings.FRONTEND_API_KEY == "frontend":
-                logger.warning(
-                    "SECURITY: The frontend API key is the default 'frontend'. "
-                    "Rotate it via the admin panel and update the stored "
-                    "frontend credentials before production use."
-                )
-            else:
-                logger.warning(
-                    "The initial API key was sourced from the FRONTEND_API_KEY "
-                    "env var.  For production security, rotate this key via the "
-                    "admin panel and update the stored frontend credentials."
-                )
-        except ValueError as exc:
-            logger.warning("Failed to auto-create frontend API user: %s", exc)
-            logger.info("No API users — auth disabled (open mode).")
-    else:
-        logger.info("No API users — auth disabled (open mode).")
+    _configure_startup_auth()
     init_job_queue()
     worker_tasks = [
-        asyncio.create_task(job_worker())
-        for _ in range(settings.MAX_CONCURRENT_JOBS)
+        asyncio.create_task(job_worker()) for _ in range(settings.MAX_CONCURRENT_JOBS)
     ]
     cleanup_task = asyncio.create_task(_cleanup_job_history())
     yield
@@ -206,6 +260,18 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/auth-check")
+def auth_check(
+    current_user: Annotated[dict[str, Any], Depends(require_api_key)],
+) -> dict[str, Any]:
+    """Validate API credentials without performing a privileged operation."""
+    return {
+        "authenticated": bool(current_user),
+        "username": current_user.get("username"),
+        "is_admin": bool(current_user.get("is_admin")),
+    }
+
+
 @app.get("/llm-health")
 def llm_health_endpoint() -> dict[str, Any]:
     """Return a minimal LLM liveness status.
@@ -231,9 +297,6 @@ async def _check_ollama_reachable() -> bool:
 
     Handles both Ollama Cloud (with optional API key) and local Ollama.
     """
-    from core.config import OLLAMA_API_KEY, USE_OLLAMA_CLOUD
-    import httpx
-
     try:
         if USE_OLLAMA_CLOUD:
             ollama_url = f"{settings.OLLAMA_BASE_URL}/api/version"
@@ -247,15 +310,12 @@ async def _check_ollama_reachable() -> bool:
         async with httpx.AsyncClient() as client:
             response = await client.get(ollama_url)
             return response.status_code == 200
-    except Exception:
+    except httpx.HTTPError:
         return False
 
 
 async def _check_gemini_reachable() -> bool:
     """Return whether the Gemini API responds to a lightweight probe."""
-    from core.config import GOOGLE_API_KEY
-    import httpx
-
     try:
         gemini_url = (
             "https://generativelanguage.googleapis.com/v1beta/models/"
@@ -270,7 +330,7 @@ async def _check_gemini_reachable() -> bool:
                 params={"key": GOOGLE_API_KEY},
             )
             return response.status_code == 200
-    except Exception:
+    except httpx.HTTPError:
         return False
 
 
@@ -284,9 +344,6 @@ def llm_health() -> dict[str, Any]:
             - "llm_provider": str indicating the configured LLM provider ("gemini" or "ollama").
             - "error": str containing error message if any, otherwise None.
     """
-    from core.config import USE_OLLAMA, GOOGLE_API_KEY, OLLAMA_MODEL
-    import asyncio
-
     result: dict[str, Any] = {
         "llm_configured": False,
         "llm_reachable": False,
@@ -403,23 +460,28 @@ def api_users_bootstrap(
 
 # ── File Upload & Analysis ────────────────────────────────────────────────────
 
+# Chunk size for streaming uploads to disk (1 MB).
+_UPLOAD_CHUNK_SIZE: int = 1024 * 1024
 
-def _validate_upload_file(file: UploadFile, contents: bytes) -> str:
-    """Validate upload metadata and magic bytes.
+
+def _validate_upload_metadata(file: UploadFile, file_size: int) -> str:
+    """Validate upload metadata (content type, extension, size).
 
     Args:
-        file: The uploaded file object.
-        contents: Raw file bytes already read from *file*.
+        file:      The uploaded file object (metadata only, not contents).
+        file_size: Size of the streamed file in bytes.
 
     Returns:
         The lower-cased file extension.
 
     Raises:
-        HTTPException: 400 when content type, extension, size, or magic
-            bytes are invalid.
+        HTTPException: 400 when content type, extension, or size is invalid.
     """
     logger.info(
-        "POST /upload  filename=%s  content_type=%s", file.filename, file.content_type
+        "POST /upload  filename=%s  content_type=%s  size=%d",
+        file.filename,
+        file.content_type,
+        file_size,
     )
 
     if file.content_type not in settings.ALLOWED_MIME_TYPES:
@@ -441,19 +503,36 @@ def _validate_upload_file(file: UploadFile, contents: bytes) -> str:
             ),
         )
 
-    if len(contents) > settings.MAX_UPLOAD_BYTES:
+    if file_size > settings.MAX_UPLOAD_BYTES:
         raise HTTPException(
             status_code=400,
             detail=(
-                f"File too large ({len(contents) // 1024} KB). "
+                f"File too large ({file_size // 1024} KB). "
                 f"Maximum allowed: {settings.MAX_UPLOAD_MB} MB."
             ),
         )
 
-    if not contents:
+    if file_size == 0:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
-    if ext == "xlsx" and contents[:4] != b"PK\x03\x04":
+    return ext
+
+
+def _validate_file_signature(path: str, ext: str) -> None:
+    """Validate file magic bytes from a disk path.
+
+    Args:
+        path: Path to the temporary file on disk.
+        ext:  Lower-cased file extension.
+
+    Raises:
+        HTTPException: 400 when the file content does not match the
+            expected format.
+    """
+    with open(path, "rb") as fh:
+        header = fh.read(4096)
+
+    if ext == "xlsx" and header[:4] != b"PK\x03\x04":
         raise HTTPException(
             status_code=400,
             detail="File content does not match XLSX format (expected ZIP signature).",
@@ -461,23 +540,62 @@ def _validate_upload_file(file: UploadFile, contents: bytes) -> str:
 
     if ext == "csv":
         try:
-            contents[:4096].decode("utf-8")
+            header.decode("utf-8")
         except UnicodeDecodeError:
             try:
-                contents[:4096].decode("latin-1")
+                header.decode("latin-1")
             except UnicodeDecodeError:
                 raise HTTPException(
                     status_code=400,
                     detail="File content does not appear to be a valid text/CSV file.",
                 ) from None
 
-    return ext
+    if ext == "json":
+        try:
+            header.decode("utf-8")
+        except UnicodeDecodeError:
+            raise HTTPException(
+                status_code=400,
+                detail="File content does not appear to be valid UTF-8 JSON.",
+            ) from None
+
+
+async def _stream_upload_to_disk(file: UploadFile) -> tuple[str, int]:
+    """Stream an upload to a temporary file on disk, returning path and size.
+
+    Reads the upload in fixed-size chunks to avoid loading the entire
+    file into memory.  Synchronous file operations are offloaded to a
+    thread pool via ``anyio.to_thread.run_sync`` to avoid blocking the
+    async event loop on large uploads.
+
+    Args:
+        file: The FastAPI UploadFile to stream.
+
+    Returns:
+        A tuple of ``(temp_file_path, total_bytes_written)``.
+    """
+    tmp_fd, tmp_path = tempfile.mkstemp(suffix=".upload")
+    os.close(tmp_fd)  # Close the raw fd; aiofiles opens its own handle.
+    total = 0
+    try:
+        async with aiofiles.open(tmp_path, "wb") as fh:
+            while True:
+                chunk = await file.read(_UPLOAD_CHUNK_SIZE)
+                if not chunk:
+                    break
+                await fh.write(chunk)
+                total += len(chunk)
+    except (OSError, RuntimeError):
+        await anyio.to_thread.run_sync(os.unlink, tmp_path)
+        raise
+    return tmp_path, total
 
 
 @app.post(
     "/upload",
     responses={
         400: {"description": "Invalid file content, size, or format"},
+        503: {"description": "File storage is full and cannot be evicted"},
         500: {"description": "File parsing failed"},
     },
 )
@@ -485,44 +603,55 @@ async def upload_file(
     file: Annotated[UploadFile, File(...)],
     _user: Annotated[dict, Depends(require_api_key)],
 ) -> UploadResponse:
-    """Handle file uploads, validate types, and store in memory."""
-    contents = await file.read()
-    _validate_upload_file(file, contents)
+    """Handle file uploads, validate types, and store on disk.
 
+    Streams the upload to a temporary file to avoid loading the entire
+    file into memory, then parses from disk.
+    """
+    tmp_path, file_size = await _stream_upload_to_disk(file)
     try:
-        df, date_col, value_col, freq = parse_upload(
-            contents, file.filename or "upload.csv"
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:
-        logger.exception("Unexpected error during file parsing")
-        raise HTTPException(
-            status_code=500,
-            detail="An internal error occurred while parsing the file.",
-        ) from exc
+        ext = _validate_upload_metadata(file, file_size)
+        _validate_file_signature(tmp_path, ext)
 
-    try:
-        file_id = store_file(
-            df,
-            date_col,
-            value_col,
-            freq,
-            file.filename,
-            owner_id=_user.get("id"),
-        )
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        try:
+            df, date_col, value_col, freq = parse_upload_from_path(
+                tmp_path, file.filename or "upload.csv"
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except (OSError, RuntimeError) as exc:
+            logger.exception("Unexpected error during file parsing")
+            raise HTTPException(
+                status_code=500,
+                detail="An internal error occurred while parsing the file.",
+            ) from exc
 
-    return UploadResponse(
-        file_id=file_id,
-        filename=file.filename or "",
-        rows=len(df),
-        columns=df.columns.tolist(),
-        detected_date_col=date_col,
-        detected_value_col=value_col,
-        detected_frequency=freq,
-    )
+        try:
+            file_id = store_file(
+                df,
+                date_col,
+                value_col,
+                freq,
+                file.filename,
+                owner_id=_user.get("id"),
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+        return UploadResponse(
+            file_id=file_id,
+            filename=file.filename or "",
+            rows=len(df),
+            columns=df.columns.tolist(),
+            detected_date_col=date_col,
+            detected_value_col=value_col,
+            detected_frequency=freq,
+        )
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            logger.warning("Failed to clean up temp file: %s", tmp_path)
 
 
 @app.post(
@@ -551,7 +680,7 @@ async def preflight_check(
         return run_preflight_checks(
             stored["df"], date_col, value_col, body.forecast_horizon
         )
-    except Exception as exc:
+    except (KeyError, TypeError, ValueError) as exc:
         logger.exception("Preflight failed")
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

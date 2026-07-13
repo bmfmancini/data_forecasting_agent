@@ -41,9 +41,14 @@ def analyze_residuals(
     is_uncorrelated = None
     if "residual_autocorrelation" not in disabled:
         # The null hypothesis is that the data are independently distributed.
-        ljung_box_result = acorr_ljungbox(residuals, lags=[10], return_df=True)
-        ljung_box_p_value = ljung_box_result["lb_pvalue"].iloc[0]
-        is_uncorrelated = ljung_box_p_value >= _AUTOCORRELATION_P_THRESHOLD
+        residual_values = residuals.dropna()
+        if len(residual_values) > 1:
+            lag = min(10, max(1, len(residual_values) // 5))
+            ljung_box_result = acorr_ljungbox(
+                residual_values, lags=[lag], return_df=True
+            )
+            ljung_box_p_value = ljung_box_result["lb_pvalue"].iloc[0]
+            is_uncorrelated = ljung_box_p_value >= _AUTOCORRELATION_P_THRESHOLD
 
     shapiro_p = None
     is_normal = None

@@ -21,7 +21,7 @@
             <div class="col-lg-6">
                 <div class="card h-100"><div class="card-body">
                     <label class="form-label" for="file-input">Upload time-series data</label>
-                    <input type="file" id="file-input" class="form-control" accept=".csv,.xlsx">
+                    <input type="file" id="file-input" class="form-control" accept=".csv,.xlsx,.json">
                     <div id="upload-status" class="mt-2 small" aria-live="polite"></div>
                     <div class="d-flex align-items-center my-3"><hr class="flex-grow-1"><span class="mx-2 text-muted">OR</span><hr class="flex-grow-1"></div>
                     <form method="post" action="{{ url_for('main.load_demo') }}">

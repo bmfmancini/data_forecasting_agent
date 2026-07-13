@@ -30,7 +30,12 @@ def env_int(key: str, default: int) -> int:
     try:
         return int(value)
     except (ValueError, TypeError):
-        logger.warning("Invalid value for env var '%s': '%s'. Using default: %s", key, value, default)
+        logger.warning(
+            "Invalid value for env var '%s': '%s'. Using default: %s",
+            key,
+            value,
+            default,
+        )
         return default
 
 
@@ -50,5 +55,10 @@ def env_float(key: str, default: float) -> float:
     try:
         return float(value)
     except (ValueError, TypeError):
-        logger.warning("Invalid value for env var '%s': '%s'. Using default: %s", key, value, default)
+        logger.warning(
+            "Invalid value for env var '%s': '%s'. Using default: %s",
+            key,
+            value,
+            default,
+        )
         return default

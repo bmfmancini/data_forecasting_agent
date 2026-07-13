@@ -17,9 +17,13 @@ from flask_login import current_user
 from flask_session import Session  # type: ignore[import-untyped]
 from werkzeug.wrappers import Response
 
+from blueprints.admin import admin_bp
+from blueprints.auth import auth_bp
+from blueprints.main import main_bp
 from config import get_config
 from db.db import init_app as db_init_app, init_db, query_db
 from extensions import csrf, login_manager
+from manage import register_commands
 from models import User
 from services.markdown_service import markdown_to_safe_html
 
@@ -61,7 +65,7 @@ def create_app(config_name: str | None = None) -> Flask:
 
     with app.app_context():
         init_db()
-        _auto_configure_api_credentials(app)
+        _sync_app_config_from_db(app)
         _sync_backend_url_from_db(app)
 
     _register_template_filters(app)
@@ -69,8 +73,6 @@ def create_app(config_name: str | None = None) -> Flask:
     _register_context_processors(app)
     _register_user_loader()
     _register_password_change(app)
-
-    from manage import register_commands
 
     register_commands(app)
 
@@ -111,61 +113,18 @@ def _sync_backend_url_from_db(app: Flask) -> None:
             app.config["BACKEND_URL"] = url
 
 
-def _auto_configure_api_credentials(app: Flask) -> None:
-    """Auto-store backend API credentials from env vars on first startup.
-
-    When ``FRONTEND_API_USERNAME`` and ``FRONTEND_API_KEY`` are both set
-    in the environment and the frontend's SQLite DB has no stored
-    credentials yet, this function encrypts and stores them so the
-    frontend can authenticate with the backend immediately — no admin
-    panel visit or log-scraping required.
-
-    If credentials are already stored, this is a no-op (the admin may
-    have configured different credentials via the UI).
-
-    Args:
-        app: The Flask application instance.
-    """
-    username = os.environ.get("FRONTEND_API_USERNAME")
-    api_key = os.environ.get("FRONTEND_API_KEY")
-    if not username or not api_key:
-        return
-
-    existing = query_db(
-        "SELECT encrypted_username FROM api_credentials"
-        " WHERE label = 'default' LIMIT 1",
+def _sync_app_config_from_db(app: Flask) -> None:
+    """Load DB-owned frontend settings into Flask runtime config."""
+    row = query_db(
+        "SELECT value FROM app_config WHERE key = 'max_upload_mb'",
         one=True,
     )
-    if existing and existing.get("encrypted_username"):
-        logger.info("API credentials already stored — skipping env auto-config.")
-        return
-
-    from db.crypto import encrypt
-    from db.db import execute_db
-
-    backend_url = app.config.get("BACKEND_URL", "http://localhost:8000")
-    enc_user = encrypt(username)
-    enc_key = encrypt(api_key)
-
-    if existing:
-        # Row exists but has no credentials — update it
-        execute_db(
-            "UPDATE api_credentials"
-            " SET base_url = ?, encrypted_username = ?, encrypted_password = ?"
-            " WHERE label = 'default'",
-            (backend_url, enc_user, enc_key),
-        )
-    else:
-        execute_db(
-            "INSERT INTO api_credentials"
-            " (label, base_url, encrypted_username, encrypted_password)"
-            " VALUES (?, ?, ?, ?)",
-            ("default", backend_url, enc_user, enc_key),
-        )
-    logger.info(
-        "API credentials auto-configured from env vars (username='%s').",
-        username,
-    )
+    if row and isinstance(row, dict):
+        try:
+            max_upload_mb = max(int(row.get("value", 100)), 1)
+        except (TypeError, ValueError):
+            max_upload_mb = 100
+        app.config["MAX_CONTENT_LENGTH"] = max_upload_mb * 1024 * 1024
 
 
 def _register_template_filters(app: Flask) -> None:
@@ -197,10 +156,6 @@ def _register_blueprints(app: Flask) -> None:
     Args:
         app: The Flask application instance.
     """
-    from blueprints.auth import auth_bp
-    from blueprints.main import main_bp
-    from blueprints.admin import admin_bp
-
     app.register_blueprint(auth_bp)
     app.register_blueprint(main_bp)
     app.register_blueprint(admin_bp)
@@ -250,14 +205,12 @@ def _register_user_loader() -> None:
         Returns:
             A :class:`~models.User` instance or ``None`` when not found.
         """
-        from db.db import query_db as _query
-
         try:
             user_pk = int(user_id)
         except (TypeError, ValueError):
             return None
 
-        row = _query(
+        row = query_db(
             """
             SELECT u.id, u.username, r.name AS role_name, u.active,
                    u.must_change_password, u.session_version

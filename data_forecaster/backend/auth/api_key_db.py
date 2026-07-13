@@ -12,7 +12,11 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
-from auth.argon2_helpers import generate_api_key, hash_api_key
+from auth.argon2_helpers import (
+    generate_api_key,
+    hash_api_key,
+    verify_api_key as verify_hash,
+)
 from core.database import get_connection
 from core.logging_config import get_logger
 
@@ -97,6 +101,65 @@ def create_first_user(username: str, api_key: str) -> dict[str, Any]:
         conn.close()
 
 
+def reconcile_service_user(username: str, api_key: str) -> bool:
+    """Ensure an existing service API user matches the configured key.
+
+    The frontend and backend can be rebuilt while their SQLite volumes
+    persist. In that case environment variables may contain a new
+    ``FRONTEND_API_KEY`` while the backend database still stores the old
+    Argon2 hash. This helper makes startup idempotent for the named service
+    account without creating users when none exist.
+
+    Args:
+        username: Existing service account username.
+        api_key: Plaintext API key from the deployment environment.
+
+    Returns:
+        ``True`` when the user existed and is now enabled with a matching key;
+        ``False`` when no matching user exists.
+
+    Raises:
+        ValueError: When username or api_key is empty.
+    """
+    if not username or not username.strip():
+        raise ValueError("Username is required.")
+    if not api_key:
+        raise ValueError("API key is required.")
+
+    clean_username = username.strip()
+    conn: sqlite3.Connection = get_connection()
+    try:
+        row: sqlite3.Row | None = conn.execute(
+            """
+            SELECT id, api_key_hash, enabled
+            FROM api_users
+            WHERE username = ?
+            """,
+            (clean_username,),
+        ).fetchone()
+        if row is None:
+            return False
+
+        key_matches = verify_hash(api_key, str(row["api_key_hash"]))
+        if key_matches and int(row["enabled"]):
+            return True
+
+        conn.execute(
+            """
+            UPDATE api_users
+            SET api_key_hash = ?,
+                enabled = 1
+            WHERE id = ?
+            """,
+            (hash_api_key(api_key), int(row["id"])),
+        )
+        conn.commit()
+        logger.info("Service API user '%s' reconciled from env.", clean_username)
+        return True
+    finally:
+        conn.close()
+
+
 def verify_api_key(
     username: str, api_key: str, client_ip: str | None = None
 ) -> dict[str, Any] | None:
@@ -118,8 +181,6 @@ def verify_api_key(
         when the username does not exist, the account is disabled, or
         the key does not match.
     """
-    from auth.argon2_helpers import verify_api_key as _verify
-
     conn: sqlite3.Connection = get_connection()
     try:
         row: sqlite3.Row | None = conn.execute(
@@ -138,7 +199,7 @@ def verify_api_key(
         if not int(row["enabled"]):
             return None
 
-        if not _verify(api_key, str(row["api_key_hash"])):
+        if not verify_hash(api_key, str(row["api_key_hash"])):
             return None
 
         conn.execute(
@@ -175,12 +236,14 @@ def list_api_users() -> list[dict[str, Any]]:
     """
     conn: sqlite3.Connection = get_connection()
     try:
-        rows: list[sqlite3.Row] = conn.execute("""
+        rows: list[sqlite3.Row] = conn.execute(
+            """
             SELECT id, username, description, enabled, bootstrap, is_admin,
                    created_at, last_used, last_used_ip
             FROM api_users
             ORDER BY id
-            """).fetchall()
+            """
+        ).fetchall()
         return [
             {
                 "id": int(r["id"]),

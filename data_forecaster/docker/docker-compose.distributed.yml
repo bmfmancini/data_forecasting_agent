@@ -1,5 +1,3 @@
-version: "3.9"
-
 # Distributed deployment — frontend host override.
 #
 # Apply this file on top of docker-compose.yml on the frontend machine to
@@ -8,7 +6,8 @@ version: "3.9"
 #
 #   docker-compose -f docker-compose.yml -f docker-compose.distributed.yml up -d --build
 #
-# Set REMOTE_BACKEND_URL and API_VERIFY_SSL in .env before starting.
+# Configure the backend URL and SSL verification in Admin -> API Config
+# after the frontend starts.
 
 services:
   backend:
@@ -32,7 +31,5 @@ services:
   frontend:
     environment:
       - FLASK_ENV=production
-      - BACKEND_URL=${REMOTE_BACKEND_URL:-https://api.example.com:8443}
-      - API_VERIFY_SSL=${API_VERIFY_SSL:-true}
       - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
     depends_on: []

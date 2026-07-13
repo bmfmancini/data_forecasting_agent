@@ -1,3 +1,5 @@
+"""Chroma-backed knowledge base ingestion and retrieval utilities."""
+
 from __future__ import annotations
 
 import os

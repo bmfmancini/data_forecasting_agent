@@ -2,20 +2,11 @@
 
 from __future__ import annotations
 
-import os
-import sys
 from types import SimpleNamespace
 
 import pytest
 
-# Add the backend directory to the path so that backend-internal imports
-# (e.g. ``from core.logging_config import ...``) resolve correctly.
-sys.path.insert(
-    0,
-    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "backend")),
-)
-
-from agents.statistical_review_agent import (  # noqa: E402
+from agents.statistical_review_agent import (
     _compute_verdict,
     _deterministic_pre_check,
     _parse_endorsements,
@@ -24,7 +15,7 @@ from agents.statistical_review_agent import (  # noqa: E402
     _parse_verdict,
     run_statistical_review_agent,
 )
-from schemas import (  # noqa: E402
+from schemas import (
     ForecastResult,
     ModelSelectionResult,
     StatisticalResult,

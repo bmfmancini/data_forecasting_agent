@@ -41,12 +41,16 @@ MAX_CONCURRENT_JOBS: int = int(os.getenv("MAX_CONCURRENT_JOBS", "2"))
 if MAX_CONCURRENT_JOBS < 1:
     raise ValueError("MAX_CONCURRENT_JOBS must be at least 1.")
 
-ALLOWED_EXTENSIONS: list[str] = os.getenv("ALLOWED_EXTENSIONS", "csv,xlsx").split(",")
+ALLOWED_EXTENSIONS: list[str] = os.getenv("ALLOWED_EXTENSIONS", "csv,xlsx,json").split(
+    ","
+)
 
 ALLOWED_MIME_TYPES: list[str] = [
     "text/csv",
     "application/vnd.ms-excel",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/json",
+    "text/plain",
 ]
 
 CHROMA_PERSIST_DIR: str = os.getenv("CHROMA_PERSIST_DIR", "./chroma_db")
@@ -61,8 +65,8 @@ BACKEND_DB_PATH: str = os.getenv("BACKEND_DB_PATH", "./data/backend.db")
 API_KEY_ENABLED: bool = os.getenv("API_KEY_ENABLED", "false").lower() == "true"
 
 # Deployment-time secret used to protect the one-time bootstrap endpoint
-# (POST /api-users/bootstrap).  Set this to a strong random value in .env
-# and share it with the admin who will enable API authentication.
+# (POST /api-users/bootstrap).  Set this to a strong random value in the
+# backend .env and share it with the admin who will enable API authentication.
 ADMIN_API_KEY: str | None = os.getenv("ADMIN_API_KEY")
 
 # Pre-shared credentials for the frontend service account.  When both are

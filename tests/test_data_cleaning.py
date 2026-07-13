@@ -2,24 +2,12 @@
 
 from __future__ import annotations
 
-import os
-import sys
-
 import numpy as np
 import pandas as pd
 import pytest
 from pandas.tseries.frequencies import to_offset
 
-# Add the backend directory to the path so that backend-internal imports
-# (e.g. ``from core.logging_config import ...``) resolve correctly.
-sys.path.insert(
-    0,
-    os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "data_forecaster", "backend")
-    ),
-)
-
-from data_forecaster.backend.utils.data_cleaning import (  # noqa: E402
+from data_forecaster.backend.utils.data_cleaning import (
     apply_iqr_clipping,
     apply_zscore_clipping,
     audit_series,
@@ -179,6 +167,18 @@ class TestImputeMissing:
     def test_impute_missing_seasonal_decompose(self, series_with_missing):
         """Test impute_missing with seasonal-decompose method."""
         imputed = impute_missing(series_with_missing, "seasonal-decompose")
+        assert imputed.isna().sum() == 0
+
+    def test_impute_missing_seasonal_decompose_handles_edge_gaps(self):
+        """Seasonal decomposition should not receive leading/trailing NaNs."""
+        index = pd.date_range("2020-01-01", periods=30, freq="D")
+        values = pd.Series(range(30), index=index, dtype=float)
+        values.iloc[0] = pd.NA
+        values.iloc[-1] = pd.NA
+        values.iloc[10:13] = pd.NA
+
+        imputed = impute_missing(values, "seasonal-decompose")
+
         assert imputed.isna().sum() == 0
 
     def test_impute_missing_unsupported_method(self, series_with_missing):

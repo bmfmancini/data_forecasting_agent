@@ -2,24 +2,16 @@
 
 from __future__ import annotations
 
-import os
-import sys
 from typing import Any
 
 import pandas as pd
 import pytest
 
-_backend_dir = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "data_forecaster", "backend")
-)
-if _backend_dir not in sys.path:
-    sys.path.insert(0, _backend_dir)
-
-import core.config as settings  # noqa: E402
-import services.file_service as file_service  # noqa: E402
-import services.job_service as job_service  # noqa: E402
-from auth.api_key_db import create_first_user, delete_api_user  # noqa: E402
-from core.database import get_connection, init_database  # noqa: E402
+import core.config as settings
+import services.file_service as file_service
+import services.job_service as job_service
+from auth.api_key_db import create_first_user, delete_api_user
+from core.database import get_connection, init_database
 
 
 @pytest.fixture
@@ -129,8 +121,12 @@ def test_non_admin_user_job_limit_queues_additional_work(storage_dir: str) -> No
         application_username="forecast-user",
     )
 
-    assert job_service._claim_job(first_job_id) is not None  # pylint: disable=protected-access
-    assert job_service._claim_job(second_job_id) is None  # pylint: disable=protected-access
+    assert (
+        job_service._claim_job(first_job_id) is not None
+    )  # pylint: disable=protected-access
+    assert (
+        job_service._claim_job(second_job_id) is None
+    )  # pylint: disable=protected-access
     pending = job_service.get_job_status_only(second_job_id)
     assert pending is not None
     assert pending["status"] == "pending"
@@ -140,7 +136,11 @@ def test_clear_terminal_jobs_preserves_active_work(storage_dir: str) -> None:
     """Manual queue cleanup deletes terminal jobs without affecting pending work."""
     connection = get_connection()
     try:
-        for job_id, status in (("done-job", "done"), ("error-job", "error"), ("pending-job", "pending")):
+        for job_id, status in (
+            ("done-job", "done"),
+            ("error-job", "error"),
+            ("pending-job", "pending"),
+        ):
             connection.execute(
                 """
                 INSERT INTO forecast_jobs (job_id, file_id, date_col, value_col,

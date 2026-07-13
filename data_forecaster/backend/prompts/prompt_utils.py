@@ -16,7 +16,6 @@ from langchain_core.prompts import ChatPromptTemplate
 
 from utils.env_helpers import env_int
 
-
 # Token budgets (approximate maximum number of tokens for the full prompt).
 # Values are read from environment variables to allow easy tuning without code changes.
 # Fallback defaults match the previously hard-coded values.
@@ -25,9 +24,7 @@ TOKEN_BUDGETS: dict[str, int] = {
     "narrative_executive_summary": env_int(
         "NARRATIVE_EXECUTIVE_SUMMARY_TOKEN_BUDGET", 300
     ),
-    "narrative_data_quality": env_int(
-        "NARRATIVE_DATA_QUALITY_TOKEN_BUDGET", 200
-    ),
+    "narrative_data_quality": env_int("NARRATIVE_DATA_QUALITY_TOKEN_BUDGET", 200),
     "narrative_historical_analysis": env_int(
         "NARRATIVE_HISTORICAL_ANALYSIS_TOKEN_BUDGET", 250
     ),
@@ -40,12 +37,8 @@ TOKEN_BUDGETS: dict[str, int] = {
     "narrative_statistical_audit": env_int(
         "NARRATIVE_STATISTICAL_AUDIT_TOKEN_BUDGET", 200
     ),
-    "narrative_explainability": env_int(
-        "NARRATIVE_EXPLAINABILITY_TOKEN_BUDGET", 200
-    ),
-    "narrative_recommendation": env_int(
-        "NARRATIVE_RECOMMENDATION_TOKEN_BUDGET", 150
-    ),
+    "narrative_explainability": env_int("NARRATIVE_EXPLAINABILITY_TOKEN_BUDGET", 200),
+    "narrative_recommendation": env_int("NARRATIVE_RECOMMENDATION_TOKEN_BUDGET", 150),
     "forecasting": env_int("FORECASTING_TOKEN_BUDGET", 400),
     "data_validation": env_int("DATA_VALIDATION_TOKEN_BUDGET", 300),
     "model_selection": env_int("MODEL_SELECTION_TOKEN_BUDGET", 300),

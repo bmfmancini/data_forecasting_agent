@@ -12,17 +12,17 @@
                 <form method="post" action="{{ url_for('admin.api_config_enable_auth') }}">
                     {{ form.hidden_tag() }}
                     <div class="mb-2">
-                        <label class="form-label small">Admin Key <span class="text-muted">(ADMIN_API_KEY from backend .env)</span></label>
-                        <input type="password" name="admin_key" class="form-control form-control-sm" placeholder="Deployment admin key" required>
+                        <label class="form-label small" for="bootstrap-admin-key">Admin Key <span class="text-muted">(ADMIN_API_KEY from backend .env)</span></label>
+                        <input type="password" id="bootstrap-admin-key" name="admin_key" class="form-control form-control-sm" placeholder="Deployment admin key" required>
                     </div>
                     <div class="row mb-2">
                         <div class="col">
-                            <label class="form-label small">API Username</label>
-                            <input type="text" name="api_username" class="form-control form-control-sm" placeholder="e.g. frontend" required>
+                            <label class="form-label small" for="bootstrap-api-username">API Username</label>
+                            <input type="text" id="bootstrap-api-username" name="api_username" class="form-control form-control-sm" placeholder="e.g. frontend" required>
                         </div>
                         <div class="col">
-                            <label class="form-label small">API Key</label>
-                            <input type="text" name="api_key" class="form-control form-control-sm" placeholder="Choose a strong key" required>
+                            <label class="form-label small" for="bootstrap-api-key">API Key</label>
+                            <input type="text" id="bootstrap-api-key" name="api_key" class="form-control form-control-sm" placeholder="Choose a strong key" required>
                         </div>
                     </div>
                     <button type="submit" class="btn btn-warning btn-sm">Create User &amp; Enable Auth</button>
@@ -35,14 +35,45 @@
         </div>
         {% endif %}
 
+        {% if current_api_config %}
+        <div class="card mb-3">
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-dark table-hover align-middle mb-0">
+                        <thead>
+                            <tr>
+                                <th>Username</th>
+                                <th>API URL</th>
+                                <th>Timeout</th>
+                                <th>SSL</th>
+                                <th class="text-end">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr id="api-config-summary-row" tabindex="0" onkeydown="handleApiConfigSummaryKeydown(event)">
+                                <td>{{ current_api_config.username or '—' }}</td>
+                                <td>{{ current_api_config.base_url }}</td>
+                                <td>{{ current_api_config.timeout }}s</td>
+                                <td>{{ 'Verify' if current_api_config.verify_ssl else 'Skip' }}</td>
+                                <td class="text-end">
+                                    <button type="button" id="api-config-edit-btn" class="btn btn-outline-info btn-sm">Edit</button>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
         <div class="card">
             <div class="card-body">
-                <form method="post" novalidate>
+                <form method="post" novalidate id="api-config-form" class="{{ 'd-none' if current_api_config else '' }}">
                     {{ form.hidden_tag() }}
                     <div class="mb-3">{{ form.base_url.label(class="form-label") }}{{ form.base_url(class="form-control", placeholder="http://backend:8000") }}</div>
                     <div class="mb-3">{{ form.api_username.label(class="form-label") }}{{ form.api_username(class="form-control", placeholder="X-API-Username") }}</div>
-                    <div class="mb-3">{{ form.api_password.label(class="form-label") }}{{ form.api_password(class="form-control", placeholder="X-API-Key") }}
-                        <small class="text-muted">Leave blank to keep existing credentials. Enter both username and key to update.</small>
+                    <div class="mb-3">{{ form.api_password.label(class="form-label") }}{{ form.api_password(class="form-control", value="", placeholder=api_key_placeholder) }}
+                        <small class="text-muted">Leave blank to keep the existing API key. Enter a new key only when rotating credentials.</small>
                     </div>
                     <div class="mb-3">{{ form.timeout.label(class="form-label") }}{{ form.timeout(class="form-control") }}</div>
                     <div class="mb-3 form-check">
@@ -63,12 +94,40 @@
 {% endblock %}
 {% block scripts %}
 <script>
+var summaryRow = document.getElementById("api-config-summary-row");
+var editButton = document.getElementById("api-config-edit-btn");
+var configForm = document.getElementById("api-config-form");
+function showApiConfigForm() {
+    if (configForm) {
+        configForm.classList.remove("d-none");
+        var firstInput = configForm.querySelector("input");
+        if (firstInput) firstInput.focus();
+    }
+}
+if (summaryRow) {
+    summaryRow.addEventListener("click", showApiConfigForm);
+    summaryRow.addEventListener("keydown", function(event) {
+        if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            showApiConfigForm();
+        }
+    });
+}
+if (editButton) {
+    editButton.addEventListener("click", function(event) {
+        event.stopPropagation();
+        showApiConfigForm();
+    });
+}
 document.getElementById("btn-test-conn").addEventListener("click", function() {
     var resultEl = document.getElementById("test-result");
+    var form = document.getElementById("api-config-form");
+    var formData = new FormData(form);
     resultEl.innerHTML = '<span style="color:var(--text-muted-custom);">Testing…</span>';
     fetch("{{ url_for('admin.api_config_test') }}", {
         method: "POST",
-        headers: { "X-CSRFToken": document.querySelector('meta[name="csrf-token"]').getAttribute("content") }
+        headers: { "X-CSRFToken": document.querySelector('meta[name="csrf-token"]').getAttribute("content") },
+        body: formData
     }).then(function(r) { return r.json(); })
     .then(function(data) {
         var cls = data.ok ? "alert-success" : "alert-danger";

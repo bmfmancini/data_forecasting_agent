@@ -19,7 +19,6 @@ from report.models import (
     Assumption,
     ConfidenceAssessment,
     Dashboard,
-    DashboardItem,
     DataQualitySection,
     EvidenceRef,
     ExecutiveReport,
@@ -38,9 +37,9 @@ from report.models import (
     Risk,
     StatisticalAudit,
 )
+from report.dashboard import build_dashboard
 from report.rules import (
     CONFIDENCE_DEDUCTIONS,
-    DASHBOARD_STATUS_COLORS,
     FORECAST_DIRECTIONS,
     HEALTH_STATUS,
     RECOMMENDATION_PRIORITIES,
@@ -95,43 +94,67 @@ class ExecutiveReportBuilder:
             "change_point_analysis" in statistical.recommended_remediation
         )
         confidence = self._compute_confidence(
-            forecast, statistical, validation, statistical_review,
+            forecast,
+            statistical,
+            validation,
+            statistical_review,
             has_structural_breaks,
         )
         data_quality = self._compute_data_quality(validation, statistical)
         health_indicators = self._compute_health_indicators(
-            statistical, validation, forecast, statistical_review, confidence,
-            data_quality, has_structural_breaks,
+            statistical,
+            validation,
+            forecast,
+            statistical_review,
+            confidence,
+            data_quality,
+            has_structural_breaks,
         )
         forecast_metrics = self._build_forecast_metrics(forecast)
-        model_comparison = self._build_model_comparison(
-            all_metrics, model_selection
-        )
+        model_comparison = self._build_model_comparison(all_metrics, model_selection)
         recommendations = self._build_recommendations(
-            statistical, forecast, statistical_review, confidence, data_quality,
+            statistical,
+            forecast,
+            statistical_review,
+            confidence,
+            data_quality,
             has_structural_breaks,
         )
         risks = self._build_risks(
-            statistical, forecast, statistical_review, data_quality,
+            statistical,
+            forecast,
+            statistical_review,
+            data_quality,
             has_structural_breaks,
         )
         assumptions = self._build_assumptions(statistical, validation)
-        explainability = self._build_explainability(
-            statistical, forecast, confidence
-        )
+        explainability = self._build_explainability(statistical, forecast, confidence)
         statistical_audit = self._build_statistical_audit(statistical_review)
         historical = self._build_historical_analysis(statistical)
         forecast_outlook = ForecastOutlook(metrics=forecast_metrics)
         dashboard = self._build_dashboard(
-            forecast, statistical, model_selection, confidence, data_quality,
-            statistical_review, has_structural_breaks,
+            forecast,
+            statistical,
+            model_selection,
+            confidence,
+            data_quality,
+            statistical_review,
+            has_structural_breaks,
         )
         executive_summary = self._build_executive_summary(
-            forecast, statistical, confidence, data_quality,
-            statistical_review, has_structural_breaks,
+            forecast,
+            statistical,
+            confidence,
+            data_quality,
+            statistical_review,
+            has_structural_breaks,
         )
         metadata = self._build_metadata(
-            validation, forecast, model_selection, all_metrics, data_quality,
+            validation,
+            forecast,
+            model_selection,
+            all_metrics,
+            data_quality,
         )
         appendix = self._build_appendix(forecast, all_metrics)
 
@@ -203,9 +226,7 @@ class ExecutiveReportBuilder:
 
         if statistical.outlier_ratio > 0.05:
             score -= CONFIDENCE_DEDUCTIONS["outlier_ratio_high"]
-            factors.append(
-                f"Outlier ratio {statistical.outlier_ratio:.1%} exceeds 5%"
-            )
+            factors.append(f"Outlier ratio {statistical.outlier_ratio:.1%} exceeds 5%")
 
         if validation.missing_values > 0 or validation.missing_timestamps > 0:
             score -= CONFIDENCE_DEDUCTIONS["missing_data"]
@@ -232,9 +253,7 @@ class ExecutiveReportBuilder:
 
         top_factors = factors[:2]
         explanation = (
-            f"Confidence is {label.lower()} based on: "
-            + "; ".join(top_factors)
-            + "."
+            f"Confidence is {label.lower()} based on: " + "; ".join(top_factors) + "."
         )
 
         return ConfidenceAssessment(
@@ -339,7 +358,9 @@ class ExecutiveReportBuilder:
         # Trend Stability
         if statistical.has_trend and not statistical.is_stationary_adf:
             trend_status = HEALTH_STATUS["trend_stability"]["changing"]
-            trend_detail = "A statistically significant trend is changing the baseline over time."
+            trend_detail = (
+                "A statistically significant trend is changing the baseline over time."
+            )
         else:
             trend_status = HEALTH_STATUS["trend_stability"]["stable"]
             trend_detail = "The underlying trend is stable across the observed period."
@@ -348,7 +369,9 @@ class ExecutiveReportBuilder:
         sp = statistical.seasonal_period
         if sp and sp > 1:
             seasonality_status = HEALTH_STATUS["seasonality"]["strong"]
-            seasonality_detail = f"A recurring seasonal pattern repeats every {sp} periods."
+            seasonality_detail = (
+                f"A recurring seasonal pattern repeats every {sp} periods."
+            )
         else:
             seasonality_status = HEALTH_STATUS["seasonality"]["none"]
             seasonality_detail = "No strong seasonal pattern was detected."
@@ -432,9 +455,7 @@ class ExecutiveReportBuilder:
         first_val = forecast.forecast[0] if forecast.forecast else 0.0
         last_val = forecast.forecast[-1] if forecast.forecast else 0.0
         pct_change = (
-            ((last_val - first_val) / abs(first_val)) * 100
-            if first_val != 0
-            else 0.0
+            ((last_val - first_val) / abs(first_val)) * 100 if first_val != 0 else 0.0
         )
         return first_val, last_val, pct_change
 
@@ -451,20 +472,14 @@ class ExecutiveReportBuilder:
             :class:`ForecastMetrics` with per-period prediction intervals.
         """
         first_val, last_val, pct_change = self._forecast_pct_change(forecast)
-        first_date = (
-            forecast.forecast_dates[0] if forecast.forecast_dates else "N/A"
-        )
-        last_date = (
-            forecast.forecast_dates[-1] if forecast.forecast_dates else "N/A"
-        )
+        first_date = forecast.forecast_dates[0] if forecast.forecast_dates else "N/A"
+        last_date = forecast.forecast_dates[-1] if forecast.forecast_dates else "N/A"
 
         intervals: list[PredictionInterval] = []
         for i, date in enumerate(forecast.forecast_dates):
             lower = forecast.lower_ci[i] if i < len(forecast.lower_ci) else 0.0
             upper = forecast.upper_ci[i] if i < len(forecast.upper_ci) else 0.0
-            point = (
-                forecast.forecast[i] if i < len(forecast.forecast) else 0.0
-            )
+            point = forecast.forecast[i] if i < len(forecast.forecast) else 0.0
             intervals.append(
                 PredictionInterval(
                     date=date,
@@ -528,7 +543,9 @@ class ExecutiveReportBuilder:
                     rmse=round(metrics.get("RMSE", 0.0), 4),
                     mae=round(metrics.get("MAE", 0.0), 4),
                     mape=round(metrics.get("MAPE", 0.0), 2),
-                    wape=round(metrics.get("WAPE", 0.0) * 100, 2), # Convert to percentage
+                    wape=round(
+                        metrics.get("WAPE", 0.0) * 100, 2
+                    ),  # Convert to percentage
                     mase=round(metrics.get("MASE", 0.0), 4),
                     selected=(name == selected),
                     rejected_reason=(
@@ -935,9 +952,7 @@ class ExecutiveReportBuilder:
                 f"predictably."
             )
         else:
-            seasonal_note = (
-                "No significant seasonality is assumed for this projection."
-            )
+            seasonal_note = "No significant seasonality is assumed for this projection."
         assumptions.append(
             Assumption(
                 assumption=f"Seasonal stability: {seasonal_note}",
@@ -1028,14 +1043,10 @@ class ExecutiveReportBuilder:
         strongest = list(review.endorsements)
         concerns = self._review_concerns(review)
         follow_up = [
-            f.get("recommendation", "")
-            for f in review.flags
-            if f.get("recommendation")
+            f.get("recommendation", "") for f in review.flags if f.get("recommendation")
         ]
         if not follow_up:
-            follow_up = [
-                "Validate the forecast against next period's actuals."
-            ]
+            follow_up = ["Validate the forecast against next period's actuals."]
 
         return StatisticalAudit(
             verdict=review.verdict,
@@ -1145,9 +1156,7 @@ class ExecutiveReportBuilder:
             direction = FORECAST_DIRECTIONS["downward"]
         else:
             direction = FORECAST_DIRECTIONS["flat"]
-        is_stationary = (
-            statistical.is_stationary_adf and statistical.is_stationary_kpss
-        )
+        is_stationary = statistical.is_stationary_adf and statistical.is_stationary_kpss
         return HistoricalAnalysis(
             trend_direction=direction,
             trend_slope=statistical.trend_slope,
@@ -1184,165 +1193,15 @@ class ExecutiveReportBuilder:
         Returns:
             :class:`Dashboard` with 7 :class:`DashboardItem` widgets.
         """
-        first_val, last_val, pct_change = self._forecast_pct_change(forecast)
-        direction, dir_status = self._direction_status(statistical.trend_slope)
-        growth_str = f"{pct_change:+.1f}%"
-        growth_status = self._growth_status(pct_change)
-        conf_str = f"{confidence.score}/100 — {confidence.label}"
-        conf_status = self._confidence_status(confidence.label)
-        dq_status = self._quality_status(data_quality.rating)
-        primary_risk, risk_status = self._primary_risk(
-            review, data_quality, forecast, statistical, has_structural_breaks
-        )
-        action, action_status = self._recommended_action(review, data_quality)
-
-        items = [
-            DashboardItem(
-                title="Forecast Direction",
-                value=direction,
-                status=dir_status,
-                description=(
-                    f"The metric is projected to trend {direction.lower()} "
-                    f"over the {len(forecast.forecast)}-period horizon."
-                ),
-                icon="📈",
-                priority=1,
-            ),
-            DashboardItem(
-                title="Expected Growth",
-                value=growth_str,
-                status=growth_status,
-                description=(
-                    f"Projected change from {round(first_val, 2)} to "
-                    f"{round(last_val, 2)} over the forecast horizon."
-                ),
-                icon="📊",
-                priority=2,
-            ),
-            DashboardItem(
-                title="Forecast Confidence",
-                value=conf_str,
-                status=conf_status,
-                description=confidence.explanation,
-                icon="🎯",
-                priority=3,
-            ),
-            DashboardItem(
-                title="Data Quality",
-                value=data_quality.rating,
-                status=dq_status,
-                description=data_quality.rating_explanation,
-                icon="🔍",
-                priority=4,
-            ),
-            DashboardItem(
-                title="Model Selected",
-                value=model_selection.selected_model,
-                status="info",
-                description=(
-                    "Selected based on validation performance and data "
-                    "characteristics."
-                ),
-                icon="🤖",
-                priority=5,
-            ),
-            DashboardItem(
-                title="Primary Risk",
-                value=primary_risk,
-                status=risk_status,
-                description=(
-                    "The most significant risk identified from the analysis."
-                ),
-                icon="⚠️",
-                priority=6,
-            ),
-            DashboardItem(
-                title="Recommended Action",
-                value=action,
-                status=action_status,
-                description=(
-                    "Immediate action recommended for leadership."
-                ),
-                icon="✅",
-                priority=7,
-            ),
-        ]
-        return Dashboard(widgets=items)
-
-    @staticmethod
-    def _direction_status(slope: float) -> tuple[str, str]:
-        """Return (direction label, status token) for a trend slope."""
-        if slope > 0:
-            return FORECAST_DIRECTIONS["upward"], "positive"
-        if slope < 0:
-            return FORECAST_DIRECTIONS["downward"], "negative"
-        return FORECAST_DIRECTIONS["flat"], "neutral"
-
-    @staticmethod
-    def _growth_status(pct_change: float) -> str:
-        """Return a status token for a growth percentage."""
-        if pct_change > 0:
-            return "positive"
-        if pct_change < 0:
-            return "negative"
-        return "neutral"
-
-    @staticmethod
-    def _confidence_status(label: str) -> str:
-        """Return a status token for a confidence label."""
-        if label == "High":
-            return "positive"
-        if label == "Medium":
-            return "warning"
-        return "negative"
-
-    @staticmethod
-    def _quality_status(rating: str) -> str:
-        """Return a status token for a data quality rating."""
-        if rating == "Good":
-            return "positive"
-        if rating == "Fair":
-            return "warning"
-        return "negative"
-
-    @staticmethod
-    def _primary_risk(
-        review: StatisticalReviewResult | None,
-        data_quality: DataQualitySection,
-        forecast: ForecastResult,
-        statistical: StatisticalResult,
-        has_structural_breaks: bool = False,
-    ) -> tuple[str, str]:
-        """Return (risk description, status token) for the dashboard."""
-        if review and review.verdict == "fail":
-            return _REVIEW_CRITICAL_MSG, "negative"
-        if data_quality.rating == "Poor":
-            return "Poor data quality may compromise reliability", "negative"
-        if forecast.mape > 20:
-            return "High forecast uncertainty (MAPE > 20%)", "warning"
-        if has_structural_breaks:
-            return (
-                "Structural breaks detected — monitor for regime shifts",
-                "warning",
-            )
-        return "Forecast accuracy may decline over longer horizons", "neutral"
-
-    @staticmethod
-    def _recommended_action(
-        review: StatisticalReviewResult | None,
-        data_quality: DataQualitySection,
-    ) -> tuple[str, str]:
-        """Return (action description, status token) for the dashboard."""
-        if review and review.verdict in ("warn", "fail"):
-            return (
-                "Review statistical audit findings and validate forecast",
-                "warning",
-            )
-        if data_quality.rating != "Good":
-            return "Improve data quality and re-run analysis", "warning"
-        return (
-            "Use forecast for near-term planning; validate against actuals",
-            "positive",
+        return build_dashboard(
+            forecast=forecast,
+            trend_slope=statistical.trend_slope,
+            model_selection=model_selection,
+            confidence=confidence,
+            data_quality=data_quality,
+            review=review,
+            forecast_change=self._forecast_pct_change(forecast),
+            has_structural_breaks=has_structural_breaks,
         )
 
     # ── Executive Summary ─────────────────────────────────────────────────

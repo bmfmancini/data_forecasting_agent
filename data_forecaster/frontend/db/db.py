@@ -87,11 +87,9 @@ def init_db() -> None:
     DDL, then inserts seed rows (roles, default admin user, default API
     credential entry) only when they do not already exist.
 
-    The default admin username and password are read from
-    ``FRONTEND_ADMIN_USERNAME`` and ``FRONTEND_ADMIN_PASSWORD`` env vars
-    (documented in ``.env.example``).  The seeded admin is created with
-    ``must_change_password = 1`` so the operator is forced to rotate the
-    password on first login.
+    On first initialisation, the database seeds a single ``admin`` user with
+    password ``admin`` and ``must_change_password = 1`` so the operator is
+    forced to rotate the password on first login.
     """
     db = get_db()
 
@@ -109,81 +107,53 @@ def init_db() -> None:
 
     user_columns = {row["name"] for row in db.execute("PRAGMA table_info(users)")}
     if "session_version" not in user_columns:
-        db.execute("ALTER TABLE users ADD COLUMN session_version INTEGER NOT NULL DEFAULT 0")
+        db.execute(
+            "ALTER TABLE users ADD COLUMN session_version INTEGER NOT NULL DEFAULT 0"
+        )
 
     db.execute("INSERT OR IGNORE INTO roles (id, name) VALUES (1, 'admin')")
     db.execute("INSERT OR IGNORE INTO roles (id, name) VALUES (2, 'user')")
 
-    admin_username = current_app.config["FRONTEND_ADMIN_USERNAME"]
-    admin_password = current_app.config["FRONTEND_ADMIN_PASSWORD"]
-    # Only seed the default admin when credentials are explicitly provided
-    # (development/testing).  In production, the admin must set credentials
-    # via environment variables or the admin panel.
-    if admin_username and admin_password:
-        admin_hash = generate_password_hash(admin_password)
+    user_count_row = db.execute("SELECT COUNT(*) AS count FROM users").fetchone()
+    user_count = int(user_count_row["count"]) if user_count_row else 0
+    if user_count == 0:
+        default_admin_password = "admin"  # NOSONAR: forced reset bootstrap password.
+        admin_hash = generate_password_hash(default_admin_password)
         db.execute(
             """
-            INSERT OR IGNORE INTO users
+            INSERT INTO users
                 (username, password_hash, role_id, active, must_change_password)
             VALUES (?, ?, 1, 1, 1)
             """,
-            (admin_username, admin_hash),
+            ("admin", admin_hash),
         )
 
-    backend_url = current_app.config.get("BACKEND_URL", "http://localhost:8000")
-    verify_ssl = 1 if current_app.config.get("API_VERIFY_SSL", True) else 0
+    db.execute(
+        """
+        INSERT INTO api_credentials (label, base_url, timeout, verify_ssl)
+        VALUES ('default', '', 30, 0)
+        ON CONFLICT(label) DO NOTHING
+        """
+    )
 
-    # Auto-seed pre-shared backend credentials from env vars so the
-    # admin does not have to enter them manually on first boot.  Only
-    # seeds when both username and key are present and no credentials
-    # are already stored for the 'default' label.
-    seed_user: str = current_app.config.get("FRONTEND_API_USERNAME", "")
-    seed_key: str = current_app.config.get("FRONTEND_API_KEY", "")
-    enc_user: str | None = None
-    enc_pass: str | None = None
-    if seed_user and seed_key:
-        try:
-            from db.crypto import encrypt
-
-            enc_user = encrypt(seed_user)
-            enc_pass = encrypt(seed_key)
-        except RuntimeError:
-            enc_user = None
-            enc_pass = None
-
-    if enc_user and enc_pass:
-        db.execute(
-            """
-            INSERT INTO api_credentials
-                (label, base_url, encrypted_username, encrypted_password,
-                 timeout, verify_ssl)
-            VALUES ('default', ?, ?, ?, 30, ?)
-            ON CONFLICT(label) DO UPDATE SET
-                encrypted_username = excluded.encrypted_username,
-                encrypted_password = excluded.encrypted_password
-            WHERE excluded.encrypted_username IS NOT NULL
-            """,
-            (backend_url, enc_user, enc_pass, verify_ssl),
-        )
-    else:
-        # Only update base_url and verify_ssl if they are not already set
-        db.execute(
-            """
-            INSERT INTO api_credentials (label, base_url, timeout, verify_ssl)
-            VALUES ('default', ?, 30, ?)
-            ON CONFLICT(label) DO NOTHING
-            """,
-            (backend_url, verify_ssl),
-        )
-
-    db.execute("""
+    db.execute(
+        """
         INSERT OR IGNORE INTO app_config (key, value)
         VALUES ('app_name', 'Time Series Data Forecaster Agent')
-        """)
-    db.execute("""
+        """
+    )
+    db.execute(
+        """
         INSERT OR IGNORE INTO app_config (key, value)
         VALUES ('max_reports_per_user', '10')
-        """)
+        """
+    )
+    db.execute(
+        """
+        INSERT OR IGNORE INTO app_config (key, value)
+        VALUES ('max_upload_mb', '100')
+        """
+    )
 
     db.commit()
 

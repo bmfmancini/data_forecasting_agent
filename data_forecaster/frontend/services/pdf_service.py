@@ -21,9 +21,7 @@ from fpdf import FPDF
 
 logger = logging.getLogger(__name__)
 
-_VISUAL_TAG_LINE_RE: re.Pattern[str] = re.compile(
-    r"^\s*\[VISUAL:([A-Z_]+)\]\s*$"
-)
+_VISUAL_TAG_LINE_RE: re.Pattern[str] = re.compile(r"^\s*\[VISUAL:([A-Z_]+)\]\s*$")
 
 # Maps visual tags to base64 PNG fields in the analysis result.
 _CHART_PNG_FIELD_BY_TAG: dict[str, str] = {
@@ -87,7 +85,7 @@ def _fetch_chart_png(
         return None
     try:
         return base64.b64decode(b64_data)
-    except (BinasciiError, ValueError) as exc:
+    except BinasciiError as exc:
         logger.warning("Failed to decode base64 for chart tag '%s': %s", tag, exc)
         return None
 
@@ -106,14 +104,16 @@ def _embed_image(pdf: FPDF, png_bytes: bytes, max_width: float) -> None:
             tmp.write(png_bytes)
             tmp_path = tmp.name
         pdf.image(tmp_path, w=max_width)
-    except RuntimeError as exc: # fpdf2 raises RuntimeError on image issues
+    except (RuntimeError, OSError) as exc:
         logger.warning("Failed to embed image in PDF (path: %s): %s", tmp_path, exc)
     finally:
         if tmp_path and os.path.exists(tmp_path):
             try:
                 os.unlink(tmp_path)
             except OSError as exc:
-                logger.warning("Failed to clean up temp image file %s: %s", tmp_path, exc)
+                logger.warning(
+                    "Failed to clean up temp image file %s: %s", tmp_path, exc
+                )
 
 
 def _process_line(
@@ -130,6 +130,7 @@ def _process_line(
         result:         Analysis result dict for chart data.
         max_img_width:  Max image width in mm.
     """
+
     def _cell(height: int, text: str) -> None:
         pdf.set_x(pdf.l_margin)
         pdf.multi_cell(0, height, text)
@@ -211,7 +212,10 @@ def report_to_pdf(
 
     for raw_line in report_md.splitlines():
         _process_line(
-            pdf, raw_line.rstrip(), result, max_img_width,
+            pdf,
+            raw_line.rstrip(),
+            result,
+            max_img_width,
         )
 
     return bytes(pdf.output())

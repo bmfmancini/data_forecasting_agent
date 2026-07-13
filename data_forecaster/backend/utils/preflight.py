@@ -1,3 +1,5 @@
+"""Preflight checks and recommendations for uploaded time series data."""
+
 from __future__ import annotations
 
 from typing import Any
