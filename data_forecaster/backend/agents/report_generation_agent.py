@@ -176,7 +176,7 @@ def _compute_visual_strategy(
                 ),
             }
         )
-    if forecast.mape > VISUAL_STRATEGY_THRESHOLDS["mape_high"]:
+    if forecast.mape is not None and forecast.mape > VISUAL_STRATEGY_THRESHOLDS["mape_high"]:
         strategy.append(
             {
                 "chart": "Forecast Confidence Intervals",

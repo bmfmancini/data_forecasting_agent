@@ -18,9 +18,31 @@ Design principles:
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from pydantic import BaseModel, Field
+
+# ── Metric formatting helpers ────────────────────────────────────────────────
+
+_NOT_AVAILABLE = "not available"
+
+
+def format_metric(value: float | None, fmt: str = ".4f") -> str:
+    """Format a nullable metric, returning 'not available' when unavailable.
+
+    Args:
+        value: Metric value or ``None``.
+        fmt: Format spec string (default ``.4f``).
+
+    Returns:
+        Formatted string, or ``"not available"`` when value is ``None``,
+        NaN, or infinite.
+    """
+    if value is None or not math.isfinite(value):
+        return _NOT_AVAILABLE
+    return format(value, fmt)
+
 
 # ── Dashboard ────────────────────────────────────────────────────────────────
 
@@ -157,9 +179,9 @@ class ForecastMetrics(BaseModel):
     first_value: float
     last_value: float
     pct_change: float
-    rmse: float
-    mae: float
-    mape: float
+    rmse: float | None = None
+    mae: float | None = None
+    mape: float | None = None
     wape: float | None = None
     mase: float | None = None
     prediction_intervals: list[PredictionInterval] = Field(default_factory=list)
@@ -183,9 +205,9 @@ class ModelComparisonEntry(BaseModel):
     """
 
     model: str
-    rmse: float
-    mae: float
-    mape: float
+    rmse: float | None = None
+    mae: float | None = None
+    mape: float | None = None
     wape: float | None = None
     mase: float | None = None
     selected: bool

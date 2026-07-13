@@ -2,6 +2,12 @@
 
 This document contains the phased engineering roadmap derived from the statistical methodology review in [report.md](report.md).
 
+> **R4 — Broader capability (Phases 6–7) — SKIPPED.**
+> Per project decision, R4 (new model families and production monitoring)
+> will not be implemented. The roadmap below retains the Phase 6 and 7
+> descriptions for reference, but they are excluded from the implementation
+> sequence.
+
 ## Implementation status
 
 ### R1 / Phase 1 — Honest scoring (in progress)

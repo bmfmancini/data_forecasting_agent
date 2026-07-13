@@ -14,6 +14,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+import numpy as np
+
 from report.models import (
     Appendix,
     Assumption,
@@ -206,13 +208,13 @@ class ExecutiveReportBuilder:
         score = 100
         factors: list[str] = []
 
-        if forecast.mape > 20:
+        if forecast.mape is not None and forecast.mape > 20:
             score -= CONFIDENCE_DEDUCTIONS["mape_above_20"]
             factors.append(f"High validation error (MAPE {forecast.mape:.1f}%)")
-        elif forecast.mape > 10:
+        elif forecast.mape is not None and forecast.mape > 10:
             score -= CONFIDENCE_DEDUCTIONS["mape_above_10"]
             factors.append(f"Moderate validation error (MAPE {forecast.mape:.1f}%)")
-        elif forecast.mape > 5:
+        elif forecast.mape is not None and forecast.mape > 5:
             score -= CONFIDENCE_DEDUCTIONS["mape_above_5"]
             factors.append(f"Minor validation error (MAPE {forecast.mape:.1f}%)")
 
@@ -396,7 +398,9 @@ class ExecutiveReportBuilder:
         elif diag and diag.is_normal is False:
             resid_status = HEALTH_STATUS["residual_diagnostics"]["concerning"]
             resid_detail = "Residuals are not normally distributed, which may affect the reliability of prediction intervals."
-        elif statistical.is_white_noise or forecast.mape > 20:
+        elif statistical.is_white_noise or (
+            forecast.mape is not None and forecast.mape > 20
+        ):
             resid_status = HEALTH_STATUS["residual_diagnostics"]["concerning"]
             resid_detail = "High validation error or other signals suggest the model may not fully capture the data structure."
         else:
@@ -498,9 +502,9 @@ class ExecutiveReportBuilder:
             first_value=round(first_val, 4),
             last_value=round(last_val, 4),
             pct_change=round(pct_change, 1),
-            rmse=round(forecast.rmse, 4),
-            mae=round(forecast.mae, 4),
-            mape=round(forecast.mape, 2),
+            rmse=round(forecast.rmse, 4) if forecast.rmse is not None else None,
+            mae=round(forecast.mae, 4) if forecast.mae is not None else None,
+            mape=round(forecast.mape, 2) if forecast.mape is not None else None,
             wape=round(forecast.wape, 2) if forecast.wape is not None else None,
             mase=round(forecast.mase, 4) if forecast.mase is not None else None,
             prediction_intervals=intervals,
@@ -537,16 +541,19 @@ class ExecutiveReportBuilder:
         }
         entries: list[ModelComparisonEntry] = []
         for name, metrics in all_metrics.items():
+            rmse = metrics.get("RMSE")
+            mae = metrics.get("MAE")
+            mape = metrics.get("MAPE")
+            wape = metrics.get("WAPE")
+            mase = metrics.get("MASE")
             entries.append(
                 ModelComparisonEntry(
                     model=name,
-                    rmse=round(metrics.get("RMSE", 0.0), 4),
-                    mae=round(metrics.get("MAE", 0.0), 4),
-                    mape=round(metrics.get("MAPE", 0.0), 2),
-                    wape=round(
-                        metrics.get("WAPE", 0.0) * 100, 2
-                    ),  # Convert to percentage
-                    mase=round(metrics.get("MASE", 0.0), 4),
+                    rmse=round(rmse, 4) if rmse is not None and np.isfinite(rmse) else None,
+                    mae=round(mae, 4) if mae is not None and np.isfinite(mae) else None,
+                    mape=round(mape, 2) if mape is not None and np.isfinite(mape) else None,
+                    wape=round(wape * 100, 2) if wape is not None and np.isfinite(wape) else None,
+                    mase=round(mase, 4) if mase is not None and np.isfinite(mase) else None,
                     selected=(name == selected),
                     rejected_reason=(
                         rejection_map.get(name) if name != selected else None

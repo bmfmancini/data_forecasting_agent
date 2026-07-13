@@ -150,9 +150,19 @@ def plot_forecast(series: pd.Series, forecast_result: ForecastResult) -> dict[st
         )
     )
 
+    mape_str = (
+        f"{forecast_result.mape:.2f}%"
+        if forecast_result.mape is not None
+        else "not available"
+    )
+    rmse_str = (
+        f"{forecast_result.rmse:.2f}"
+        if forecast_result.rmse is not None
+        else "not available"
+    )
     fig.update_layout(
         title=f"Forecast — {forecast_result.model_used} "
-        f"(MAPE={forecast_result.mape:.2f}%, RMSE={forecast_result.rmse:.2f})",
+        f"(MAPE={mape_str}, RMSE={rmse_str})",
         xaxis_title="Date",
         yaxis_title="Value",
         template="plotly_white",

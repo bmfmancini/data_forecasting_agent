@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from html import escape
 
-from report.models import ExecutiveReport
+from report.models import ExecutiveReport, format_metric
 from report.rules import DASHBOARD_STATUS_COLORS
 
 
@@ -191,11 +191,11 @@ class HTMLRenderer:
         # Ensure wape and mase have fallbacks for rendering
         rows = "".join(
             f"<tr><td>{escape(e.model)}</td>"
-            f"<td>{e.rmse:.4f}</td>"
-            f"<td>{e.mae:.4f}</td>"
-            f"<td>{e.mape:.2f}%</td>"
-            f"<td>{e.wape or 0.0:.2f}%</td>"
-            f"<td>{e.mase or 0.0:.4f}</td>"
+            f"<td>{format_metric(e.rmse)}</td>"
+            f"<td>{format_metric(e.mae)}</td>"
+            f"<td>{format_metric(e.mape, '.2f')}%</td>"
+            f"<td>{format_metric(e.wape, '.2f')}%</td>"
+            f"<td>{format_metric(e.mase)}</td>"
             f"<td>{'✓' if e.selected else ''}</td></tr>"
             for e in mc.entries
         )

@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
+
 from core.llm_factory import get_llm
 from core.logging_config import get_logger
 from prompts.model_selection_prompt import MODEL_SELECTION_PROMPT
@@ -622,13 +624,19 @@ def _format_metrics_text(
         return ""
     lines = []
     for name, metrics in all_metrics.items():
-        rmse = metrics.get("RMSE", float("nan"))
-        mae = metrics.get("MAE", float("nan"))
-        mape = metrics.get("MAPE", float("nan"))
-        wape = metrics.get("WAPE", float("nan")) * 100
-        mase = metrics.get("MASE", float("nan"))
+        rmse = metrics.get("RMSE")
+        mae = metrics.get("MAE")
+        mape = metrics.get("MAPE")
+        wape = metrics.get("WAPE")
+        mase = metrics.get("MASE")
+        rmse_s = f"{rmse:.4f}" if rmse is not None and np.isfinite(rmse) else "not available"
+        mae_s = f"{mae:.4f}" if mae is not None and np.isfinite(mae) else "not available"
+        mape_s = f"{mape:.2f}%" if mape is not None and np.isfinite(mape) else "not available"
+        wape_s = f"{wape * 100:.2f}%" if wape is not None and np.isfinite(wape) else "not available"
+        mase_s = f"{mase:.4f}" if mase is not None and np.isfinite(mase) else "not available"
         lines.append(
-            f"- {name}: RMSE={rmse:.4f}, MAE={mae:.4f}, MAPE={mape:.2f}%, WAPE={wape:.2f}%, MASE={mase:.4f}"
+            f"- {name}: RMSE={rmse_s}, MAE={mae_s}, MAPE={mape_s}, "
+            f"WAPE={wape_s}, MASE={mase_s}"
         )
     return (
         "\n".join(lines)

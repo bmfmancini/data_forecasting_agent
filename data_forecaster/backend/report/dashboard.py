@@ -150,7 +150,7 @@ def primary_risk(
         return _REVIEW_CRITICAL_MSG, "negative"
     if data_quality.rating == "Poor":
         return "Poor data quality may compromise reliability", "negative"
-    if forecast.mape > 20:
+    if forecast.mape is not None and forecast.mape > 20:
         return "High forecast uncertainty (MAPE > 20%)", "warning"
     if has_structural_breaks:
         return (
