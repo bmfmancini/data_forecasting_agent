@@ -226,8 +226,8 @@ def run_forecasting_agent(
     # ── Residual Analysis ─────────────────────────────────────────────────────
     residual_diagnostics = None
     # Residuals are not currently returned by the typed adapters; this
-    # branch is retained for future adapters that expose innovations.
-    del disabled_tests  # Retained in signature for API compatibility.
+    # branch will be activated when adapters expose innovations.
+    del disabled_tests  # Unused until adapters return residuals.
 
     logger.info("Forecasting complete. Selected: %s", selected)
 
