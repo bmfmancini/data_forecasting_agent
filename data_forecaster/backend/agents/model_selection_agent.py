@@ -1,10 +1,17 @@
 """Model selection agent for the Data Forecaster backend.
 
-This module uses an LLM to reason over statistical findings and select the
-best forecasting model.  All suitability-assessment, heuristic-fallback, and
-LLM-output parsing logic is implemented as small, focused module-level
-helpers so that the public :func:`run_model_selection_agent` stays readable
-and well below the SonarQube Cognitive Complexity threshold.
+Python is the source of statistical decisions. When empirical metrics are
+available, a deterministic selection policy selects the best model. The
+LLM is used for context, critique, and explanation only — it never
+decides model rankings. When no empirical metrics are available (first
+run), the LLM provides a suitability-based recommendation, but the
+deterministic heuristic fallback is used if the LLM is unavailable or its
+output is invalid.
+
+All suitability-assessment, heuristic-fallback, and LLM-output parsing
+logic is implemented as small, focused module-level helpers so that the
+public :func:`run_model_selection_agent` stays readable and well below
+the SonarQube Cognitive Complexity threshold.
 """
 
 from __future__ import annotations
@@ -15,6 +22,12 @@ import numpy as np
 
 from core.llm_factory import get_llm
 from core.logging_config import get_logger
+from forecasting.selection_policy import (
+    CandidateEvidence,
+    SelectionOutcome,
+    select_model_deterministic,
+    validate_llm_output,
+)
 from prompts.model_selection_prompt import MODEL_SELECTION_PROMPT
 from schemas import ModelSelectionResult, StatisticalResult
 from utils.token_tracking import estimate_input_text, extract_token_usage
@@ -608,6 +621,22 @@ def _business_selection_reasons(
 # ── LLM invocation ───────────────────────────────────────────────────────────
 
 
+_NOT_AVAILABLE = "not available"
+
+
+def _format_metric_value(
+    value: float | None,
+    fmt: str,
+    percent: bool = False,
+) -> str:
+    """Format a nullable metric value, returning ``_NOT_AVAILABLE`` for None/NaN."""
+    if value is None or not np.isfinite(value):
+        return _NOT_AVAILABLE
+    if percent:
+        return format(value * 100, fmt) + "%"
+    return format(value, fmt)
+
+
 def _format_metrics_text(
     all_metrics: dict[str, dict[str, float]],
 ) -> str:
@@ -624,16 +653,11 @@ def _format_metrics_text(
         return ""
     lines = []
     for name, metrics in all_metrics.items():
-        rmse = metrics.get("RMSE")
-        mae = metrics.get("MAE")
-        mape = metrics.get("MAPE")
-        wape = metrics.get("WAPE")
-        mase = metrics.get("MASE")
-        rmse_s = f"{rmse:.4f}" if rmse is not None and np.isfinite(rmse) else "not available"
-        mae_s = f"{mae:.4f}" if mae is not None and np.isfinite(mae) else "not available"
-        mape_s = f"{mape:.2f}%" if mape is not None and np.isfinite(mape) else "not available"
-        wape_s = f"{wape * 100:.2f}%" if wape is not None and np.isfinite(wape) else "not available"
-        mase_s = f"{mase:.4f}" if mase is not None and np.isfinite(mase) else "not available"
+        rmse_s = _format_metric_value(metrics.get("RMSE"), ".4f")
+        mae_s = _format_metric_value(metrics.get("MAE"), ".4f")
+        mape_s = _format_metric_value(metrics.get("MAPE"), ".2f", percent=True)
+        wape_s = _format_metric_value(metrics.get("WAPE"), ".2f", percent=True)
+        mase_s = _format_metric_value(metrics.get("MASE"), ".4f")
         lines.append(
             f"- {name}: RMSE={rmse_s}, MAE={mae_s}, MAPE={mape_s}, "
             f"WAPE={wape_s}, MASE={mase_s}"
@@ -764,6 +788,132 @@ def _invoke_llm(
         return None
 
 
+# ── Deterministic policy helpers ──────────────────────────────────────────────
+
+
+def _finite_or_none(value: float | None) -> float | None:
+    """Return the value if finite, otherwise ``None``."""
+    if value is not None and math.isfinite(value):
+        return value
+    return None
+
+
+def _build_adapter_result(
+    name: str,
+    metrics: dict[str, float],
+) -> "ForecastAdapterResult":
+    """Build a :class:`ForecastAdapterResult` from a metrics dict.
+
+    Args:
+        name:    Model name.
+        metrics: Dict of metric values (uppercase keys).
+
+    Returns:
+        A :class:`ForecastAdapterResult` with typed metrics.
+    """
+    from forecasting.contracts import (
+        ForecastAdapterResult,
+        ForecastFitStatus,
+        ForecastMetrics,
+    )
+
+    rmse = _finite_or_none(metrics.get("RMSE"))
+    mae = _finite_or_none(metrics.get("MAE"))
+    mape = _finite_or_none(metrics.get("MAPE"))
+    wape = _finite_or_none(metrics.get("WAPE"))
+    mase = _finite_or_none(metrics.get("MASE"))
+
+    has_finite = any(v is not None for v in (rmse, mae, mape, wape, mase))
+    status = ForecastFitStatus.OK if has_finite else ForecastFitStatus.FAILED
+
+    return ForecastAdapterResult(
+        status=status,
+        forecast=[],
+        lower_ci=[],
+        upper_ci=[],
+        metrics=ForecastMetrics(
+            rmse=rmse, mae=mae, mape=mape, wape=wape, mase=mase,
+        ),
+        fitted_configuration={"model": name},
+    )
+
+
+def _build_candidate_evidence(
+    all_metrics: dict[str, dict[str, float]],
+) -> list[CandidateEvidence]:
+    """Build :class:`CandidateEvidence` objects from the metrics dict.
+
+    The metrics dict uses uppercase keys (``"RMSE"``, ``"MAE"``, etc.) from
+    the forecasting agent. This helper converts them to typed
+    :class:`ForecastAdapterResult`-backed evidence so the deterministic
+    policy can rank them.
+
+    Args:
+        all_metrics: Dict mapping model names to metric dicts.
+
+    Returns:
+        A list of :class:`CandidateEvidence` objects.
+    """
+    candidates: list[CandidateEvidence] = []
+    for name, metrics in all_metrics.items():
+        is_baseline = name.lower().startswith(
+            ("naive", "seasonal naive", "mean", "drift")
+        )
+        adapter_result = _build_adapter_result(name, metrics)
+        candidates.append(
+            CandidateEvidence(
+                name=name,
+                adapter_result=adapter_result,
+                is_baseline=is_baseline,
+            )
+        )
+    return candidates
+
+
+def _build_deterministic_explanation(
+    outcome: SelectionOutcome,
+    stat_result: StatisticalResult,
+    all_metrics: dict[str, dict[str, float]],
+    review_feedback: str | None,
+) -> str:
+    """Build a business-readable explanation for the deterministic selection.
+
+    Args:
+        outcome:        The deterministic selection outcome.
+        stat_result:    Output of the statistical analysis agent.
+        all_metrics:    Dict of all model error metrics.
+        review_feedback: Optional review feedback from a prior run.
+
+    Returns:
+        A concise explanation string.
+    """
+    parts = [f"Selected model: {outcome.selected_model}."]
+    metric = _primary_metric(all_metrics, outcome.selected_model)
+    if metric:
+        metric_name, value = metric
+        parts.append(
+            f"It had the strongest available validation evidence "
+            f"({_format_metric(metric_name, value)}, lower is better)."
+        )
+    parts.append(
+        _statistical_fit_reason(stat_result, outcome.selected_model, selected=True)
+    )
+    if outcome.tie_break_note:
+        parts.append(f"Tie-breaking: {outcome.tie_break_note}")
+    if outcome.exclusion_reasons:
+        excluded = ", ".join(outcome.exclusion_reasons.keys())
+        parts.append(f"Excluded candidates: {excluded}.")
+    if review_feedback:
+        parts.append(
+            "The selection also accounts for statistical review feedback from "
+            "the prior run."
+        )
+    metrics_text = _format_metrics_text(all_metrics)
+    parts.append(f"\n\nValidation metrics considered:\n{metrics_text}")
+    parts.append(f"\n[Statistical Review Feedback]: {review_feedback or 'N/A'}")
+    return " ".join(parts)
+
+
 # ── Public entry point ───────────────────────────────────────────────────────
 
 
@@ -801,32 +951,36 @@ def run_model_selection_agent(
         stat_result, fallback_model, exclude_model
     )
 
-    # ── Deterministic override when empirical metrics are available ────────
-    # During a review-triggered retry, if actual error metrics are available,
-    # deterministically select the best-performing model rather than relying
-    # on the LLM.  This prevents the LLM from re-selecting a suboptimal model
-    # based on statistical properties alone.
+    # ── Deterministic policy when empirical metrics are available ────────
+    # When actual error metrics are available, the deterministic selection
+    # policy is the source of truth. The LLM never decides model rankings.
+    # The policy excludes failed/degraded candidates, ranks by the
+    # configured loss metric, applies tie-breaking (simpler model wins
+    # negligible differences), and retains baselines when no complex model
+    # adds demonstrated value.
     if all_metrics:
-        best_model = _select_best_metric_model(all_metrics, exclude_model)
-        if best_model:
+        candidates = _build_candidate_evidence(all_metrics)
+        outcome = select_model_deterministic(
+            candidates,
+            exclude_models=[exclude_model] if exclude_model else None,
+            user_loss_preference="mase",
+        )
+        if outcome.selected_model:
             logger.info(
-                "Deterministic override: selecting best-metric model '%s' "
-                "based on empirical error metrics.",
-                best_model,
+                "Deterministic policy selected '%s' (method=%s, rankable=%d).",
+                outcome.selected_model,
+                outcome.method,
+                len(outcome.ranking),
             )
             metrics_text = _format_metrics_text(all_metrics)
-            explanation = (
-                "Model re-selected based on empirical validation metrics. "
-                + _build_selection_explanation(
-                    best_model, stat_result, all_metrics, review_feedback
-                )
-                + "\n\nValidation metrics considered:\n"
-                + metrics_text
-                + f"\n\n[Statistical Review Feedback]: {review_feedback or 'N/A'}"
+            explanation = _build_deterministic_explanation(
+                outcome, stat_result, all_metrics, review_feedback
             )
-            reasons = _business_selection_reasons(best_model, stat_result, all_metrics)
+            reasons = _business_selection_reasons(
+                outcome.selected_model, stat_result, all_metrics
+            )
             return ModelSelectionResult(
-                selected_model=best_model,
+                selected_model=outcome.selected_model,
                 explanation=explanation,
                 holt_winters_rejected_reason=reasons["Holt-Winters"],
                 arima_rejected_reason=reasons["ARIMA"],
@@ -835,13 +989,20 @@ def run_model_selection_agent(
                 reasoning_steps=[
                     {
                         "thought": (
-                            "Review-triggered retry with empirical metrics "
-                            "available — selecting best-performing model."
+                            "Deterministic selection policy applied with "
+                            "empirical metrics."
                         ),
                         "observation": metrics_text,
                     },
                 ],
                 token_usage={},
+                selection_method="deterministic",
+                selection_evidence={
+                    "ranking": outcome.ranking,
+                    "exclusion_reasons": outcome.exclusion_reasons,
+                    "tie_break_note": outcome.tie_break_note,
+                    "evidence_summary": outcome.evidence_summary,
+                },
             )
 
     suitability_input = _build_suitability_input(
@@ -881,6 +1042,8 @@ def run_model_selection_agent(
             },
         ],
         token_usage=token_usage,
+        selection_method="llm",
+        selection_evidence={},
     )
 
 
@@ -923,4 +1086,6 @@ def _build_heuristic_result(
             }
         ],
         token_usage={},
+        selection_method="heuristic",
+        selection_evidence={},
     )

@@ -28,6 +28,8 @@ from utils.token_tracking import estimate_input_text, extract_token_usage
 
 logger = get_logger(__name__)
 
+_NOT_AVAILABLE = "not available"
+
 _VERDICT_PATTERN = re.compile(r"Verdict:\s*(PASS|WARN|FAIL)", re.IGNORECASE)
 _FLAG_PATTERN = re.compile(
     r"-\s*\[(CRITICAL|WARNING|INFO)\]\s*"
@@ -39,7 +41,7 @@ _FLAG_PATTERN = re.compile(
 
 def _format_optional_metric(value: float | None, fmt: str) -> str:
     """Format a nullable metric for evidence passed to the reviewer."""
-    return "not available" if value is None else format(value, fmt)
+    return _NOT_AVAILABLE if value is None else format(value, fmt)
 
 
 def _check_seasonality_mismatch(
@@ -293,7 +295,7 @@ def _check_residual_autocorrelation(
         p_value = (
             f"{diag.ljung_box_p_value:.4f}"
             if diag.ljung_box_p_value is not None
-            else "not available"
+            else _NOT_AVAILABLE
         )
         return {
             "agent": "forecasting",
@@ -328,7 +330,7 @@ def _check_residual_normality(
         p_value = (
             f"{diag.shapiro_wilk_p_value:.4f}"
             if diag.shapiro_wilk_p_value is not None
-            else "not available"
+            else _NOT_AVAILABLE
         )
         return {
             "agent": "forecasting",
@@ -356,6 +358,93 @@ def _check_residual_mean(forecast_result: ForecastResult) -> dict[str, Any] | No
             "recommendation": "Review model specification; the forecast may be consistently too high or too low.",
         }
     return None
+
+
+def _check_deterministic_policy_violation(
+    model_selection: ModelSelectionResult,
+    all_metrics: dict[str, dict[str, float]],
+) -> dict[str, Any] | None:
+    """Flag when a deterministic selection contradicts the metric evidence.
+
+    The deterministic policy is the source of truth for model rankings. The
+    review agent may only override it with a typed, code-recognized reason.
+    This check detects when the selected model is objectively worse than
+    another candidate by a large margin — a code-recognized reason to flag
+    the selection.
+
+    Args:
+        model_selection: Output of the model selection agent.
+        all_metrics:      Dict of all model metrics.
+
+    Returns:
+        A flag dict if a policy violation is detected, otherwise ``None``.
+    """
+    if model_selection.selection_method != "deterministic":
+        return None
+    selected = model_selection.selected_model
+    if not all_metrics or selected not in all_metrics:
+        return None
+    selected_rmse = all_metrics[selected].get("RMSE")
+    if selected_rmse is None or not math.isfinite(selected_rmse):
+        return None
+    comparable = {
+        name: metrics["RMSE"]
+        for name, metrics in all_metrics.items()
+        if metrics.get("RMSE") is not None and math.isfinite(metrics["RMSE"])
+    }
+    if not comparable:
+        return None
+    best_model = min(comparable, key=comparable.get)
+    best_rmse = comparable[best_model]
+    if best_model != selected and best_rmse > 0:
+        ratio = selected_rmse / best_rmse
+        if ratio > 1.5:
+            return {
+                "agent": "model_selection",
+                "severity": "critical",
+                "issue": (
+                    f"Deterministic policy selected '{selected}' (RMSE="
+                    f"{selected_rmse:.4f}) which is {ratio:.1f}x worse than "
+                    f"the best candidate '{best_model}' (RMSE="
+                    f"{best_rmse:.4f})."
+                ),
+                "recommendation": (
+                    "The selection policy may have excluded the best model "
+                    "due to a status or assumption violation. Review the "
+                    "selection_evidence for exclusion reasons."
+                ),
+            }
+    return None
+
+
+def _compute_override_eligibility(
+    model_selection: ModelSelectionResult,
+    pre_check_flags: list[dict[str, Any]],
+) -> tuple[bool, list[str]]:
+    """Determine whether the review can override the deterministic selection.
+
+    The statistical review agent is a critic, but it cannot override the
+    deterministic numerical policy without a typed, code-recognized reason.
+    Only critical flags on the ``model_selection`` or ``forecasting``
+    agents constitute valid override reasons.
+
+    Args:
+        model_selection: Output of the model selection agent.
+        pre_check_flags:  Flags from the deterministic pre-check.
+
+    Returns:
+        A tuple of (can_override, override_reasons).
+    """
+    if model_selection.selection_method != "deterministic":
+        # Non-deterministic selections (LLM, heuristic) can always be overridden.
+        return True, []
+    override_reasons = [
+        flag["issue"]
+        for flag in pre_check_flags
+        if flag.get("severity") == "critical"
+        and flag.get("agent") in ("model_selection", "forecasting")
+    ]
+    return bool(override_reasons), override_reasons
 
 
 def _deterministic_pre_check(
@@ -387,6 +476,7 @@ def _deterministic_pre_check(
         _check_trend_ewma_lag(stat_result, selected),
         _check_explanation_mismatch(model_selection, selected),
         _check_suboptimal_rmse(selected, all_metrics),
+        _check_deterministic_policy_violation(model_selection, all_metrics),
         _check_residual_autocorrelation(forecast_result),
         _check_residual_normality(forecast_result),
         _check_residual_mean(forecast_result),
@@ -432,7 +522,7 @@ def _build_model_selection_text(
 def _build_forecast_text(forecast_result: ForecastResult) -> str:
     """Build a text summary of the forecast for the LLM prompt."""
     forecast_sample = [round(v, 2) for v in forecast_result.forecast[:10]]
-    residual_text = "Not available."
+    residual_text = _NOT_AVAILABLE.capitalize() + "."
     if diag := forecast_result.residual_diagnostics:
         ljung_box = (
             f"{diag.ljung_box_p_value:.4f}"
@@ -457,7 +547,7 @@ def _build_forecast_text(forecast_result: ForecastResult) -> str:
             + (f" ({candidate.failure_reason})" if candidate.failure_reason else "")
             for candidate in forecast_result.candidate_results
         )
-        or "not available"
+        or _NOT_AVAILABLE
     )
 
     return (
@@ -729,6 +819,10 @@ def run_statistical_review_agent(
         "Statistical review complete: verdict=%s flags=%d", verdict, len(all_flags)
     )
 
+    can_override, override_reasons = _compute_override_eligibility(
+        model_selection, pre_check_flags
+    )
+
     return StatisticalReviewResult(
         verdict=verdict,
         flags=all_flags,
@@ -736,4 +830,6 @@ def run_statistical_review_agent(
         summary=summary,
         reasoning_steps=reasoning_steps,
         token_usage=token_usage,
+        can_override_selection=can_override,
+        override_reasons=override_reasons,
     )

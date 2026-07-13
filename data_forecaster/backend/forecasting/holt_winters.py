@@ -110,6 +110,14 @@ def fit_holt_winters(
     lower_ci = (forecast_values.values - 1.96 * resid_std * np.sqrt(h)).tolist()
     upper_ci = (forecast_values.values + 1.96 * resid_std * np.sqrt(h)).tolist()
 
+    # Expose fitted innovations (level residuals) for diagnostics.
+    innovations: list[float] = []
+    try:
+        resid = np.asarray(full_fit.resid, dtype=float)
+        innovations = resid[np.isfinite(resid)].tolist()
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.warning("Holt-Winters innovations unavailable: %s", exc)
+
     status = (
         ForecastFitStatus.OK if metrics.rmse is not None else ForecastFitStatus.DEGRADED
     )
@@ -135,6 +143,11 @@ def fit_holt_winters(
                 full_fit, "initialization_method", "estimated"
             ),
         },
+        innovations=innovations,
+        # Holt-Winters intervals are residual-std heuristic bands, not
+        # calibrated prediction intervals. Label them as experimental until
+        # simulation/bootstrap intervals are implemented.
+        interval_label="experimental",
     )
 
 

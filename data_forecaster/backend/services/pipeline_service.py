@@ -401,6 +401,7 @@ def _run_forecast_stages(
                         n_missing=result.metrics.n_missing,
                         fitted_configuration=result.fitted_configuration,
                         warnings=result.warnings,
+                        interval_label=result.interval_label,
                     )
                     for name, result in baseline_results.items()
                 ],
@@ -515,6 +516,24 @@ def _maybe_retry_forecast_after_review(
         flag.get("severity") == "critical" for flag in statistical_review.flags
     )
     if not (retry_enabled and (has_critical or statistical_review.verdict == "fail")):
+        return ForecastStageOutput(
+            model_selection=model_selection,
+            forecast=forecast_result,
+            statistical_review=statistical_review,
+            all_metrics=all_metrics,
+        )
+
+    # Respect the deterministic selection policy. The review agent can only
+    # override a deterministic selection when it has a typed, code-recognized
+    # reason (can_override_selection=True).
+    if (
+        model_selection.selection_method == "deterministic"
+        and not statistical_review.can_override_selection
+    ):
+        logger.info(
+            "Statistical review flagged issues but cannot override the "
+            "deterministic selection (no typed override reason). Skipping retry."
+        )
         return ForecastStageOutput(
             model_selection=model_selection,
             forecast=forecast_result,

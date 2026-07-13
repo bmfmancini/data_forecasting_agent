@@ -107,11 +107,24 @@ def plot_acf_pacf(acf_values: list, pacf_values: list, lags: list) -> str:
 
 
 def plot_forecast(series: pd.Series, forecast_result: ForecastResult) -> dict[str, Any]:
-    """Historical series + forecast line + 95% CI ribbon."""
+    """Historical series + forecast line + prediction-interval ribbon.
+
+    The ribbon is labelled "Prediction Interval" (or "Prediction Interval
+    (experimental)" when the adapter labels its intervals as experimental)
+    rather than "95% CI".
+    """
     hist_dates = _index_to_str(series)
     fc_dates = forecast_result.forecast_dates or [
         str(i) for i in range(len(forecast_result.forecast))
     ]
+
+    # Choose the ribbon label from the adapter's interval label.
+    interval_label = getattr(forecast_result, "interval_label", "prediction_interval")
+    ribbon_name = (
+        "Prediction Interval (experimental)"
+        if interval_label == "experimental"
+        else "95% Prediction Interval"
+    )
 
     fig = go.Figure()
 
@@ -126,7 +139,7 @@ def plot_forecast(series: pd.Series, forecast_result: ForecastResult) -> dict[st
         )
     )
 
-    # Confidence interval ribbon
+    # Prediction interval ribbon
     fig.add_trace(
         go.Scatter(
             x=fc_dates + fc_dates[::-1],
@@ -134,7 +147,7 @@ def plot_forecast(series: pd.Series, forecast_result: ForecastResult) -> dict[st
             fill="toself",
             fillcolor="rgba(220,38,38,0.15)",
             line={"color": "rgba(255,255,255,0)"},
-            name="95% CI",
+            name=ribbon_name,
             showlegend=True,
         )
     )

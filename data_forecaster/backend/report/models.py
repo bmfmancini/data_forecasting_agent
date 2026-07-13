@@ -144,6 +144,9 @@ class PredictionInterval(BaseModel):
         lower_ci:         Lower bound of the prediction interval.
         upper_ci:         Upper bound of the prediction interval.
         confidence_level: Confidence level label (e.g. "95%").
+        interval_label:   Label — ``"prediction_interval"`` when the interval
+                          is model-based/calibrated, or ``"experimental"``
+                          when coverage cannot be evaluated.
     """
 
     date: str
@@ -151,6 +154,7 @@ class PredictionInterval(BaseModel):
     lower_ci: float
     upper_ci: float
     confidence_level: str
+    interval_label: str = "prediction_interval"
 
 
 class ForecastMetrics(BaseModel):

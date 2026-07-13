@@ -133,6 +133,14 @@ def fit_ewma(
     lower_ci = [f - 1.96 * std_residuals for f in forecast_values]
     upper_ci = [f + 1.96 * std_residuals for f in forecast_values]
 
+    # Expose fitted innovations (one-step smoothing errors).
+    innovations: list[float] = []
+    try:
+        resid_arr = np.asarray(residuals.dropna(), dtype=float)
+        innovations = resid_arr[np.isfinite(resid_arr)].tolist()
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.warning("EWMA innovations unavailable: %s", exc)
+
     logger.info("EWMA model fitted with alpha=%.4f", estimated_alpha)
 
     status = (
@@ -156,4 +164,9 @@ def fit_ewma(
             "initialization": "level",
             "estimated": alpha is None,
         },
+        innovations=innovations,
+        # EWMA intervals are residual-std heuristic bands, not calibrated
+        # prediction intervals. Label them as experimental until
+        # simulation/state-space intervals are implemented.
+        interval_label="experimental",
     )

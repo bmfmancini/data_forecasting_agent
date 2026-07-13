@@ -10,6 +10,11 @@ several heuristic models:
 These metrics are used in the final report's model comparison table to
 demonstrate that the selected sophisticated model provides a tangible
 improvement over simple approaches.
+
+Baselines share the common terminal-holdout fold from
+:mod:`forecasting.backtesting` so that all candidates use the same
+evaluation boundary. Baselines label their intervals as experimental
+because they do not produce model-based prediction intervals.
 """
 
 from __future__ import annotations
@@ -61,6 +66,8 @@ def _evaluate_baseline(
             None if status == ForecastFitStatus.OK else "Baseline metrics unavailable."
         ),
         fitted_configuration={"model": name, "mase_period": mase_period},
+        # Baselines do not produce model-based prediction intervals.
+        interval_label="experimental",
     )
 
 

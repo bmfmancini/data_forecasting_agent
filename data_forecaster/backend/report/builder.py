@@ -480,6 +480,15 @@ class ExecutiveReportBuilder:
         first_date = forecast.forecast_dates[0] if forecast.forecast_dates else "N/A"
         last_date = forecast.forecast_dates[-1] if forecast.forecast_dates else "N/A"
 
+        # Carry the interval label so renderers can distinguish calibrated
+        # prediction intervals from experimental/heuristic bands.
+        interval_label = getattr(forecast, "interval_label", "prediction_interval")
+        confidence_label = (
+            "95% (experimental)"
+            if interval_label == "experimental"
+            else _CONFIDENCE_LEVEL
+        )
+
         intervals: list[PredictionInterval] = []
         for i, date in enumerate(forecast.forecast_dates):
             lower = forecast.lower_ci[i] if i < len(forecast.lower_ci) else 0.0
@@ -491,7 +500,8 @@ class ExecutiveReportBuilder:
                     forecast=round(point, 4),
                     lower_ci=round(lower, 4),
                     upper_ci=round(upper, 4),
-                    confidence_level=_CONFIDENCE_LEVEL,
+                    confidence_level=confidence_label,
+                    interval_label=interval_label,
                 )
             )
 

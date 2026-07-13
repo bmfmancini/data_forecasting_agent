@@ -10,6 +10,14 @@ import pandas as pd
 
 from core.llm_factory import get_llm
 from core.logging_config import get_logger
+from forecasting.diagnostics import (
+    assess_stationarity,
+    assess_trend,
+    detect_anomalies,
+    detect_change_points_calibrated,
+    detect_seasonality,
+    test_white_noise,
+)
 from prompts.statistical_analysis_prompt import STATISTICAL_ANALYSIS_PROMPT
 from schemas import StatisticalResult
 from utils.data_cleaning import detect_outliers_iqr, detect_outliers_zscore
@@ -61,6 +69,15 @@ def run_statistical_agent(
                     "observation": "Series is constant. Bypassing ADF/KPSS tests.",
                 }
             ],
+            stationarity_classification="stationary",
+            seasonal_strength=0.0,
+            seasonal_selection_provenance="default",
+            anomaly_count_adjusted=0,
+            anomaly_ratio_adjusted=0.0,
+            change_point_count=0,
+            variance_break_count=0,
+            trend_effect_size=0.0,
+            trend_p_value_robust=None,
         )
 
     adf = (
@@ -182,6 +199,30 @@ def run_statistical_agent(
             if abs(v) > conf_bound
         ]
 
+    # ── Typed evidence-based diagnostics ────────────────────────────────────
+    seasonality_evidence = detect_seasonality(
+        series,
+        metadata_period=seasonal_period,
+        disabled="periodogram" in disabled or "stl" in disabled,
+    )
+    stationarity_evidence = assess_stationarity(
+        series, disabled="adf" in disabled and "kpss" in disabled
+    )
+    trend_evidence = assess_trend(series, disabled="trend" in disabled)
+    anomaly_evidence = detect_anomalies(
+        series,
+        seasonal_period=seasonality_evidence.selected_period,
+        disabled="outliers" in disabled,
+    )
+    change_point_evidence = detect_change_points_calibrated(
+        series, disabled="change_points" in disabled
+    )
+
+    # Use the evidence-based selected period when it differs from the
+    # frequency-derived default and the evidence supports seasonality.
+    if seasonality_evidence.selected_period > 1:
+        inferred_period = seasonality_evidence.selected_period
+
     # Treat 'Skip' or the generic 'Other' as a trigger for AI inference
     is_inferred = user_domain in ["Skip / Let AI Guess", "Other (Custom)"]
     domain_info = (
@@ -196,7 +237,9 @@ def run_statistical_agent(
     )
     outlier_comparison = f"Outlier Comparison: IQR found {outliers_iqr['count']} outliers, Z-score found {outliers_zscore['count']} outliers"
     seasonal_range = (
-        max(stl["seasonal"]) - min(stl["seasonal"]) if stl is not None else 0.0
+        max(stl["seasonal"]) - min(stl["seasonal"])
+        if stl is not None and stl.get("status") == "ok"
+        else 0.0
     )
     disabled_info = (
         f"Disabled statistical tests for this forecast: {sorted(disabled)}\n"
@@ -313,4 +356,13 @@ def run_statistical_agent(
         summary=summary,
         reasoning_steps=reasoning_steps,
         token_usage=token_usage,
+        stationarity_classification=stationarity_evidence.classification,
+        seasonal_strength=seasonality_evidence.seasonal_strength,
+        seasonal_selection_provenance=seasonality_evidence.selection_provenance,
+        anomaly_count_adjusted=anomaly_evidence.anomaly_count,
+        anomaly_ratio_adjusted=anomaly_evidence.anomaly_ratio,
+        change_point_count=change_point_evidence.n_change_points,
+        variance_break_count=len(change_point_evidence.variance_breaks),
+        trend_effect_size=trend_evidence.effect_size,
+        trend_p_value_robust=trend_evidence.p_value,
     )

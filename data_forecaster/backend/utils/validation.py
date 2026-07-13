@@ -1,9 +1,9 @@
 """Terminal-holdout validation helper for forecast model evaluation.
 
 This module performs a single terminal holdout split — not rolling-origin
-validation. Phase 2 will replace this with a proper expanding-window
-backtesting service that generates identical folds for every candidate
-model.
+validation. The rolling-origin backtesting service will replace this with a
+proper expanding-window approach that generates identical folds for every
+candidate model.
 """
 
 from __future__ import annotations
@@ -26,9 +26,9 @@ def terminal_holdout_validation(
 
     This is a simple train/test evaluation — not rolling-origin validation.
     It creates one split, fits on the training portion, and scores the
-    forecast against the holdout. Phase 2 will replace this with a proper
-    expanding-window backtesting service that generates identical folds for
-    every candidate model.
+    forecast against the holdout. The rolling-origin backtesting service
+    will replace this with a proper expanding-window approach that generates
+    identical folds for every candidate model.
 
     Args:
         series: Historical observations ordered by time.

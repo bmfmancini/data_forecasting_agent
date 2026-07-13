@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 from core.logging_config import get_logger
@@ -128,6 +129,17 @@ def fit_arima(
         n_periods=forecast_horizon, return_conf_int=True
     )
 
+    # Expose fitted innovations for residual diagnostics.
+    innovations: list[float] = []
+    try:
+        resid = np.asarray(full_model.resid(), dtype=float)
+        innovations = resid[np.isfinite(resid)].tolist()
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.warning("ARIMA innovations unavailable: %s", exc)
+
+    # AR+MA order sum for the Ljung-Box degrees-of-freedom adjustment.
+    ar_ma_order = int(order[0]) + int(order[2])
+
     status = (
         ForecastFitStatus.OK if metrics.rmse is not None else ForecastFitStatus.DEGRADED
     )
@@ -149,5 +161,8 @@ def fit_arima(
             "trend": "c" if with_intercept else "n",
             "with_intercept": with_intercept,
             "refit_order": list(order),
+            "ar_ma_order": ar_ma_order,
         },
+        innovations=innovations,
+        interval_label="prediction_interval",
     )

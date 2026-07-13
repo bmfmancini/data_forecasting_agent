@@ -20,7 +20,12 @@ STATISTICAL_REVIEW_PROMPT = ChatPromptTemplate.from_messages(
             "of the statistical analysis, model selection, and forecasting agents "
             "for methodological consistency, correctness, and potential issues. "
             "You must not invent metrics or assume properties not explicitly "
-            "stated in the provided evidence.",
+            "stated in the provided evidence. "
+            "When the model selection was determined by the deterministic "
+            "selection policy (Python), you may critique the selection but you "
+            "cannot override it without a specific, code-recognized reason "
+            "(e.g. a critical consistency violation). You are a critic, not the "
+            "decision-maker.",
         ),
         (
             "human",

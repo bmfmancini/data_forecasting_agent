@@ -2,8 +2,8 @@
 
 This module owns split generation and metric scoring. Model adapters provide
 predictions; they do not define metric formulas or missing-value conventions.
-Phase 2 will replace the single split with multiple rolling origins while
-preserving this boundary.
+The rolling-origin backtesting service will replace the single split with
+multiple origins while preserving this boundary.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ def make_terminal_holdout(
     series: pd.Series,
     forecast_horizon: int,
 ) -> TerminalHoldout:
-    """Create the common terminal holdout used by every Phase 1 candidate."""
+    """Create the common terminal holdout used by every candidate."""
     if forecast_horizon < 1 or len(series) < 2:
         return TerminalHoldout(series.iloc[:0], series.iloc[:0])
     split = max(

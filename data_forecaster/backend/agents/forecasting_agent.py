@@ -10,15 +10,18 @@ import pandas as pd
 from core.llm_factory import get_llm
 from core.logging_config import get_logger
 from forecasting.arima_model import fit_arima
+from forecasting.backtesting import BacktestConfig, evaluate_candidates
 from forecasting.contracts import ForecastAdapterResult, ForecastFitStatus
 from forecasting.ewma_model import fit_ewma
 from forecasting.holt_winters import fit_holt_winters
+from forecasting.residual_diagnostics import analyze_innovations
 from forecasting.sarima_model import fit_sarima
 from prompts.forecasting_prompt import FORECASTING_PROMPT
 from schemas import (
     ForecastCandidateResult,
     ForecastResult,
     ModelSelectionResult,
+    ResidualDiagnostics,
     StatisticalResult,
 )
 from utils.statistical_analysis import analyze_residuals
@@ -103,10 +106,29 @@ def run_forecasting_agent(
                 fitted_configuration={"model": name},
             )
 
+    # ── Common rolling-origin backtesting ───────────────────────────────────
+    # Run all candidates on identical expanding-window folds so the reported
+    # metrics are apples-to-apples. The terminal-holdout metrics produced by
+    # each adapter remain on the result; the backtest evaluation supplements
+    # them with pooled rolling-origin evidence.
+    backtest_evals = _run_backtest_evaluation(series, forecast_horizon, seasonal_period)
+
     comparison_summary = "Model comparison metrics (lower is better):\n"
     for name, res in results_store.items():
+        # Include status, warnings, and provenance in the evidence passed
+        # to the LLM so it has versioned typed evidence.
+        status_text = f" [status={res.status.value}]"
+        if res.is_fallback:
+            status_text += " [fallback]"
+        if res.failure_reason:
+            status_text += f" [failure={res.failure_reason}]"
+        warnings_text = ""
+        if res.warnings:
+            warnings_text = f" [warnings: {'; '.join(res.warnings)}]"
         if not _has_required_metrics(res):
-            comparison_summary += f"- {name}: required metrics unavailable\n"
+            comparison_summary += (
+                f"- {name}:{status_text}{warnings_text} required metrics unavailable\n"
+            )
             continue
         wape_text = (
             f", WAPE={_format_metric(res.metrics.wape, '.2%')}"
@@ -118,9 +140,21 @@ def run_forecasting_agent(
             if res.metrics.mase is not None
             else ""
         )
+        backtest_text = ""
+        bt = backtest_evals.get(name)
+        if bt is not None and bt.pooled_metrics.rmse is not None:
+            backtest_text = (
+                f", backtest RMSE={bt.pooled_metrics.rmse:.4f} "
+                f"(n_origins={bt.n_origins})"
+            )
+        interval_text = ""
+        if res.interval_label:
+            interval_text = f" [interval={res.interval_label}]"
         comparison_summary += (
-            f"- {name}: RMSE={res.metrics.rmse:.4f}, MAE={res.metrics.mae:.4f}, "
-            f"MAPE={_format_metric(res.metrics.mape, '.2f')}%{wape_text}{mase_text}\n"
+            f"- {name}:{status_text}{warnings_text}{interval_text} "
+            f"RMSE={res.metrics.rmse:.4f}, MAE={res.metrics.mae:.4f}, "
+            f"MAPE={_format_metric(res.metrics.mape, '.2f')}%"
+            f"{wape_text}{mase_text}{backtest_text}\n"
         )
 
     # ── LLM Setup ────────────────────────────────────────────────────────────
@@ -246,11 +280,8 @@ def run_forecasting_agent(
         for name, metrics in existing_metrics.items():
             all_metrics.setdefault(name, metrics)
 
-    # ── Residual Analysis ─────────────────────────────────────────────────────
-    residual_diagnostics = None
-    # Residuals are not currently returned by the typed adapters; this
-    # branch will be activated when adapters expose innovations.
-    del disabled_tests  # Unused until adapters return residuals.
+    # ── Residual Analysis ───────────────────────────────────────────────────
+    residual_diagnostics = _run_residual_diagnostics(res, disabled_tests)
 
     logger.info("Forecasting complete. Selected: %s", selected)
 
@@ -284,10 +315,179 @@ def run_forecasting_agent(
                 n_missing=candidate.metrics.n_missing,
                 fitted_configuration=candidate.fitted_configuration,
                 warnings=candidate.warnings,
+                interval_label=candidate.interval_label,
             )
             for name, candidate in results_store.items()
         ],
         reasoning_steps=reasoning_steps,
         token_usage=token_usage,
+        interval_label=res.interval_label,
     )
     return forecast_result, all_metrics
+
+
+def _run_backtest_evaluation(
+    series: pd.Series,
+    forecast_horizon: int,
+    seasonal_period: int,
+) -> dict[str, Any]:
+    """Run common rolling-origin backtesting for all four adapters.
+
+    Every candidate is evaluated on identical expanding-window folds so the
+    reported metrics are apples-to-apples. The backtest evaluation
+    supplements (does not replace) the terminal-holdout metrics each adapter
+    computes internally.
+
+    Args:
+        series:           Cleaned historical series.
+        forecast_horizon:  Production forecast horizon.
+        seasonal_period:   Seasonal period for MASE scale.
+
+    Returns:
+        Mapping of model name to :class:`BacktestEvaluation`.
+    """
+    from forecasting.backtesting import BacktestFold, FoldPrediction  # local
+
+    config = BacktestConfig(
+        horizon=min(forecast_horizon, max(1, len(series) // 5)),
+        max_origins=5,
+        mase_period=seasonal_period,
+    )
+
+    def _arima_fn(train: pd.Series, fold: BacktestFold) -> FoldPrediction | None:
+        from forecasting.pmdarima_compat import import_pmdarima  # local
+
+        pm = import_pmdarima()
+        try:
+            model = pm.auto_arima(
+                train,
+                seasonal=False,
+                stepwise=True,
+                max_p=3,
+                max_q=3,
+                error_action="ignore",
+                suppress_warnings=True,
+                information_criterion="aic",
+            )
+            preds, _ = model.predict(n_periods=fold.horizon, return_conf_int=True)
+            return FoldPrediction(predictions=np.asarray(preds, dtype=float))
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.warning("Backtest ARIMA fold %d failed: %s", fold.fold_index, exc)
+            return None
+
+    def _sarima_fn(train: pd.Series, fold: BacktestFold) -> FoldPrediction | None:
+        from forecasting.pmdarima_compat import import_pmdarima  # local
+
+        pm = import_pmdarima()
+        use_seasonal = len(train) >= 2 * seasonal_period
+        try:
+            model = pm.auto_arima(
+                train,
+                seasonal=use_seasonal,
+                m=seasonal_period if use_seasonal else 1,
+                stepwise=True,
+                max_p=2,
+                max_q=2,
+                max_P=1,
+                max_Q=1,
+                error_action="ignore",
+                suppress_warnings=True,
+                information_criterion="aic",
+            )
+            preds, _ = model.predict(n_periods=fold.horizon, return_conf_int=True)
+            return FoldPrediction(predictions=np.asarray(preds, dtype=float))
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.warning("Backtest SARIMA fold %d failed: %s", fold.fold_index, exc)
+            return None
+
+    def _hw_fn(train: pd.Series, fold: BacktestFold) -> FoldPrediction | None:
+        from statsmodels.tsa.holtwinters import ExponentialSmoothing  # local
+
+        use_seasonal = len(train) >= 2 * seasonal_period
+        try:
+            fit = ExponentialSmoothing(
+                train,
+                trend="add",
+                seasonal="add" if use_seasonal else None,
+                seasonal_periods=seasonal_period if use_seasonal else None,
+            ).fit(optimized=True)
+            preds = fit.forecast(fold.horizon)
+            return FoldPrediction(predictions=np.asarray(preds, dtype=float))
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.warning(
+                "Backtest Holt-Winters fold %d failed: %s", fold.fold_index, exc
+            )
+            return None
+
+    def _ewma_fn(train: pd.Series, fold: BacktestFold) -> FoldPrediction | None:
+        try:
+            level = float(train.ewm(alpha=0.3, adjust=False).mean().iloc[-1])
+            preds = np.full(fold.horizon, level, dtype=float)
+            return FoldPrediction(predictions=preds)
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.warning("Backtest EWMA fold %d failed: %s", fold.fold_index, exc)
+            return None
+
+    candidates = {
+        "ARIMA": _arima_fn,
+        "SARIMA": _sarima_fn,
+        "Holt-Winters": _hw_fn,
+        "EWMA": _ewma_fn,
+    }
+    try:
+        return evaluate_candidates(series, candidates, config=config)
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.warning("Backtest evaluation failed: %s", exc)
+        return {}
+
+
+def _run_residual_diagnostics(
+    result: ForecastAdapterResult,
+    disabled_tests: list[str] | None,
+) -> ResidualDiagnostics | None:
+    """Run residual diagnostics on the selected model's innovations.
+
+    Args:
+        result:         The selected model's typed adapter result.
+        disabled_tests: Residual diagnostic tests to skip.
+
+    Returns:
+        A :class:`ResidualDiagnostics` schema, or ``None`` when no
+        innovations are available.
+    """
+    if not result.innovations:
+        return None
+
+    ar_ma_order = int(result.fitted_configuration.get("ar_ma_order", 0))
+    try:
+        diag = analyze_innovations(
+            np.asarray(result.innovations, dtype=float),
+            ar_ma_order=ar_ma_order,
+            disabled_tests=disabled_tests or [],
+        )
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.warning("Residual diagnostics failed: %s", exc)
+        return None
+
+    return ResidualDiagnostics(
+        mean=diag.mean,
+        is_zero_mean=diag.is_zero_mean,
+        ljung_box_p_value=diag.ljung_box_p_value,
+        is_uncorrelated=diag.is_uncorrelated,
+        shapiro_wilk_p_value=diag.shapiro_p_value,
+        is_normal=diag.is_normal,
+        disabled_tests=sorted(set(disabled_tests or [])),
+        error_type=diag.error_type,
+        n_errors=diag.n_errors,
+        mean_ci_lower=diag.mean_ci_lower,
+        mean_ci_upper=diag.mean_ci_upper,
+        ljung_box_lag=diag.ljung_box_lag,
+        ljung_box_df_adjust=diag.ljung_box_df_adjust,
+        variance_by_horizon=diag.variance_by_horizon,
+        interval_coverage=diag.interval_coverage,
+        interval_mean_width=diag.interval_mean_width,
+        winkler_score=diag.winkler_score,
+        nominal_coverage=diag.nominal_coverage,
+        coverage_estimable=diag.coverage_estimable,
+        warnings=diag.warnings,
+    )

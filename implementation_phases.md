@@ -90,6 +90,94 @@ failed/degraded candidate evidence. Test creation and execution were explicitly
 deferred; Phase 1 should receive its final verification pass before Phase 2 is
 treated as release-ready.
 
+### R2 / Phase 2 — Common rolling-origin backtesting (implementation complete; tests deferred)
+
+**Completed tasks:**
+
+1. **Backtest contracts** (`forecasting/contracts.py`):
+   - `BacktestFold` (fold_index, train_end_index, test_start_index, test_end_index, horizon) — one auditable rolling-origin fold.
+   - `BacktestFoldResult` (fold, predictions, lower_ci, upper_ci, residuals, status, warnings, fitted_configuration) — per-fold predictions and errors.
+   - `BacktestEvaluation` (model_name, folds, pooled_metrics, by_horizon_metrics, n_origins, n_evaluated, unavailable_reasons, warnings, `is_rankable` property) — aggregate rolling-origin evaluation.
+
+2. **Backtesting service** (`forecasting/backtesting.py`):
+   - `BacktestConfig` dataclass: `initial_train_size`, `horizon`, `step_size`, `max_origins`, `gap`, `reserve_final_window`, `mase_period`.
+   - `generate_folds` — expanding-window fold generation with configurable initial training size, step size, max origins, and optional gap. Optionally reserves a final untouched test window.
+   - `FoldPrediction` dataclass and `CandidateFn` protocol — candidates provide a fit-and-predict callable; the service owns split generation and scoring.
+   - `evaluate_candidate` — evaluates one candidate across all folds, computing pooled and by-horizon metrics via the centralized `calculate_forecast_metrics`. Per-fold processing extracted into `_process_fold` to stay under the cognitive-complexity limit.
+   - `evaluate_candidates` — evaluates multiple candidates on **identical folds** so comparisons are apples-to-apples.
+   - `make_terminal_holdout_folds` — backward-compatible single-fold terminal holdout (accurate label; preserves the Phase 1 evaluation boundary).
+
+3. **Forecasting agent integration** (`agents/forecasting_agent.py`):
+   - `_run_backtest_evaluation` runs all four adapters (ARIMA, SARIMA, Holt-Winters, EWMA) on identical expanding-window folds (max 5 origins, horizon capped to `min(forecast_horizon, len//5)`).
+   - The backtest evaluation **supplements** (does not replace) the terminal-holdout metrics each adapter computes internally.
+   - The LLM comparison summary now includes backtest RMSE and origin count per candidate.
+   - Candidate fold functions fit on the training window only (no future-data leakage).
+
+4. **Baseline service** (`services/baseline_service.py`):
+   - Baselines label their intervals as `experimental` (Phase 3) since they do not produce model-based prediction intervals.
+   - Baselines continue to share the common terminal-holdout fold so all candidates use the same evaluation boundary.
+
+**Validation completed:**
+- `python -m compileall -q` on all modified/new files: passed.
+- SonarQube cognitive-complexity issues resolved via helper extraction (`_process_fold`).
+- Test creation and execution explicitly deferred per project decision.
+
+**R2/Phase 2 production implementation is complete.** Every candidate is now
+scored on identical expanding-window folds; fold boundaries are auditable; no
+test value affects fold preprocessing or configuration. The terminal-holdout
+path is preserved behind an accurate label for backward compatibility.
+
+### R2 / Phase 3 — Residual diagnostics and uncertainty calibration (implementation complete; tests deferred)
+
+**Completed tasks:**
+
+1. **Residual diagnostics contracts** (`forecasting/contracts.py`):
+   - `ResidualDiagnosticsResult` — typed diagnostics distinguishing fitted innovations from pooled backtest errors. Fields: `error_type` (`"innovations"` or `"backtest_errors"`), `n_errors`, `mean`, `mean_ci_lower`/`mean_ci_upper`, `is_zero_mean`, `ljung_box_p_value`, `ljung_box_lag`, `ljung_box_df_adjust`, `is_uncorrelated`, `shapiro_p_value`, `is_normal`, `variance_by_horizon`, `interval_coverage`, `interval_mean_width`, `winkler_score`, `nominal_coverage`, `coverage_estimable`, `warnings`.
+
+2. **Residual diagnostics module** (`forecasting/residual_diagnostics.py`):
+   - `analyze_innovations` — diagnostics for fitted one-step-ahead innovations. Applies the Ljung-Box test with a degrees-of-freedom adjustment for the fitted AR+MA order (`ar_ma_order`) for ARIMA-family innovations. Computes mean-error bias with a 95% confidence interval, residual ACF, Shapiro-Wilk normality, and labels coverage as not estimable for innovations.
+   - `analyze_backtest_errors` — diagnostics for pooled backtest errors from Phase 2 folds. Computes bias/CI, Ljung-Box, Shapiro-Wilk, variance by horizon, and empirical interval coverage / mean width / Winkler score when interval bounds are supplied. Interval-metric computation extracted into `_compute_interval_metrics` to stay under the cognitive-complexity limit.
+   - `calibrate_interval_width` — multiplicatively scales an interval so its nominal coverage matches empirical evidence. Returns the interval unchanged when coverage is not estimable.
+   - Helper functions: `_ljung_box` (with chi-square df re-derivation), `_mean_ci`, `_variance_by_horizon`, `_interval_coverage`, `_mean_width`, `_winkler_score`.
+
+3. **Adapter innovations exposure** (all four adapters):
+   - `fit_arima` — exposes `innovations` (fitted residuals from the full-series refit) and `ar_ma_order` (sum of non-seasonal AR+MA orders) in `fitted_configuration` for the Ljung-Box df adjustment. Interval label: `prediction_interval` (model-based).
+   - `fit_sarima` — exposes `innovations` and `ar_ma_order` (non-seasonal + seasonal AR+MA order sum). Interval label: `prediction_interval`.
+   - `fit_holt_winters` — exposes `innovations` (level residuals). Interval label: `experimental` (residual-std heuristic bands, not calibrated — documented as a known gap until simulation/bootstrap intervals are implemented).
+   - `fit_ewma` — exposes `innovations` (one-step smoothing errors). Interval label: `experimental` (residual-std heuristic bands).
+   - `ForecastAdapterResult` gained `innovations` and `interval_label` fields.
+
+4. **Forecasting agent residual analysis** (`agents/forecasting_agent.py`):
+   - `_run_residual_diagnostics` runs `analyze_innovations` on the selected model's innovations, passing the `ar_ma_order` for the Ljung-Box df adjustment and the user-disabled tests.
+   - The resulting `ResidualDiagnostics` schema is populated on `ForecastResult` with all Phase 3 fields (error_type, n_errors, mean CI, Ljung-Box lag/df_adjust, variance_by_horizon, interval coverage/width/Winkler, coverage_estimable, warnings).
+   - `ForecastResult` and `ForecastCandidateResult` gained `interval_label` fields.
+
+5. **Schema extensions** (`schemas.py`):
+   - `ResidualDiagnostics` extended with Phase 3 fields (error_type, n_errors, mean_ci_lower/upper, ljung_box_lag, ljung_box_df_adjust, variance_by_horizon, interval_coverage, interval_mean_width, winkler_score, nominal_coverage, coverage_estimable, warnings). Original fields preserved for backward compatibility.
+   - `ForecastResult` and `ForecastCandidateResult` gained `interval_label`.
+
+6. **Prediction-interval terminology** (Phase 3 requirement #7):
+   - `utils/visualization.py`: forecast chart ribbon renamed from "95% CI" to "95% Prediction Interval" (or "Prediction Interval (experimental)" when the adapter labels its intervals as experimental).
+   - `report/models.py`: `PredictionInterval` gained `interval_label` field.
+   - `report/builder.py`: `_build_forecast_metrics` carries the interval label through to `PredictionInterval` records and renders the confidence level as "95% (experimental)" for experimental intervals.
+   - `services/pipeline_service.py`: baseline candidate results carry `interval_label`.
+
+7. **Suppressed nominal "95%" claim for uncalibrated intervals** (Phase 3 requirement #8):
+   - Holt-Winters and EWMA intervals are labelled `experimental` so renderers and reports can distinguish model-based prediction intervals from heuristic bands.
+   - Coverage is labelled `coverage_estimable=False` for innovations (no holdout actuals to evaluate against).
+
+**Validation completed:**
+- `python -m compileall -q` on all modified/new files: passed.
+- SonarQube cognitive-complexity issues resolved via helper extraction (`_compute_interval_metrics`).
+- Test creation and execution explicitly deferred per project decision.
+
+**R2/Phase 3 production implementation is complete.** Residual diagnostics are
+populated for successful forecasts from fitted innovations; interval coverage is
+reported when estimable; no heuristic band is labelled calibrated; the
+statistical review agent and report builder now consume real diagnostics.
+Holt-Winters and EWMA intervals are honestly labelled as experimental until
+simulation/bootstrap intervals are implemented in a future phase.
+
 ## Phased implementation roadmap
 
 The phases below are dependency ordered. Each phase should be independently releasable behind a feature flag where it changes report output or model selection. Do not add new forecasting families until Phase 4 is complete; otherwise new models will inherit the current evaluation defects.

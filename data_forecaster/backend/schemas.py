@@ -103,7 +103,13 @@ class ValidationResult(BaseModel):
 
 
 class StatisticalResult(BaseModel):
-    """Output of the statistical analysis agent."""
+    """Output of the statistical analysis agent.
+
+    Includes typed evidence fields for seasonality, stationarity, anomalies,
+    change points, and trend. The original scalar fields are preserved for
+    backward compatibility with the report builder and statistical review
+    agent.
+    """
 
     is_stationary_adf: bool
     adf_statistic: float
@@ -127,10 +133,25 @@ class StatisticalResult(BaseModel):
     summary: str
     reasoning_steps: list[dict[str, Any]] = Field(default_factory=list)
     token_usage: dict[str, Any] = Field(default_factory=dict)
+    # ── Evidence-state additions ──────────────────────────────────────────
+    stationarity_classification: str | None = None
+    seasonal_strength: float | None = None
+    seasonal_selection_provenance: str | None = None
+    anomaly_count_adjusted: int | None = None
+    anomaly_ratio_adjusted: float | None = None
+    change_point_count: int | None = None
+    variance_break_count: int | None = None
+    trend_effect_size: float | None = None
+    trend_p_value_robust: float | None = None
 
 
 class ModelSelectionResult(BaseModel):
-    """Output of the model selection agent."""
+    """Output of the model selection agent.
+
+    Includes fields recording the deterministic selection policy that
+    produced this result, so the report can show whether the selection was
+    evidence-based or heuristic.
+    """
 
     selected_model: str
     explanation: str
@@ -140,10 +161,18 @@ class ModelSelectionResult(BaseModel):
     ewma_rejected_reason: str | None = None
     reasoning_steps: list[dict[str, Any]] = Field(default_factory=list)
     token_usage: dict[str, Any] = Field(default_factory=dict)
+    # ── Selection policy additions ──────────────────────────────────────────
+    selection_method: str = "llm"  # "deterministic" | "llm" | "heuristic" | "forced"
+    selection_evidence: dict[str, Any] = Field(default_factory=dict)
 
 
 class ResidualDiagnostics(BaseModel):
-    """Output of residual analysis diagnostics."""
+    """Output of residual analysis diagnostics.
+
+    Includes typed fields for error type, interval coverage, and interval
+    labelling. The original fields are preserved for backward compatibility
+    with the report builder and statistical review agent.
+    """
 
     mean: float
     is_zero_mean: bool | None = None
@@ -152,6 +181,20 @@ class ResidualDiagnostics(BaseModel):
     shapiro_wilk_p_value: float | None = None
     is_normal: bool | None = None
     disabled_tests: list[str] = Field(default_factory=list)
+    # ── Residual diagnostics additions ──────────────────────────────────────
+    error_type: str = "innovations"
+    n_errors: int = 0
+    mean_ci_lower: float | None = None
+    mean_ci_upper: float | None = None
+    ljung_box_lag: int | None = None
+    ljung_box_df_adjust: int = 0
+    variance_by_horizon: dict[int, float] = Field(default_factory=dict)
+    interval_coverage: float | None = None
+    interval_mean_width: float | None = None
+    winkler_score: float | None = None
+    nominal_coverage: float = 0.95
+    coverage_estimable: bool = False
+    warnings: list[str] = Field(default_factory=list)
 
 
 class ForecastCandidateResult(BaseModel):
@@ -170,6 +213,7 @@ class ForecastCandidateResult(BaseModel):
     n_missing: int = 0
     fitted_configuration: dict[str, Any] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
+    interval_label: str = "prediction_interval"
 
 
 class ForecastResult(BaseModel):
@@ -192,6 +236,7 @@ class ForecastResult(BaseModel):
     candidate_results: list[ForecastCandidateResult] = Field(default_factory=list)
     reasoning_steps: list[dict[str, Any]] = Field(default_factory=list)
     token_usage: dict[str, Any] = Field(default_factory=dict)
+    interval_label: str = "prediction_interval"
 
 
 class StatisticalReviewResult(BaseModel):
@@ -199,6 +244,9 @@ class StatisticalReviewResult(BaseModel):
 
     A critic agent that reviews the outputs of the statistical analysis,
     model selection, and forecasting agents for consistency and correctness.
+
+    Includes fields recording whether the review can override the
+    deterministic selection policy and the typed reasons for any override.
     """
 
     verdict: str  # "pass" | "warn" | "fail"
@@ -207,6 +255,9 @@ class StatisticalReviewResult(BaseModel):
     summary: str
     reasoning_steps: list[dict[str, Any]] = Field(default_factory=list)
     token_usage: dict[str, Any] = Field(default_factory=dict)
+    # ── Override eligibility additions ──────────────────────────────────────
+    can_override_selection: bool = False
+    override_reasons: list[str] = Field(default_factory=list)
 
 
 class AnalysisResponse(BaseModel):

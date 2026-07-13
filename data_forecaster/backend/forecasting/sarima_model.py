@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 from core.logging_config import get_logger
@@ -140,6 +141,19 @@ def fit_sarima(
         n_periods=forecast_horizon, return_conf_int=True
     )
 
+    # Expose fitted innovations for residual diagnostics.
+    innovations: list[float] = []
+    try:
+        resid = np.asarray(full_model.resid(), dtype=float)
+        innovations = resid[np.isfinite(resid)].tolist()
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.warning("SARIMA innovations unavailable: %s", exc)
+
+    # AR+MA order sum (non-seasonal + seasonal) for the Ljung-Box df adjustment.
+    ar_ma_order = (
+        int(order[0]) + int(order[2]) + int(seasonal_order[0]) + int(seasonal_order[2])
+    )
+
     status = (
         ForecastFitStatus.OK if metrics.rmse is not None else ForecastFitStatus.DEGRADED
     )
@@ -163,5 +177,8 @@ def fit_sarima(
             "with_intercept": with_intercept,
             "seasonal_period": seasonal_period,
             "used_seasonal": use_seasonal,
+            "ar_ma_order": ar_ma_order,
         },
+        innovations=innovations,
+        interval_label="prediction_interval",
     )
