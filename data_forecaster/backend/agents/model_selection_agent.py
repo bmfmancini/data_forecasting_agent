@@ -832,7 +832,11 @@ def _build_adapter_result(
         lower_ci=[],
         upper_ci=[],
         metrics=ForecastMetrics(
-            rmse=rmse, mae=mae, mape=mape, wape=wape, mase=mase,
+            rmse=rmse,
+            mae=mae,
+            mape=mape,
+            wape=wape,
+            mase=mase,
         ),
         fitted_configuration={"model": name},
     )

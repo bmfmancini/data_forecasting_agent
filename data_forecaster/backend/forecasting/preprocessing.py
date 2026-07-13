@@ -52,7 +52,9 @@ class BoxCoxTransform:
         """
         values = train.dropna().astype(float).values
         if len(values) < _MIN_BOXCOX_LENGTH:
-            logger.warning("Box-Cox fit: training series too short (n=%d).", len(values))
+            logger.warning(
+                "Box-Cox fit: training series too short (n=%d).", len(values)
+            )
             self.transform.is_fitted = False
             return self
 
@@ -156,7 +158,9 @@ class LogTransform:
         """
         if not self.transform.is_fitted:
             return series
-        values = np.maximum(series.astype(float).values + self.transform.shift, _EPSILON)
+        values = np.maximum(
+            series.astype(float).values + self.transform.shift, _EPSILON
+        )
         return pd.Series(np.log(values), index=series.index)
 
     def inverse_transform(self, values: np.ndarray | pd.Series) -> np.ndarray:

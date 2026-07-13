@@ -23,7 +23,11 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from core.logging_config import get_logger
-from forecasting.contracts import BacktestEvaluation, ForecastAdapterResult, ForecastFitStatus
+from forecasting.contracts import (
+    BacktestEvaluation,
+    ForecastAdapterResult,
+    ForecastFitStatus,
+)
 
 logger = get_logger(__name__)
 
@@ -364,10 +368,16 @@ def _simplicity_index(model_name: str) -> int:
     return len(_SIMPLICITY_ORDER)
 
 
-_KNOWN_MODEL_NAMES = ("ARIMA", "SARIMA", "Holt-Winters", "EWMA", "ETS", "Theta", "Prophet")
-_COMMON_WORDS = frozenset(
-    {"The", "A", "An", "This", "That", "It", "Model"}
+_KNOWN_MODEL_NAMES = (
+    "ARIMA",
+    "SARIMA",
+    "Holt-Winters",
+    "EWMA",
+    "ETS",
+    "Theta",
+    "Prophet",
 )
+_COMMON_WORDS = frozenset({"The", "A", "An", "This", "That", "It", "Model"})
 
 
 def _check_invented_models(
@@ -429,8 +439,7 @@ def _check_invented_metrics(
             val = round(float(num_str), 4)
             if evidence_rmse_values and val not in evidence_rmse_values:
                 warnings_list.append(
-                    f"LLM cited RMSE={val} which does not match any "
-                    f"evidence value."
+                    f"LLM cited RMSE={val} which does not match any " f"evidence value."
                 )
         except ValueError:
             pass
@@ -453,14 +462,10 @@ def _check_contradictory_selection(
     import re
 
     warnings_list: list[str] = []
-    selected_matches = re.findall(
-        r"selected model\s*:\s*(\w+)", text_lower
-    )
+    selected_matches = re.findall(r"selected model\s*:\s*(\w+)", text_lower)
     for match in selected_matches:
         if match.title() not in valid_models and match != "no":
-            warnings_list.append(
-                f"LLM selected '{match}' which is not a valid model."
-            )
+            warnings_list.append(f"LLM selected '{match}' which is not a valid model.")
     return warnings_list
 
 

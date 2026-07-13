@@ -111,7 +111,11 @@ def _interval_coverage(
     upper: np.ndarray,
 ) -> float | None:
     """Empirical coverage: fraction of actuals inside the interval."""
-    if actuals.size == 0 or lower.shape != actuals.shape or upper.shape != actuals.shape:
+    if (
+        actuals.size == 0
+        or lower.shape != actuals.shape
+        or upper.shape != actuals.shape
+    ):
         return None
     inside = (actuals >= lower) & (actuals <= upper)
     return float(np.mean(inside))
@@ -136,7 +140,11 @@ def _winkler_score(
     better. See Hyndman & Athanasopoulos, *Forecasting: principles and
     practice*, Section 5.8.
     """
-    if actuals.size == 0 or lower.shape != actuals.shape or upper.shape != actuals.shape:
+    if (
+        actuals.size == 0
+        or lower.shape != actuals.shape
+        or upper.shape != actuals.shape
+    ):
         return None
     alpha = 1.0 - nominal_coverage
     width = upper - lower
@@ -186,8 +194,11 @@ def analyze_innovations(
     is_zero_mean = None
     if "residual_zero_mean" not in disabled and n >= 2:
         ci_lower, ci_upper = _mean_ci(errors)
-        is_zero_mean = (ci_lower is not None and ci_upper is not None
-                        and ci_lower <= 0.0 <= ci_upper)
+        is_zero_mean = (
+            ci_lower is not None
+            and ci_upper is not None
+            and ci_lower <= 0.0 <= ci_upper
+        )
 
     ljung_p: float | None = None
     lag_used: int | None = None
@@ -308,8 +319,11 @@ def analyze_backtest_errors(
     is_zero_mean = None
     if "residual_zero_mean" not in disabled and n >= 2:
         ci_lower, ci_upper = _mean_ci(pooled)
-        is_zero_mean = (ci_lower is not None and ci_upper is not None
-                        and ci_lower <= 0.0 <= ci_upper)
+        is_zero_mean = (
+            ci_lower is not None
+            and ci_upper is not None
+            and ci_lower <= 0.0 <= ci_upper
+        )
 
     ljung_p: float | None = None
     lag_used: int | None = None

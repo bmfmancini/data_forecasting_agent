@@ -136,9 +136,7 @@ def detect_seasonality(
 
     # ── STL seasonal strength ─────────────────────────────────────────────────
     seasonal_strength: float | None = None
-    stl_period = _select_stl_period(
-        freq_period, metadata_period, candidate_periods, n
-    )
+    stl_period = _select_stl_period(freq_period, metadata_period, candidate_periods, n)
     if stl_period is not None and n >= _MIN_STL_CYCLES * stl_period:
         try:
             with warnings.catch_warnings():
