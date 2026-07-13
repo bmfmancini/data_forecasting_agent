@@ -82,7 +82,7 @@ def fit_arima(
 
     # Split data into train and test sets for metrics calculation
     holdout = make_terminal_holdout(series, forecast_horizon)
-    train, test = holdout.train, holdout.test
+    train = holdout.train
 
     train_model = None
     metrics = ForecastMetrics(
@@ -100,6 +100,8 @@ def fit_arima(
                 error_action="ignore",
                 suppress_warnings=True,
                 information_criterion="aic",
+                test="kpss",
+                max_d=2,
             )
             metrics = _calculate_metrics(holdout, train_model, mase_period)
         except Exception as exc:  # pylint: disable=broad-except
@@ -162,6 +164,8 @@ def fit_arima(
             "with_intercept": with_intercept,
             "refit_order": list(order),
             "ar_ma_order": ar_ma_order,
+            "differencing_test": "kpss",
+            "max_d": 2,
         },
         innovations=innovations,
         interval_label="prediction_interval",

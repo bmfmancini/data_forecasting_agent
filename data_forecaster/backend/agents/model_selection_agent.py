@@ -28,6 +28,7 @@ from forecasting.selection_policy import (
     select_model_deterministic,
     validate_llm_output,
 )
+from forecasting.contracts import ForecastAdapterResult
 from prompts.model_selection_prompt import MODEL_SELECTION_PROMPT
 from schemas import ModelSelectionResult, StatisticalResult
 from utils.token_tracking import estimate_input_text, extract_token_usage
@@ -1018,6 +1019,13 @@ def run_model_selection_agent(
         return _build_heuristic_result(fallback_model, fallback_reasoning, stat_result)
 
     output, token_usage = llm_result
+    validation_warnings = validate_llm_output(
+        output,
+        list(_MODELS),
+        {"all_metrics": all_metrics or {}},
+    )
+    if validation_warnings:
+        logger.warning("Model-selection narrative validation: %s", validation_warnings)
     selected_model = _parse_selected_model(output, fallback_model)
     reasons = _business_selection_reasons(selected_model, stat_result)
     explanation = (
@@ -1047,7 +1055,7 @@ def run_model_selection_agent(
         ],
         token_usage=token_usage,
         selection_method="llm",
-        selection_evidence={},
+        selection_evidence={"llm_validation_warnings": validation_warnings},
     )
 
 

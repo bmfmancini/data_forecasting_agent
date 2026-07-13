@@ -68,19 +68,19 @@ class CandidateEvidence:
     @property
     def is_rankable(self) -> bool:
         """Return whether this candidate has valid point-error evidence."""
-        if self.adapter_result is None:
-            return False
-        return self.adapter_result.is_rankable
+        if self.backtest is not None:
+            return self.backtest.is_rankable
+        return bool(self.adapter_result and self.adapter_result.is_rankable)
 
     @property
     def rmse(self) -> float | None:
-        """Return the terminal-holdout RMSE (or None)."""
-        if self.adapter_result and self.adapter_result.metrics.rmse is not None:
-            if math.isfinite(self.adapter_result.metrics.rmse):
-                return self.adapter_result.metrics.rmse
+        """Return rolling-origin RMSE, falling back only when unavailable."""
         if self.backtest and self.backtest.pooled_metrics.rmse is not None:
             if math.isfinite(self.backtest.pooled_metrics.rmse):
                 return self.backtest.pooled_metrics.rmse
+        if self.adapter_result and self.adapter_result.metrics.rmse is not None:
+            if math.isfinite(self.adapter_result.metrics.rmse):
+                return self.adapter_result.metrics.rmse
         return None
 
     @property
@@ -92,7 +92,7 @@ class CandidateEvidence:
         return None
 
     def metric_value(self, metric: str) -> float | None:
-        """Return a named metric value (terminal-holdout, then backtest).
+        """Return a named metric value, preferring rolling-origin evidence.
 
         Args:
             metric: Metric name (``"rmse"``, ``"mae"``, ``"mape"``,
@@ -102,12 +102,12 @@ class CandidateEvidence:
             The metric value, or None when unavailable.
         """
         metric = metric.lower()
-        if self.adapter_result:
-            val = getattr(self.adapter_result.metrics, metric, None)
-            if val is not None and math.isfinite(val):
-                return val
         if self.backtest:
             val = getattr(self.backtest.pooled_metrics, metric, None)
+            if val is not None and math.isfinite(val):
+                return val
+        if self.adapter_result:
+            val = getattr(self.adapter_result.metrics, metric, None)
             if val is not None and math.isfinite(val):
                 return val
         return None
@@ -175,6 +175,7 @@ def _exclusion_reason(cand: CandidateEvidence) -> str:
 
 def _rank_candidates(
     rankable: list[CandidateEvidence],
+    loss_metric: str,
 ) -> list[CandidateEvidence]:
     """Rank candidates by metric priority (lower is better).
 
@@ -187,9 +188,12 @@ def _rank_candidates(
 
     def _loss_key(cand: CandidateEvidence) -> tuple[float, ...]:
         """Return a tuple of metric values for ranking (lower is better)."""
+        ordered = (loss_metric,) + tuple(
+            metric for metric in _METRIC_PRIORITY if metric != loss_metric
+        )
         return tuple(
             cand.metric_value(m) if cand.metric_value(m) is not None else float("inf")
-            for m in _METRIC_PRIORITY
+            for m in ordered
         )
 
     return sorted(rankable, key=_loss_key)
@@ -318,7 +322,7 @@ def select_model_deterministic(
     if loss_metric not in _METRIC_PRIORITY:
         loss_metric = "rmse"
 
-    ranked = _rank_candidates(rankable)
+    ranked = _rank_candidates(rankable, loss_metric)
     ranking = [(c.name, c.rmse or float("inf")) for c in ranked]
 
     selected, tie_break_note = _apply_tie_break(ranked)

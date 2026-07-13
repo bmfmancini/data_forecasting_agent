@@ -143,6 +143,12 @@ class StatisticalResult(BaseModel):
     variance_break_count: int | None = None
     trend_effect_size: float | None = None
     trend_p_value_robust: float | None = None
+    diagnostic_statuses: dict[str, str] = Field(default_factory=dict)
+    diagnostic_warnings: dict[str, list[str]] = Field(default_factory=dict)
+    seasonality_candidates: list[int] = Field(default_factory=list)
+    observed_frequency: str | None = None
+    narrative_label: str = "llm_interpretation"
+    narrative_evidence: list[str] = Field(default_factory=list)
 
 
 class ModelSelectionResult(BaseModel):
@@ -192,6 +198,9 @@ class ResidualDiagnostics(BaseModel):
     interval_coverage: float | None = None
     interval_mean_width: float | None = None
     winkler_score: float | None = None
+    interval_coverage_by_horizon: dict[int, float] = Field(default_factory=dict)
+    interval_width_by_horizon: dict[int, float] = Field(default_factory=dict)
+    winkler_score_by_horizon: dict[int, float] = Field(default_factory=dict)
     nominal_coverage: float = 0.95
     coverage_estimable: bool = False
     warnings: list[str] = Field(default_factory=list)
@@ -214,6 +223,7 @@ class ForecastCandidateResult(BaseModel):
     fitted_configuration: dict[str, Any] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
     interval_label: str = "prediction_interval"
+    validation_design: dict[str, Any] = Field(default_factory=dict)
 
 
 class ForecastResult(BaseModel):
@@ -237,6 +247,7 @@ class ForecastResult(BaseModel):
     reasoning_steps: list[dict[str, Any]] = Field(default_factory=list)
     token_usage: dict[str, Any] = Field(default_factory=dict)
     interval_label: str = "prediction_interval"
+    validation_design: dict[str, Any] = Field(default_factory=dict)
 
 
 class StatisticalReviewResult(BaseModel):

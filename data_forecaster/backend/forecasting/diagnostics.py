@@ -233,7 +233,7 @@ def _periodogram_candidates(detrended: pd.Series) -> list[int]:
         freq = freqs[idx]
         if freq <= 0:
             continue
-        period = n / freq  # period in number of observations
+        period = 1.0 / freq  # scipy frequencies are cycles per observation
         if period < 2 or period > n / 2:
             continue
         int_period = int(round(period))
@@ -259,14 +259,11 @@ def _is_harmonic_of_existing(period: int, existing: list[int]) -> bool:
         True if ``period`` is a harmonic of any existing candidate.
     """
     for existing_period in existing:
-        if existing_period == 0:
+        if existing_period <= 0 or period <= 0:
             continue
-        ratio = period / existing_period
-        # Check if ratio is close to an integer (harmonic) or 1/integer
+        ratio = max(period, existing_period) / min(period, existing_period)
         nearest = round(ratio)
         if nearest >= 2 and abs(ratio - nearest) < _HARMONIC_TOLERANCE:
-            return True
-        if nearest == 0 and abs(ratio - 1.0 / round(1.0 / ratio)) < _HARMONIC_TOLERANCE:
             return True
     return False
 

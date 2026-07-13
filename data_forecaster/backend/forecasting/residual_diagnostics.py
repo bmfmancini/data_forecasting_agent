@@ -352,10 +352,43 @@ def analyze_backtest_errors(
     width: float | None = None
     winkler: float | None = None
     coverage_estimable = False
+    coverage_by_horizon: dict[int, float] = {}
+    width_by_horizon: dict[int, float] = {}
+    winkler_by_horizon: dict[int, float] = {}
     if fold_actuals is not None and fold_lower is not None and fold_upper is not None:
         coverage, width, winkler, coverage_estimable = _compute_interval_metrics(
             fold_actuals, fold_lower, fold_upper, nominal_coverage
         )
+        max_horizon = max((len(values) for values in fold_actuals), default=0)
+        for horizon in range(max_horizon):
+            aligned = [
+                (actual[horizon], lower[horizon], upper[horizon])
+                for actual, lower, upper in zip(
+                    fold_actuals, fold_lower, fold_upper
+                )
+                if lower is not None
+                and upper is not None
+                and len(actual) > horizon
+                and len(lower) > horizon
+                and len(upper) > horizon
+            ]
+            if not aligned:
+                continue
+            actual_arr = np.asarray([values[0] for values in aligned], dtype=float)
+            lower_arr = np.asarray([values[1] for values in aligned], dtype=float)
+            upper_arr = np.asarray([values[2] for values in aligned], dtype=float)
+            step_coverage = _interval_coverage(actual_arr, lower_arr, upper_arr)
+            step_width = _mean_width(lower_arr, upper_arr)
+            step_winkler = _winkler_score(
+                actual_arr, lower_arr, upper_arr, nominal_coverage
+            )
+            step = horizon + 1
+            if step_coverage is not None:
+                coverage_by_horizon[step] = step_coverage
+            if step_width is not None:
+                width_by_horizon[step] = step_width
+            if step_winkler is not None:
+                winkler_by_horizon[step] = step_winkler
 
     return ResidualDiagnosticsResult(
         error_type="backtest_errors",
@@ -374,6 +407,9 @@ def analyze_backtest_errors(
         interval_coverage=coverage,
         interval_mean_width=width,
         winkler_score=winkler,
+        interval_coverage_by_horizon=coverage_by_horizon,
+        interval_width_by_horizon=width_by_horizon,
+        winkler_score_by_horizon=winkler_by_horizon,
         nominal_coverage=nominal_coverage,
         coverage_estimable=coverage_estimable,
         warnings=warnings,

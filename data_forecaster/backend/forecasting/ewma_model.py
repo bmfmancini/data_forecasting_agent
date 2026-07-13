@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from statsmodels.tsa.holtwinters import SimpleExpSmoothing
 
 from core.logging_config import get_logger
 from forecasting.contracts import (
@@ -107,9 +108,11 @@ def fit_ewma(
 
     # ── Evaluate holdout metrics on the training split ──────────────────────
     try:
-        train_ewma = train.ewm(alpha=estimated_alpha, adjust=False).mean()
-        last_train_level = float(train_ewma.iloc[-1])
-        test_fc = np.full(len(test), last_train_level)
+        train_fit = SimpleExpSmoothing(
+            train, initialization_method="estimated"
+        ).fit(smoothing_level=alpha, optimized=alpha is None)
+        estimated_alpha = float(train_fit.params["smoothing_level"])
+        test_fc = np.asarray(train_fit.forecast(len(test)), dtype=float)
         metrics = evaluate_predictions(
             holdout,
             test_fc,
@@ -120,18 +123,20 @@ def fit_ewma(
         metrics = ForecastMetrics(unavailable_reasons={"all": str(exc)})
 
     # ── Full-series fit for forecast ─────────────────────────────────────────
-    full_ewma = series.ewm(alpha=estimated_alpha, adjust=False).mean()
-    last_full_level = float(full_ewma.iloc[-1])
-
-    # Forecast: use the last EWMA level for all future periods (flat SES).
-    forecast_values = [last_full_level] * forecast_horizon
-
-    # Confidence intervals using residual standard deviation.
-    residuals = series - full_ewma
-    std_residuals = float(np.std(residuals.dropna()))
-
-    lower_ci = [f - 1.96 * std_residuals for f in forecast_values]
-    upper_ci = [f + 1.96 * std_residuals for f in forecast_values]
+    full_fit = SimpleExpSmoothing(
+        series, initialization_method="estimated"
+    ).fit(smoothing_level=estimated_alpha, optimized=False)
+    forecast_values = np.asarray(full_fit.forecast(forecast_horizon), dtype=float)
+    residuals = pd.Series(np.asarray(full_fit.resid, dtype=float)).dropna()
+    rng = np.random.default_rng(42)
+    sampled = rng.choice(
+        residuals.to_numpy(dtype=float),
+        size=(1000, forecast_horizon),
+        replace=True,
+    )
+    simulated = forecast_values[None, :] + sampled
+    lower_ci = np.quantile(simulated, 0.025, axis=0).tolist()
+    upper_ci = np.quantile(simulated, 0.975, axis=0).tolist()
 
     # Expose fitted innovations (one-step smoothing errors).
     innovations: list[float] = []
@@ -154,7 +159,7 @@ def fit_ewma(
         status=status,
         failure_reason=failure_reason,
         is_fallback=False,
-        forecast=forecast_values,
+        forecast=forecast_values.tolist(),
         lower_ci=lower_ci,
         upper_ci=upper_ci,
         metrics=metrics,
@@ -165,8 +170,5 @@ def fit_ewma(
             "estimated": alpha is None,
         },
         innovations=innovations,
-        # EWMA intervals are residual-std heuristic bands, not calibrated
-        # prediction intervals. Label them as experimental until
-        # simulation/state-space intervals are implemented.
-        interval_label="experimental",
+        interval_label="bootstrap_prediction_interval",
     )

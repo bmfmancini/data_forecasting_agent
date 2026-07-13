@@ -8,14 +8,12 @@ import pandas as pd
 
 from schemas import PreflightDecision, PreflightResponse
 from utils.data_cleaning import (
-    audit_series,
     detect_outliers_iqr,
     impute_missing,
     reindex_series,
     resolve_duplicates,
     smooth_series,
     treat_outliers,
-    validate_schema,
 )
 
 AGGREGATION_OPTIONS = ["Let AI Decide", "sum", "mean", "latest"]
@@ -77,7 +75,6 @@ def run_preflight_checks(
     detected_frequency = _infer_frequency(selected.set_index(date_col))
     usable_observations = int(series.dropna().shape[0])
 
-    audit_info = audit_series(series)
     outlier_info = detect_outliers_iqr(series.dropna())
 
     issues: list[str] = []
@@ -90,6 +87,14 @@ def run_preflight_checks(
         "data_domain": "Skip / Let AI Guess",
         "outlier_strategy": "Let AI Decide",
         "continue_short_series": "continue",
+        "loss_metric": "mase",
+        "units": "Unspecified",
+        "interventions": "None known",
+        "censoring_or_stockouts": "None known",
+        "known_future_covariates": "None",
+        "aggregation": "As provided",
+        "minimum_value": None,
+        "maximum_value": None,
     }
 
     if duplicate_ts:
@@ -138,6 +143,49 @@ def run_preflight_checks(
             required=True,
             allow_custom=True,
         )
+    )
+    decisions.extend(
+        [
+            PreflightDecision(
+                key="loss_metric",
+                label="Decision loss",
+                message="Which out-of-sample loss should control model ranking?",
+                options=["mase", "rmse", "mae", "wape"],
+                default="mase",
+            ),
+            PreflightDecision(
+                key="units",
+                label="Target units",
+                message="What units does the forecast target use?",
+                options=["Unspecified", "Count", "Currency", "Rate", "Other"],
+                default="Unspecified",
+                allow_custom=True,
+            ),
+            PreflightDecision(
+                key="interventions",
+                label="Known interventions",
+                message="List promotions, outages, policy changes, or other interventions.",
+                options=["None known", "Known events"],
+                default="None known",
+                allow_custom=True,
+            ),
+            PreflightDecision(
+                key="censoring_or_stockouts",
+                label="Censoring or stockouts",
+                message="Can recorded values be capped, censored, or limited by stockouts?",
+                options=["None known", "Possible", "Confirmed"],
+                default="None known",
+                allow_custom=True,
+            ),
+            PreflightDecision(
+                key="known_future_covariates",
+                label="Future information",
+                message="Are future holidays, prices, schedules, or covariates known?",
+                options=["None", "Available"],
+                default="None",
+                allow_custom=True,
+            ),
+        ]
     )
 
     if outlier_info["count"] > 0:
@@ -252,7 +300,9 @@ def prepare_series_frame(
 
     outlier_strategy = options.get("outlier_strategy", "None")
     if outlier_strategy == "Let AI Decide":
-        outlier_strategy = "clip"
+        # Diagnostics may flag anomalies, but automatic full-series clipping
+        # would leak future distributional information into backtests.
+        outlier_strategy = "None"
     if outlier_strategy != "None":
         # Convert UI-friendly names to internal strategy names
         strategy_map = {

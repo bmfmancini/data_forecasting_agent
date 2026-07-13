@@ -139,7 +139,9 @@ class BacktestEvaluation(BaseModel):
     pooled_metrics: ForecastMetrics = Field(default_factory=ForecastMetrics)
     by_horizon_metrics: dict[int, ForecastMetrics] = Field(default_factory=dict)
     n_origins: int = 0
+    n_failed_origins: int = 0
     n_evaluated: int = 0
+    validation_design: dict[str, object] = Field(default_factory=dict)
     unavailable_reasons: dict[str, str] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
 
@@ -147,7 +149,7 @@ class BacktestEvaluation(BaseModel):
     def is_rankable(self) -> bool:
         """Return whether pooled evidence supports ranking."""
         rmse = self.pooled_metrics.rmse
-        return bool(self.folds) and rmse is not None and math.isfinite(rmse)
+        return self.n_origins > 0 and rmse is not None and math.isfinite(rmse)
 
 
 # ── Residual diagnostics contracts ───────────────────────────────────────────
@@ -202,6 +204,9 @@ class ResidualDiagnosticsResult(BaseModel):
     interval_coverage: float | None = None
     interval_mean_width: float | None = None
     winkler_score: float | None = None
+    interval_coverage_by_horizon: dict[int, float] = Field(default_factory=dict)
+    interval_width_by_horizon: dict[int, float] = Field(default_factory=dict)
+    winkler_score_by_horizon: dict[int, float] = Field(default_factory=dict)
     nominal_coverage: float = 0.95
     coverage_estimable: bool = False
     warnings: list[str] = Field(default_factory=list)

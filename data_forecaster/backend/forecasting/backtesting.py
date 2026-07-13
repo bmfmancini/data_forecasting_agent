@@ -43,6 +43,7 @@ from forecasting.contracts import (
     ForecastMetrics,
 )
 from forecasting.metrics import calculate_forecast_metrics
+from forecasting.preprocessing import IQRClipping
 
 logger = get_logger(__name__)
 
@@ -65,10 +66,9 @@ class BacktestConfig:
             means no cap.
         gap:                Optional number of periods between the end of the
             training window and the start of the test window.
-        reserve_final_window: When ``True`` the last ``horizon`` observations
-            are reserved as a final untouched test window and excluded from
-            rolling folds.
         mase_period:        Naive lag used for MASE scale estimation.
+        requested_horizon:  Original production horizon before a transparent
+            runtime/data-support reduction.
     """
 
     initial_train_size: int | None = None
@@ -76,8 +76,9 @@ class BacktestConfig:
     step_size: int | None = None
     max_origins: int | None = None
     gap: int = 0
-    reserve_final_window: bool = False
     mase_period: int = 1
+    requested_horizon: int | None = None
+    apply_iqr_clip: bool = False
 
 
 # ── Fold generation ──────────────────────────────────────────────────────────
@@ -110,16 +111,7 @@ def generate_folds(
     step = config.step_size or horizon
     step = max(1, step)
 
-    # Optionally reserve a final untouched test window.
     end_limit = n
-    if config.reserve_final_window:
-        end_limit = n - horizon
-        if end_limit <= initial:
-            logger.warning(
-                "Series too short to reserve a final window; using all data "
-                "for rolling folds."
-            )
-            end_limit = n
 
     folds: list[BacktestFold] = []
     fold_index = 0
@@ -192,13 +184,19 @@ def _process_fold(
     by_horizon_actuals: dict[int, list[float]],
     by_horizon_preds: dict[int, list[float]],
     warnings: list[str],
+    config: BacktestConfig,
 ) -> BacktestFoldResult | None:
     """Process one fold for a candidate; return the fold result or ``None``.
 
     ``None`` indicates the fold was skipped (insufficient data). Pooled and
     by-horizon accumulators are updated in place when predictions succeed.
     """
-    train = series.iloc[: fold.train_end_index]
+    train = series.iloc[: fold.train_end_index].copy()
+    if train.isna().any():
+        train = train.interpolate(limit_direction="both").ffill().bfill()
+    if config.apply_iqr_clip:
+        clipper = IQRClipping().fit(train)
+        train = clipper.transform_series(train)
     test = series.iloc[fold.test_start_index : fold.test_end_index]
     if len(train) < 2 or len(test) == 0:
         warnings.append(f"Fold {fold.fold_index} skipped (insufficient data).")
@@ -221,16 +219,28 @@ def _process_fold(
             warnings=["Candidate returned no predictions."],
         )
 
+    if result.status != ForecastFitStatus.OK:
+        return BacktestFoldResult(
+            fold=fold,
+            status=result.status,
+            warnings=list(result.warnings or []),
+            fitted_configuration=dict(result.fitted_configuration or {}),
+        )
+
     preds = np.asarray(result.predictions, dtype=float)
     actuals = test.values.astype(float)
     if preds.shape[0] != actuals.shape[0]:
-        warnings.append(
+        warning = (
             f"Fold {fold.fold_index} prediction length mismatch "
             f"({preds.shape[0]} vs {actuals.shape[0]})."
         )
-        min_len = min(preds.shape[0], actuals.shape[0])
-        preds = preds[:min_len]
-        actuals = actuals[:min_len]
+        warnings.append(warning)
+        return BacktestFoldResult(
+            fold=fold,
+            status=ForecastFitStatus.FAILED,
+            warnings=[warning],
+            fitted_configuration=dict(result.fitted_configuration or {}),
+        )
 
     residuals = (actuals - preds).tolist()
     fold_result = BacktestFoldResult(
@@ -254,9 +264,9 @@ def _process_fold(
 
     pooled_actuals.extend(actuals.tolist())
     pooled_preds.extend(preds.tolist())
-    for h in range(len(actuals)):
-        by_horizon_actuals.setdefault(h, []).append(float(actuals[h]))
-        by_horizon_preds.setdefault(h, []).append(float(preds[h]))
+    for h in range(1, len(actuals) + 1):
+        by_horizon_actuals.setdefault(h, []).append(float(actuals[h - 1]))
+        by_horizon_preds.setdefault(h, []).append(float(preds[h - 1]))
     return fold_result
 
 
@@ -298,14 +308,20 @@ def evaluate_candidate(
             by_horizon_actuals,
             by_horizon_preds,
             warnings,
+            config,
         )
         if result is not None:
             fold_results.append(result)
 
+    initial_training = (
+        series.iloc[: folds[0].train_end_index].values.astype(float)
+        if folds
+        else np.asarray([], dtype=float)
+    )
     pooled = calculate_forecast_metrics(
         np.asarray(pooled_actuals, dtype=float),
         np.asarray(pooled_preds, dtype=float),
-        training=series.values.astype(float),
+        training=initial_training,
         mase_period=config.mase_period,
     )
 
@@ -314,7 +330,7 @@ def evaluate_candidate(
         by_horizon[h] = calculate_forecast_metrics(
             np.asarray(by_horizon_actuals[h], dtype=float),
             np.asarray(by_horizon_preds[h], dtype=float),
-            training=series.values.astype(float),
+            training=initial_training,
             mase_period=config.mase_period,
         )
 
@@ -323,13 +339,36 @@ def evaluate_candidate(
     if not fold_results:
         unavailable.setdefault("all", "No folds were evaluated.")
 
+    successful_origins = sum(
+        fold.status == ForecastFitStatus.OK for fold in fold_results
+    )
+    evaluated_horizon = folds[0].horizon if folds else 0
+    requested_horizon = config.requested_horizon or config.horizon or evaluated_horizon
     return BacktestEvaluation(
         model_name=name,
         folds=fold_results,
         pooled_metrics=pooled,
         by_horizon_metrics=by_horizon,
-        n_origins=len(fold_results),
+        n_origins=successful_origins,
+        n_failed_origins=len(fold_results) - successful_origins,
         n_evaluated=n_evaluated,
+        validation_design={
+            "method": "expanding_window",
+            "initial_train_size": folds[0].train_end_index if folds else 0,
+            "requested_horizon": requested_horizon,
+            "evaluated_horizon": evaluated_horizon,
+            "unsupported_horizons": list(
+                range(evaluated_horizon + 1, requested_horizon + 1)
+            ),
+            "step_size": config.step_size or evaluated_horizon,
+            "gap": config.gap,
+            "max_origins": config.max_origins,
+            "successful_origins": successful_origins,
+            "failed_origins": len(fold_results) - successful_origins,
+            "n_evaluated": n_evaluated,
+            "mase_period": config.mase_period,
+            "apply_iqr_clip": config.apply_iqr_clip,
+        },
         unavailable_reasons=unavailable,
         warnings=warnings,
     )
@@ -358,33 +397,3 @@ def evaluate_candidates(
     for name, fn in candidates.items():
         evaluations[name] = evaluate_candidate(name, series, folds, fn, config)
     return evaluations
-
-
-# ── Compatibility: terminal holdout ──────────────────────────────────────────
-
-
-def make_terminal_holdout_folds(
-    series: pd.Series,
-    forecast_horizon: int,
-) -> list[BacktestFold]:
-    """Return a single-fold terminal holdout for backward compatibility.
-
-    This preserves the terminal-holdout evaluation boundary behind an
-    accurate label. Prefer :func:`generate_folds` for new code.
-    """
-    n = len(series)
-    if forecast_horizon < 1 or n < 2:
-        return []
-    split = max(
-        1,
-        min(n - 1, max(int(n * 0.8), n - forecast_horizon)),
-    )
-    return [
-        BacktestFold(
-            fold_index=0,
-            train_end_index=split,
-            test_start_index=split,
-            test_end_index=min(split + forecast_horizon, n),
-            horizon=min(forecast_horizon, n - split),
-        )
-    ]

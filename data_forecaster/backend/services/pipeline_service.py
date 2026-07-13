@@ -369,19 +369,51 @@ def _run_forecast_stages(
         forecast_horizon,
         freq,
         disabled_tests=disabled_statistical_tests,
+        loss_preference=(preflight_options or {}).get("loss_metric", "mase"),
+        preprocessing_options=preflight_options,
     )
+    if model_selection.selection_method != "forced":
+        model_selection = model_selection.model_copy(
+            update={
+                "selected_model": forecast_result.model_used,
+                "selection_method": "deterministic",
+                "explanation": (
+                    "Selected from common rolling-origin out-of-sample evidence. "
+                    "LLM narrative did not control the numerical ranking."
+                ),
+                "selection_evidence": {
+                    "metric_source": "rolling_origin_backtest",
+                    "validation_design": forecast_result.validation_design,
+                    "all_metrics": all_metrics,
+                    "forecast_context": {
+                        key: (preflight_options or {}).get(key)
+                        for key in (
+                            "units",
+                            "loss_metric",
+                            "interventions",
+                            "censoring_or_stockouts",
+                            "known_future_covariates",
+                            "aggregation",
+                            "minimum_value",
+                            "maximum_value",
+                        )
+                        if (preflight_options or {}).get(key) is not None
+                    },
+                },
+            }
+        )
     progress(75, "Forecast complete")
 
     logger.info("Running baseline model comparisons")
     baseline_results = run_baseline_models(series, forecast_horizon, seasonal_period)
     for name, result in baseline_results.items():
-        all_metrics[name] = {
+        all_metrics.setdefault(name, {
             "RMSE": result.metrics.rmse,
             "MAE": result.metrics.mae,
             "MAPE": result.metrics.mape,
             "WAPE": result.metrics.wape,
             "MASE": result.metrics.mase,
-        }
+        })
     forecast_result = forecast_result.model_copy(
         update={
             "candidate_results": [
@@ -392,11 +424,11 @@ def _run_forecast_stages(
                         status=result.status,
                         failure_reason=result.failure_reason,
                         is_fallback=result.is_fallback,
-                        rmse=result.metrics.rmse,
-                        mae=result.metrics.mae,
-                        mape=result.metrics.mape,
-                        wape=result.metrics.wape,
-                        mase=result.metrics.mase,
+                        rmse=all_metrics[name].get("RMSE"),
+                        mae=all_metrics[name].get("MAE"),
+                        mape=all_metrics[name].get("MAPE"),
+                        wape=all_metrics[name].get("WAPE"),
+                        mase=all_metrics[name].get("MASE"),
                         n_evaluated=result.metrics.n_evaluated,
                         n_missing=result.metrics.n_missing,
                         fitted_configuration=result.fitted_configuration,
@@ -404,6 +436,8 @@ def _run_forecast_stages(
                         interval_label=result.interval_label,
                     )
                     for name, result in baseline_results.items()
+                    if name
+                    not in {item.model for item in forecast_result.candidate_results}
                 ],
             ]
         }
@@ -444,6 +478,7 @@ def _select_model(
         model_selection = ModelSelectionResult(
             selected_model=forced_model,
             explanation=f"Model manually selected by user: {forced_model}.",
+            selection_method="forced",
             holt_winters_rejected_reason=(
                 None
                 if forced_model == "Holt-Winters"
@@ -592,6 +627,8 @@ def _maybe_retry_forecast_after_review(
         freq,
         existing_metrics=all_metrics,
         disabled_tests=disabled_statistical_tests,
+        loss_preference=(preflight_options or {}).get("loss_metric", "mase"),
+        preprocessing_options=preflight_options,
     )
     progress(87, "Re-running statistical review…")
     statistical_review = run_statistical_review_agent(

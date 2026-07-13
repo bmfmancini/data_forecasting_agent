@@ -83,7 +83,7 @@ def fit_sarima(
 
     # Split data into train and test sets for metrics calculation
     holdout = make_terminal_holdout(series, forecast_horizon)
-    train, test = holdout.train, holdout.test
+    train = holdout.train
 
     train_model = None
     metrics = ForecastMetrics(
@@ -104,6 +104,10 @@ def fit_sarima(
             error_action="ignore",
             suppress_warnings=True,
             information_criterion="aic",
+            test="kpss",
+            seasonal_test="ocsb",
+            max_d=2,
+            max_D=1,
         )
         metrics = _calculate_metrics(holdout, train_model, mase_period)
     except Exception as exc:  # pylint: disable=broad-except
@@ -178,6 +182,10 @@ def fit_sarima(
             "seasonal_period": seasonal_period,
             "used_seasonal": use_seasonal,
             "ar_ma_order": ar_ma_order,
+            "differencing_test": "kpss",
+            "seasonal_differencing_test": "ocsb",
+            "max_d": 2,
+            "max_D": 1,
         },
         innovations=innovations,
         interval_label="prediction_interval",
