@@ -6,12 +6,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from forecasting.contracts import ForecastAdapterResult, ForecastFitStatus
 from forecasting.metrics import calculate_forecast_metrics, calculate_holdout_metrics
 from forecasting import ewma_model
-from agents.forecasting_agent import (
-    _calculate_additional_metrics,
-    _has_required_metrics,
-)
+from agents.forecasting_agent import _has_required_metrics
 from services.baseline_service import run_baseline_models
 from utils.statistical_analysis import analyze_residuals
 
@@ -62,14 +60,12 @@ def test_mape_is_unavailable_when_actual_contains_zero() -> None:
 
 def test_wape_uses_absolute_actual_denominator() -> None:
     """WAPE should remain positive when actual values include negatives."""
-    metrics = _calculate_additional_metrics(
-        pd.Series([-10.0, 10.0]),
-        pd.Series([-8.0, 8.0]),
-        pd.Series([1.0, 2.0, 3.0, 4.0]),
-        seasonal_period=1,
+    metrics = calculate_forecast_metrics(
+        np.array([-10.0, 10.0]),
+        np.array([-8.0, 8.0]),
     )
 
-    assert metrics["wape"] == pytest.approx(0.2)
+    assert metrics.wape == pytest.approx(0.2)
 
 
 def test_seasonal_naive_cycles_final_season_for_long_horizon() -> None:
@@ -106,17 +102,26 @@ def test_analyze_residuals_bounds_ljung_box_lag_for_short_series() -> None:
     assert diagnostics.ljung_box_p_value is not None
 
 
-def test_ewma_keeps_missing_validation_metrics_unavailable(monkeypatch) -> None:
-    """Missing EWMA validation metrics should not become legitimate zeroes."""
-    monkeypatch.setattr(
-        ewma_model,
-        "perform_rolling_origin_validation",
-        lambda *_args, **_kwargs: {"rmse": 0.0},
-    )
+def test_ewma_returns_typed_result_with_central_metrics() -> None:
+    """EWMA returns a ForecastAdapterResult with centrally computed metrics."""
+    result = ewma_model.fit_ewma(pd.Series(np.arange(1.0, 21.0)), forecast_horizon=3)
 
-    result = ewma_model.fit_ewma(pd.Series([1.0, 2.0, 3.0]), forecast_horizon=2)
+    assert isinstance(result, ForecastAdapterResult)
+    assert result.status == ForecastFitStatus.OK
+    assert result.metrics.rmse is not None
+    assert result.metrics.mae is not None
+    assert len(result.forecast) == 3
+    assert result.fitted_configuration["model"] == "EWMA"
+    assert result.fitted_configuration["alpha"] is not None
 
-    assert result["rmse"] == 0.0
-    assert result["mae"] is None
-    assert result["mape"] is None
+
+def test_ewma_short_series_returns_not_estimable() -> None:
+    """Short series returns not_estimable status with persistence fallback."""
+    result = ewma_model.fit_ewma(pd.Series([1.0, 2.0]), forecast_horizon=2)
+
+    assert result.status == ForecastFitStatus.NOT_ESTIMABLE
+    assert result.is_fallback is True
+    assert result.metrics.rmse is None
+    assert result.metrics.mae is None
+    assert result.metrics.mape is None
     assert not _has_required_metrics(result)

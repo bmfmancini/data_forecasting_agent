@@ -5,8 +5,12 @@ from __future__ import annotations
 import pandas as pd
 
 from core.logging_config import get_logger
+from forecasting.contracts import (
+    ForecastAdapterResult,
+    ForecastFitStatus,
+    ForecastMetrics,
+)
 from forecasting.metrics import calculate_holdout_metrics
-from forecasting.contracts import ForecastFitStatus, ForecastMetrics
 from forecasting.pmdarima_compat import import_pmdarima
 
 logger = get_logger(__name__)
@@ -16,14 +20,16 @@ pm = import_pmdarima()
 def _calculate_metrics(
     train: pd.Series, test: pd.Series, model, seasonal_period: int
 ) -> ForecastMetrics:
-    """Calculate RMSE, MAE, and MAPE for the given model and test data.
+    """Calculate holdout metrics for the given SARIMA model.
 
     Args:
-        test: Test data.
-        model: Trained SARIMA model.
+        train: Training data used for MASE scale.
+        test: Holdout observations.
+        model: Trained SARIMA model with a ``predict`` method.
+        seasonal_period: Seasonal period used for the MASE naive lag.
 
     Returns:
-        tuple[float, float, float]: RMSE, MAE, and MAPE metrics.
+        Typed metrics. Unavailable evidence is never encoded as zero.
     """
     try:
         return calculate_holdout_metrics(
@@ -32,7 +38,7 @@ def _calculate_metrics(
             training=train,
             mase_period=seasonal_period if seasonal_period > 1 else 1,
         )
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-except
         logger.warning("SARIMA metrics calculation failed: %s", exc)
         return ForecastMetrics(unavailable_reasons={"all": str(exc)})
 
@@ -41,8 +47,14 @@ def fit_sarima(
     series: pd.Series,
     forecast_horizon: int,
     seasonal_period: int = 12,
-) -> dict:
-    """Fit SARIMA via pmdarima auto_arima (seasonal=True) and return forecast + metrics.
+) -> ForecastAdapterResult:
+    """Fit SARIMA via pmdarima auto_arima and return a typed adapter result.
+
+    When the series is too short for the requested seasonal period, the
+    adapter falls back to a non-seasonal ARIMA and marks the result as a
+    fallback. The adapter discovers orders on a training split, evaluates
+    holdout metrics, then refits the *same* orders (including intercept/trend
+    configuration) on the full series for the production forecast.
 
     Args:
         series: A pandas Series containing the time series data.
@@ -50,14 +62,16 @@ def fit_sarima(
         seasonal_period: The seasonal period of the time series.
 
     Returns:
-        dict with keys: forecast, lower_ci, upper_ci, rmse, mae, mape
+        :class:`ForecastAdapterResult` with status, forecast, intervals,
+        nullable metrics, and fitted configuration provenance.
     """
     series = series.dropna().astype(float)
 
     # Check if we have enough data for seasonal modeling
     if len(series) < 2 * seasonal_period:
         logger.warning(
-            "Series too short (%d obs) for seasonal period %d. Fitting non-seasonal ARIMA.",
+            "Series too short (%d obs) for seasonal period %d. "
+            "Fitting non-seasonal ARIMA.",
             len(series),
             seasonal_period,
         )
@@ -90,21 +104,28 @@ def fit_sarima(
             information_criterion="aic",
         )
         metrics = _calculate_metrics(train, test, train_model, seasonal_period)
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-except
         logger.warning("SARIMA training failed: %s", exc)
 
-    # Fit the model on the full series using parameters from training.
-    # Fall back to default orders when auto_arima failed (train_model is None),
-    # matching the pattern used in arima_model.py.
+    # Determine the order and trend configuration from the training fit.
     order = train_model.order if train_model is not None else (1, 1, 1)
     seasonal_order = (
         train_model.seasonal_order
         if train_model is not None
         else (0, 0, 0, seasonal_period)
     )
+    with_intercept = (
+        getattr(train_model, "with_intercept", None)
+        if train_model is not None
+        else None
+    )
+
+    # Refit on the full series using the exact selected orders and intercept
+    # configuration so the production forecast reflects the chosen model.
     full_model = pm.ARIMA(
         order=order,
         seasonal_order=seasonal_order,
+        with_intercept=with_intercept,
         suppress_warnings=True,
     ).fit(series)
 
@@ -118,22 +139,28 @@ def fit_sarima(
         n_periods=forecast_horizon, return_conf_int=True
     )
 
-    return {
-        "status": (
-            ForecastFitStatus.OK.value
-            if metrics.rmse is not None
-            else ForecastFitStatus.DEGRADED.value
-        ),
-        "failure_reason": (
-            None if metrics.rmse is not None else metrics.unavailable_reasons.get("all")
-        ),
-        "is_fallback": train_model is None or not use_seasonal,
-        "forecast": forecast_values.tolist(),
-        "lower_ci": conf_int[:, 0].tolist(),
-        "upper_ci": conf_int[:, 1].tolist(),
-        "rmse": metrics.rmse,
-        "mae": metrics.mae,
-        "mape": metrics.mape,
-        "wape": metrics.wape,
-        "mase": metrics.mase,
-    }
+    status = (
+        ForecastFitStatus.OK if metrics.rmse is not None else ForecastFitStatus.DEGRADED
+    )
+    failure_reason = (
+        None if metrics.rmse is not None else metrics.unavailable_reasons.get("all")
+    )
+
+    return ForecastAdapterResult(
+        status=status,
+        failure_reason=failure_reason,
+        is_fallback=train_model is None or not use_seasonal,
+        forecast=forecast_values.tolist(),
+        lower_ci=conf_int[:, 0].tolist(),
+        upper_ci=conf_int[:, 1].tolist(),
+        metrics=metrics,
+        fitted_configuration={
+            "model": "SARIMA",
+            "order": list(full_model.order),
+            "seasonal_order": list(full_model.seasonal_order),
+            "trend": getattr(full_model.model, "trend", None),
+            "with_intercept": with_intercept,
+            "seasonal_period": seasonal_period,
+            "used_seasonal": use_seasonal,
+        },
+    )

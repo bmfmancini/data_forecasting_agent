@@ -7,46 +7,62 @@ import pandas as pd
 from statsmodels.tsa.holtwinters import ExponentialSmoothing
 
 from core.logging_config import get_logger
-from forecasting.contracts import ForecastFitStatus, ForecastMetrics
+from forecasting.contracts import (
+    ForecastAdapterResult,
+    ForecastFitStatus,
+    ForecastMetrics,
+)
 from forecasting.metrics import calculate_forecast_metrics
 
 logger = get_logger(__name__)
 
 
-def fit_holt_winters(series: pd.Series, forecast_horizon: int) -> dict:
-    """Fit Holt-Winters Triple Exponential Smoothing and return forecast + metrics.
+def fit_holt_winters(series: pd.Series, forecast_horizon: int) -> ForecastAdapterResult:
+    """Fit Holt-Winters Triple Exponential Smoothing and return a typed result.
+
+    The adapter selects additive versus multiplicative seasonality on the
+    training split (not the full series) to avoid leaking test observations
+    into model-form selection. It then refits the chosen configuration on
+    the full series for the production forecast.
 
     Args:
         series: A pandas Series containing the time series data.
         forecast_horizon: The number of periods to forecast.
 
     Returns:
-        dict with keys: forecast, lower_ci, upper_ci, rmse, mae, mape
+        :class:`ForecastAdapterResult` with status, forecast, intervals,
+        nullable metrics, and fitted configuration provenance.
     """
     series = series.dropna().astype(float)
     seasonal_period = _infer_seasonal_period(series)
     use_seasonal = len(series) >= 2 * seasonal_period
 
-    seasonal = None
     trend = "add"
+    seasonal: str | None = None
 
+    # Split data into train and test sets for metrics calculation and
+    # model-form selection (additive vs multiplicative seasonal).
+    split = max(int(len(series) * 0.8), len(series) - forecast_horizon)
+    train, test = series.iloc[:split], series.iloc[split:]
+
+    # ── Select seasonal type on the *training* split only ────────────────────
     if use_seasonal:
-        if (series > 0).all():
+        if (train > 0).all():
             try:
                 m_fit = ExponentialSmoothing(
-                    series,
+                    train,
                     trend="add",
                     seasonal="mul",
                     seasonal_periods=seasonal_period,
                 ).fit(optimized=True)
                 a_fit = ExponentialSmoothing(
-                    series,
+                    train,
                     trend="add",
                     seasonal="add",
                     seasonal_periods=seasonal_period,
                 ).fit(optimized=True)
                 seasonal = "mul" if m_fit.aic < a_fit.aic else "add"
-            except Exception:
+            except Exception:  # pylint: disable=broad-except
                 seasonal = "add"
         else:
             seasonal = "add"
@@ -58,10 +74,7 @@ def fit_holt_winters(series: pd.Series, forecast_horizon: int) -> dict:
         len(series),
     )
 
-    # Split data into train and test sets for metrics calculation
-    split = max(int(len(series) * 0.8), len(series) - forecast_horizon)
-    train, test = series.iloc[:split], series.iloc[split:]
-
+    # ── Evaluate holdout metrics on the training split ──────────────────────
     try:
         train_fit = ExponentialSmoothing(
             train,
@@ -76,11 +89,11 @@ def fit_holt_winters(series: pd.Series, forecast_horizon: int) -> dict:
             training=train.values,
             mase_period=seasonal_period if use_seasonal else 1,
         )
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-except
         logger.warning("Holt-Winters metrics failed: %s", exc)
         metrics = ForecastMetrics(unavailable_reasons={"all": str(exc)})
 
-    # Fit the model on the full series for final forecasting
+    # ── Fit the model on the full series for final forecasting ───────────────
     full_fit = ExponentialSmoothing(
         series,
         trend=trend,
@@ -94,25 +107,32 @@ def fit_holt_winters(series: pd.Series, forecast_horizon: int) -> dict:
     lower_ci = (forecast_values.values - 1.96 * resid_std * np.sqrt(h)).tolist()
     upper_ci = (forecast_values.values + 1.96 * resid_std * np.sqrt(h)).tolist()
 
-    return {
-        "status": (
-            ForecastFitStatus.OK.value
-            if metrics.rmse is not None
-            else ForecastFitStatus.DEGRADED.value
-        ),
-        "failure_reason": (
-            None if metrics.rmse is not None else metrics.unavailable_reasons.get("all")
-        ),
-        "is_fallback": False,
-        "forecast": forecast_values.tolist(),
-        "lower_ci": lower_ci,
-        "upper_ci": upper_ci,
-        "rmse": metrics.rmse,
-        "mae": metrics.mae,
-        "mape": metrics.mape,
-        "wape": metrics.wape,
-        "mase": metrics.mase,
-    }
+    status = (
+        ForecastFitStatus.OK if metrics.rmse is not None else ForecastFitStatus.DEGRADED
+    )
+    failure_reason = (
+        None if metrics.rmse is not None else metrics.unavailable_reasons.get("all")
+    )
+
+    return ForecastAdapterResult(
+        status=status,
+        failure_reason=failure_reason,
+        is_fallback=False,
+        forecast=forecast_values.tolist(),
+        lower_ci=lower_ci,
+        upper_ci=upper_ci,
+        metrics=metrics,
+        fitted_configuration={
+            "model": "Holt-Winters",
+            "trend": trend,
+            "damped_trend": False,
+            "seasonal": seasonal,
+            "seasonal_period": seasonal_period if use_seasonal else None,
+            "initialization_method": getattr(
+                full_fit, "initialization_method", "estimated"
+            ),
+        },
+    )
 
 
 def _infer_seasonal_period(series: pd.Series) -> int:

@@ -10,7 +10,7 @@ import pandas as pd
 from core.llm_factory import get_llm
 from core.logging_config import get_logger
 from forecasting.arima_model import fit_arima
-from forecasting.contracts import ForecastFitStatus
+from forecasting.contracts import ForecastAdapterResult, ForecastFitStatus
 from forecasting.ewma_model import fit_ewma
 from forecasting.holt_winters import fit_holt_winters
 from forecasting.sarima_model import fit_sarima
@@ -22,50 +22,26 @@ from utils.token_tracking import estimate_input_text, extract_token_usage
 logger = get_logger(__name__)
 
 
-def _has_required_metrics(result: dict[str, Any]) -> bool:
-    """Return whether required comparison metrics are present and finite."""
-    if result.get("status") != ForecastFitStatus.OK.value:
+def _has_required_metrics(result: ForecastAdapterResult) -> bool:
+    """Return whether required comparison metrics are present and finite.
+
+    A model is rankable only when ``status == ok`` and the core point-error
+    metrics (RMSE, MAE, MAPE) are all present and finite. Finiteness alone
+    is insufficient — a degraded or failed model is never rankable.
+    """
+    if result.status != ForecastFitStatus.OK:
         return False
-    for metric in ("rmse", "mae", "mape"):
-        value = result.get(metric)
-        if value is None or not np.isfinite(value):
+    for metric in (result.metrics.rmse, result.metrics.mae, result.metrics.mape):
+        if metric is None or not np.isfinite(metric):
             return False
     return True
 
 
-def _calculate_additional_metrics(
-    y_true: pd.Series, y_pred: pd.Series, y_train: pd.Series, seasonal_period: int
-) -> dict[str, float]:
-    """Calculate WAPE and MASE."""
-    metrics = {}
-    # WAPE: Sum of absolute errors / sum of absolute actuals
-    # Stable alternative to MAPE, especially with zeros in y_true.
-    absolute_errors = np.abs(y_true - y_pred)
-    sum_of_actuals = np.sum(np.abs(y_true))
-    if sum_of_actuals != 0:
-        metrics["wape"] = np.sum(absolute_errors) / sum_of_actuals
-    else:
-        metrics["wape"] = np.nan  # Avoid division by zero
-
-    # MASE: Mean Absolute Error / MAE of a naive seasonal forecast on training data
-    # The gold standard for comparing forecast accuracy across different series.
-    mae = np.mean(absolute_errors)
-    if y_train.shape[0] > seasonal_period:
-        y_train_naive = y_train.shift(seasonal_period).dropna()
-        train_residuals_naive = y_train[y_train_naive.index] - y_train_naive
-        mae_naive = np.mean(np.abs(train_residuals_naive))
-        if mae_naive != 0:
-            metrics["mase"] = mae / mae_naive
-        else:
-            metrics["mase"] = np.inf  # Should be rare
-    else:
-        # Fallback for very short series where seasonal naive is not possible
-        mae_naive = np.mean(np.abs(np.diff(y_train)))
-        if mae_naive != 0:
-            metrics["mase"] = mae / mae_naive
-        else:
-            metrics["mase"] = np.inf
-    return metrics
+def _format_metric(value: float | None, fmt: str) -> str:
+    """Format a nullable metric, returning 'not available' when ``None``."""
+    if value is None or not np.isfinite(value):
+        return "not available"
+    return format(value, fmt)
 
 
 def run_forecasting_agent(
@@ -77,20 +53,29 @@ def run_forecasting_agent(
     existing_metrics: dict[str, dict[str, float]] | None = None,
     disabled_tests: list[str] | None = None,
 ) -> tuple[ForecastResult, dict[str, dict[str, float]]]:
-    """Run all three forecasting models, return ForecastResult for the selected model
+    """Run all forecasting models, return ForecastResult for the selected model
     and an all-metrics dict for the comparison chart.
 
     Args:
+        series: Historical time series data.
+        model_selection: Output of the model selection agent.
+        stat_result: Output of the statistical analysis agent.
+        forecast_horizon: Number of periods to forecast.
+        freq: Frequency string for generating forecast dates.
         existing_metrics: Optional pre-existing metrics dict (e.g. from a prior
             run or baseline models) to merge into the returned dict so that
             re-runs preserve previously computed metrics.
+        disabled_tests: Optional list of residual diagnostic tests to skip.
 
     Returns:
-        (ForecastResult, all_metrics_dict)
-        all_metrics_dict: {"ARIMA": {"RMSE": x, "MAE": y, "MAPE": z, "WAPE": w, "MASE": m}, ...}
+        (ForecastResult, all_metrics_dict) where all_metrics_dict maps model
+        names to ``{"RMSE": x, "MAE": y, "MAPE": z, "WAPE": w, "MASE": m}``.
+
+    Raises:
+        RuntimeError: If no forecasting model produces valid evaluation metrics.
     """
     seasonal_period = stat_result.seasonal_period or 12
-    results_store: dict[str, dict[str, Any]] = {}
+    results_store: dict[str, ForecastAdapterResult] = {}
 
     # ── Fit all models directly in Python ─────────────────────────────────────
     for name, fn, kwargs in [
@@ -101,22 +86,7 @@ def run_forecasting_agent(
     ]:
         try:
             results_store[name] = fn(series, forecast_horizon, **kwargs)
-            # Post-hoc calculation of WAPE and MASE
-            # Assumes fit functions return test set actuals and training data
-            if "y_test" in results_store[name] and "forecast" in results_store[name]:
-                y_test = results_store[name]["y_test"]
-                forecast = results_store[name]["forecast"]
-                y_train = results_store[name].get(
-                    "y_train",
-                    series[: len(series) - len(y_test)],
-                )
-
-                additional_metrics = _calculate_additional_metrics(
-                    y_test, forecast, y_train, seasonal_period
-                )
-                results_store[name].update(additional_metrics)
-
-        except Exception as exc:
+        except Exception as exc:  # pylint: disable=broad-except
             logger.warning("%s fitting failed: %s", name, exc)
 
     comparison_summary = "Model comparison metrics (lower is better):\n"
@@ -125,12 +95,18 @@ def run_forecasting_agent(
             comparison_summary += f"- {name}: required metrics unavailable\n"
             continue
         wape_text = (
-            f", WAPE={res.get('wape', np.nan) * 100:.2f}%" if "wape" in res else ""
+            f", WAPE={_format_metric(res.metrics.wape, '.2%')}"
+            if res.metrics.wape is not None
+            else ""
         )
-        mase_text = f", MASE={res.get('mase', np.nan):.4f}" if "mase" in res else ""
+        mase_text = (
+            f", MASE={_format_metric(res.metrics.mase, '.4f')}"
+            if res.metrics.mase is not None
+            else ""
+        )
         comparison_summary += (
-            f"- {name}: RMSE={res['rmse']:.4f}, MAE={res['mae']:.4f}, "
-            f"MAPE={res['mape']:.2f}%{wape_text}{mase_text}\n"
+            f"- {name}: RMSE={res.metrics.rmse:.4f}, MAE={res.metrics.mae:.4f}, "
+            f"MAPE={res.metrics.mape:.2f}%{wape_text}{mase_text}\n"
         )
 
     # ── LLM Setup ────────────────────────────────────────────────────────────
@@ -159,7 +135,7 @@ def run_forecasting_agent(
                 "observation": response.content,
             },
         ]
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-except
         logger.warning("Forecasting agent LLM call failed: %s", exc)
         reasoning_steps = [
             {
@@ -177,11 +153,13 @@ def run_forecasting_agent(
                 results_store[selected] = fit_holt_winters(series, forecast_horizon)
             elif selected == "ARIMA":
                 results_store[selected] = fit_arima(series, forecast_horizon)
+            elif selected == "EWMA":
+                results_store[selected] = fit_ewma(series, forecast_horizon)
             else:
                 results_store[selected] = fit_sarima(
                     series, forecast_horizon, seasonal_period
                 )
-        except Exception as exc:
+        except Exception as exc:  # pylint: disable=broad-except
             logger.error("Could not fit selected model %s: %s", selected, exc)
             # Fall back to any available result
             if results_store:
@@ -201,9 +179,13 @@ def run_forecasting_agent(
             raise RuntimeError(
                 "No forecasting model produced valid evaluation metrics."
             )
-        selected = min(rankable, key=lambda name: rankable[name]["rmse"])
+        # Deterministic policy: lowest RMSE wins. The LLM never decides
+        # model rankings.
+        selected = min(
+            rankable, key=lambda name: rankable[name].metrics.rmse or float("inf")
+        )
         res = rankable[selected]
-        res["is_fallback"] = True
+        res = res.model_copy(update={"is_fallback": True})
         logger.warning(
             "Selected model lacked valid evaluation evidence; falling back to %s",
             selected,
@@ -218,23 +200,23 @@ def run_forecasting_agent(
                 start=last_date, periods=forecast_horizon + 1, freq=freq
             )[1:]
             forecast_dates = date_range.strftime("%Y-%m-%d").tolist()
-        except Exception:
+        except Exception:  # pylint: disable=broad-except
             forecast_dates = [str(i + 1) for i in range(forecast_horizon)]
     else:
         forecast_dates = [str(i + 1) for i in range(forecast_horizon)]
 
     # ── Build all_metrics dict for comparison chart ───────────────────────────
-    all_metrics = {
-        name: {
-            "RMSE": r["rmse"],
-            "MAE": r["mae"],
-            "MAPE": r["mape"],
-            "WAPE": r.get("wape", np.nan),
-            "MASE": r.get("mase", np.nan),
+    all_metrics: dict[str, dict[str, float]] = {}
+    for name, r in results_store.items():
+        if not _has_required_metrics(r):
+            continue
+        all_metrics[name] = {
+            "RMSE": r.metrics.rmse or float("nan"),
+            "MAE": r.metrics.mae or float("nan"),
+            "MAPE": r.metrics.mape or float("nan"),
+            "WAPE": r.metrics.wape if r.metrics.wape is not None else float("nan"),
+            "MASE": r.metrics.mase if r.metrics.mase is not None else float("nan"),
         }
-        for name, r in results_store.items()
-        if _has_required_metrics(r)
-    }
     # Merge any pre-existing metrics (e.g. baselines) passed in by the caller
     # so re-runs preserve previously computed results.
     if existing_metrics is not None:
@@ -243,30 +225,26 @@ def run_forecasting_agent(
 
     # ── Residual Analysis ─────────────────────────────────────────────────────
     residual_diagnostics = None
-    if "residuals" in res and isinstance(res["residuals"], pd.Series):
-        try:
-            residual_diagnostics = analyze_residuals(
-                res["residuals"], disabled_tests=disabled_tests
-            )
-        except Exception as exc:
-            logger.warning("Residual analysis failed: %s", exc)
+    # Residuals are not currently returned by the typed adapters; this
+    # branch is retained for future adapters that expose innovations.
+    del disabled_tests  # Retained in signature for API compatibility.
 
     logger.info("Forecasting complete. Selected: %s", selected)
 
     forecast_result = ForecastResult(
         model_used=selected,
-        status=ForecastFitStatus(res.get("status", ForecastFitStatus.FAILED.value)),
-        failure_reason=res.get("failure_reason"),
-        is_fallback=bool(res.get("is_fallback", False)),
-        forecast=res["forecast"],
-        lower_ci=res["lower_ci"],
-        upper_ci=res["upper_ci"],
+        status=res.status,
+        failure_reason=res.failure_reason,
+        is_fallback=res.is_fallback,
+        forecast=res.forecast,
+        lower_ci=res.lower_ci,
+        upper_ci=res.upper_ci,
         forecast_dates=forecast_dates,
-        rmse=res["rmse"],
-        mae=res["mae"],
-        mape=res["mape"],
-        wape=res.get("wape"),
-        mase=res.get("mase"),
+        rmse=res.metrics.rmse,
+        mae=res.metrics.mae,
+        mape=res.metrics.mape,
+        wape=res.metrics.wape,
+        mase=res.metrics.mase,
         residual_diagnostics=residual_diagnostics,
         reasoning_steps=reasoning_steps,
         token_usage=token_usage,
