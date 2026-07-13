@@ -99,7 +99,7 @@ def fit_arima(
                 max_q=5,
                 error_action="ignore",
                 suppress_warnings=True,
-                information_criterion="aic",
+                information_criterion="aicc",
                 test="kpss",
                 max_d=2,
             )
@@ -127,6 +127,32 @@ def fit_arima(
 
     logger.info("ARIMA selected order: %s", full_model.order)
 
+    converged = bool(
+        getattr(getattr(full_model, "arima_res_", None), "mle_retvals", {}).get(
+            "converged", True
+        )
+    )
+    roots_estimable = True
+    try:
+        ar_roots = np.asarray(full_model.arroots(), dtype=complex)
+        ma_roots = np.asarray(full_model.maroots(), dtype=complex)
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.warning("ARIMA root diagnostics unavailable: %s", exc)
+        roots_estimable = False
+        ar_roots = np.asarray([], dtype=complex)
+        ma_roots = np.asarray([], dtype=complex)
+    stationary = bool(ar_roots.size == 0 or np.all(np.abs(ar_roots) > 1.0))
+    invertible = bool(ma_roots.size == 0 or np.all(np.abs(ma_roots) > 1.0))
+    fit_warnings: list[str] = []
+    if not roots_estimable:
+        fit_warnings.append("AR/MA root diagnostics were not estimable.")
+    if not converged:
+        fit_warnings.append("Maximum-likelihood optimization did not converge.")
+    if not stationary:
+        fit_warnings.append("Fitted AR roots do not satisfy stationarity.")
+    if not invertible:
+        fit_warnings.append("Fitted MA roots do not satisfy invertibility.")
+
     forecast_values, conf_int = full_model.predict(
         n_periods=forecast_horizon, return_conf_int=True
     )
@@ -150,7 +176,11 @@ def fit_arima(
     )
 
     return ForecastAdapterResult(
-        status=status,
+        status=(
+            status
+            if converged and stationary and invertible
+            else ForecastFitStatus.DEGRADED
+        ),
         failure_reason=failure_reason,
         is_fallback=train_model is None,
         forecast=forecast_values.tolist(),
@@ -166,7 +196,13 @@ def fit_arima(
             "ar_ma_order": ar_ma_order,
             "differencing_test": "kpss",
             "max_d": 2,
+            "information_criterion": "aicc",
+            "converged": converged,
+            "stationary_roots": stationary,
+            "invertible_roots": invertible,
+            "root_diagnostics_estimable": roots_estimable,
         },
+        warnings=fit_warnings,
         innovations=innovations,
         interval_label="prediction_interval",
     )

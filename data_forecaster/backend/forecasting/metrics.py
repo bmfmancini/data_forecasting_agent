@@ -44,9 +44,6 @@ def calculate_holdout_metrics(
         )
 
     test_fc, _ = model.predict(n_periods=len(test), return_conf_int=True)
-    residuals = test.values - test_fc
-    rmse = float(np.sqrt(np.mean(residuals**2)))
-    mae = float(np.mean(np.abs(residuals)))
     return calculate_forecast_metrics(
         test.values,
         test_fc,
@@ -104,21 +101,44 @@ def calculate_forecast_metrics(
         wape = float(np.sum(absolute_errors) / denominator)
 
     mase = None
+    rmsse = None
     if training is None:
         reasons["mase"] = "Training data is required for MASE."
+        reasons["rmsse"] = "Training data is required for RMSSE."
     else:
         train = np.asarray(training, dtype=float)
         train = train[np.isfinite(train)]
         if mase_period < 1 or train.size <= mase_period:
             reasons["mase"] = "Training data is too short for the configured naive lag."
+            reasons["rmsse"] = (
+                "Training data is too short for the configured naive lag."
+            )
         else:
             scale = float(np.mean(np.abs(train[mase_period:] - train[:-mase_period])))
             if scale == 0:
                 reasons["mase"] = (
                     "MASE is undefined because the naive error scale is zero."
                 )
+                reasons["rmsse"] = (
+                    "RMSSE is undefined because the naive squared-error scale is zero."
+                )
             else:
                 mase = float(np.mean(absolute_errors) / scale)
+                squared_scale = float(
+                    np.mean((train[mase_period:] - train[:-mase_period]) ** 2)
+                )
+                if squared_scale > 0:
+                    rmsse = float(np.sqrt(np.mean(errors**2) / squared_scale))
+    smape_denominator = np.abs(y_true) + np.abs(y_pred)
+    smape = None
+    valid_smape = smape_denominator > 0
+    if np.any(valid_smape):
+        smape = float(
+            200.0
+            * np.mean(absolute_errors[valid_smape] / smape_denominator[valid_smape])
+        )
+    else:
+        reasons["smape"] = "sMAPE is undefined when actual and forecast are both zero."
 
     return ForecastMetrics(
         rmse=float(np.sqrt(np.mean(errors**2))),
@@ -126,6 +146,8 @@ def calculate_forecast_metrics(
         mape=mape,
         wape=wape,
         mase=mase,
+        smape=smape,
+        rmsse=rmsse,
         n_evaluated=int(y_true.size),
         n_missing=n_missing,
         unavailable_reasons=reasons,

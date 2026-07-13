@@ -19,6 +19,7 @@ from typing import Any
 from core.config import GEMINI_TEMPERATURE
 from core.llm_factory import get_llm
 from core.logging_config import get_logger
+from forecasting.selection_policy import validate_llm_output
 from prompts.report_generation_prompt import (
     DATA_QUALITY_NARRATIVE_PROMPT,
     EXECUTIVE_SUMMARY_NARRATIVE_PROMPT,
@@ -183,6 +184,16 @@ def _generate_section(
         for key in total_usage:
             total_usage[key] += usage.get(key, 0)
         narrative = str(response.content).strip()
+        section_data = section.model_dump()
+        valid_models = _models_in_evidence(section_data)
+        validation_warnings = validate_llm_output(narrative, valid_models, section_data)
+        if validation_warnings:
+            logger.warning(
+                "Unsupported narrative for %s: %s — using fallback.",
+                section_name,
+                "; ".join(validation_warnings),
+            )
+            return _fallback_narrative(section, section_name)
         logger.debug("Narrative generated for %s", section_name)
         return narrative
     except Exception as exc:
@@ -192,6 +203,22 @@ def _generate_section(
             exc,
         )
         return _fallback_narrative(section, section_name)
+
+
+def _models_in_evidence(value: Any) -> list[str]:
+    """Collect recognized forecast model names from structured evidence."""
+    serialized = json.dumps(value, default=str).lower()
+    known = (
+        "ARIMA",
+        "SARIMA",
+        "Holt-Winters",
+        "EWMA",
+        "Naive",
+        "Seasonal Naive",
+        "Mean Forecast",
+        "Drift",
+    )
+    return [name for name in known if name.lower() in serialized]
 
 
 def _fallback_forecast_outlook(data: dict[str, Any]) -> str:
@@ -221,9 +248,7 @@ def _fallback_forecast_outlook(data: dict[str, Any]) -> str:
             f"the {conf_level} "
             f"prediction range should be used for planning."
         )
-    return (
-        f"The forecast projects {pct_change:+.1f}% change " f"over {horizon} periods."
-    )
+    return f"The forecast projects {pct_change:+.1f}% change over {horizon} periods."
 
 
 def _fallback_narrative(section: Any, section_name: str) -> str:
@@ -249,9 +274,7 @@ def _fallback_narrative(section: Any, section_name: str) -> str:
             f"Recommended action: {data['recommended_action']}"
         )
     if section_name == "data_quality":
-        return (
-            f"Data quality is rated {data['rating']}. " f"{data['rating_explanation']}"
-        )
+        return f"Data quality is rated {data['rating']}. {data['rating_explanation']}"
     if section_name == "historical_analysis":
         return (
             f"The data shows a {data['trend_direction'].lower()} trend "
@@ -276,8 +299,7 @@ def _fallback_narrative(section: Any, section_name: str) -> str:
             f"The independent statistical assessment verdict is "
             f"{data['verdict'].upper()}. "
             + (
-                "Key concerns were identified — see the recommended "
-                "follow-up actions."
+                "Key concerns were identified — see the recommended follow-up actions."
                 if data.get("key_concerns")
                 else "The analysis is well-supported by the evidence."
             )

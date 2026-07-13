@@ -9,6 +9,9 @@ import pandas as pd
 from core.llm_factory import get_llm
 from core.logging_config import get_logger
 from forecasting.diagnostics import (
+    assess_arch_effects,
+    assess_intermittency,
+    assess_sen_trend,
     assess_stationarity,
     assess_trend,
     detect_anomalies,
@@ -76,6 +79,9 @@ def run_statistical_agent(
         if "white_noise" in disabled
         else test_white_noise(values)
     )
+    arch_effects = assess_arch_effects(values)
+    monotonic_trend = assess_sen_trend(values)
+    intermittency = assess_intermittency(values)
 
     statuses, diagnostic_warnings = _status_maps(
         ("seasonality", seasonality),
@@ -174,4 +180,8 @@ def run_statistical_agent(
         observed_frequency=seasonality.observed_frequency,
         narrative_label="llm_interpretation_not_numerical_evidence",
         narrative_evidence=list(statuses),
+        arch_effects=arch_effects,
+        robust_monotonic_trend=monotonic_trend,
+        intermittency=intermittency,
+        anomaly_classifications=anomalies.classifications,
     )

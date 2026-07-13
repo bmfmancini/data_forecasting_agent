@@ -363,9 +363,7 @@ def analyze_backtest_errors(
         for horizon in range(max_horizon):
             aligned = [
                 (actual[horizon], lower[horizon], upper[horizon])
-                for actual, lower, upper in zip(
-                    fold_actuals, fold_lower, fold_upper
-                )
+                for actual, lower, upper in zip(fold_actuals, fold_lower, fold_upper)
                 if lower is not None
                 and upper is not None
                 and len(actual) > horizon
@@ -411,6 +409,9 @@ def analyze_backtest_errors(
         interval_width_by_horizon=width_by_horizon,
         winkler_score_by_horizon=winkler_by_horizon,
         nominal_coverage=nominal_coverage,
+        weighted_interval_score=(
+            winkler * (1.0 - nominal_coverage) / 2.0 if winkler is not None else None
+        ),
         coverage_estimable=coverage_estimable,
         warnings=warnings,
     )

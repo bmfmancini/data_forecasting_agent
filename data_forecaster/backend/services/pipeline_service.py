@@ -407,13 +407,16 @@ def _run_forecast_stages(
     logger.info("Running baseline model comparisons")
     baseline_results = run_baseline_models(series, forecast_horizon, seasonal_period)
     for name, result in baseline_results.items():
-        all_metrics.setdefault(name, {
-            "RMSE": result.metrics.rmse,
-            "MAE": result.metrics.mae,
-            "MAPE": result.metrics.mape,
-            "WAPE": result.metrics.wape,
-            "MASE": result.metrics.mase,
-        })
+        all_metrics.setdefault(
+            name,
+            {
+                "RMSE": result.metrics.rmse,
+                "MAE": result.metrics.mae,
+                "MAPE": result.metrics.mape,
+                "WAPE": result.metrics.wape,
+                "MASE": result.metrics.mase,
+            },
+        )
     forecast_result = forecast_result.model_copy(
         update={
             "candidate_results": [
@@ -479,6 +482,13 @@ def _select_model(
             selected_model=forced_model,
             explanation=f"Model manually selected by user: {forced_model}.",
             selection_method="forced",
+            narrative_claims=[
+                {
+                    "claim": f"User forced selection of {forced_model}.",
+                    "evidence_references": ["request.forced_model"],
+                    "uncertainty": "user_directed",
+                }
+            ],
             holt_winters_rejected_reason=(
                 None
                 if forced_model == "Holt-Winters"

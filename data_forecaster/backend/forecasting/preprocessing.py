@@ -16,7 +16,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from scipy.stats import boxcox
+from scipy.stats import boxcox, yeojohnson
 
 from core.logging_config import get_logger
 from forecasting.contracts import PreprocessingTransform
@@ -175,6 +175,78 @@ class LogTransform:
         if not self.transform.is_fitted:
             return np.asarray(values, dtype=float)
         return np.exp(np.asarray(values, dtype=float)) - self.transform.shift
+
+
+class YeoJohnsonTransform:
+    """Fold-safe Yeo-Johnson transform for targets containing nonpositive values."""
+
+    def __init__(self) -> None:
+        self.transform = PreprocessingTransform(name="yeojohnson")
+
+    def fit(self, train: pd.Series) -> YeoJohnsonTransform:
+        values = train.dropna().astype(float).to_numpy()
+        if values.size < _MIN_BOXCOX_LENGTH or np.all(values == values[0]):
+            return self
+        try:
+            _, lam = yeojohnson(values)
+            self.transform.lambda_value = float(lam)
+            self.transform.is_fitted = True
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.warning("Yeo-Johnson lambda estimation failed: %s", exc)
+        return self
+
+    def transform_series(self, series: pd.Series) -> pd.Series:
+        if not self.transform.is_fitted or self.transform.lambda_value is None:
+            return series
+        return pd.Series(
+            yeojohnson(series.astype(float).to_numpy(), self.transform.lambda_value),
+            index=series.index,
+        )
+
+    def inverse_transform(self, values: np.ndarray | pd.Series) -> np.ndarray:
+        if not self.transform.is_fitted or self.transform.lambda_value is None:
+            return np.asarray(values, dtype=float)
+        transformed = np.asarray(values, dtype=float)
+        lam = self.transform.lambda_value
+        result = np.empty_like(transformed)
+        positive = transformed >= 0
+        if abs(lam) < _EPSILON:
+            result[positive] = np.expm1(transformed[positive])
+        else:
+            result[positive] = (
+                np.power(
+                    np.maximum(lam * transformed[positive] + 1.0, _EPSILON), 1.0 / lam
+                )
+                - 1.0
+            )
+        if abs(lam - 2.0) < _EPSILON:
+            result[~positive] = 1.0 - np.exp(-transformed[~positive])
+        else:
+            result[~positive] = 1.0 - np.power(
+                np.maximum(1.0 - (2.0 - lam) * transformed[~positive], _EPSILON),
+                1.0 / (2.0 - lam),
+            )
+        return result
+
+
+def bias_adjusted_inverse(
+    transform: Any,
+    predictions: np.ndarray | pd.Series | list[float],
+    transformed_residuals: np.ndarray | pd.Series | list[float],
+    *,
+    seed: int = 42,
+    simulations: int = 1000,
+) -> np.ndarray:
+    """Apply a deterministic residual-smearing retransformation correction."""
+    point = np.asarray(predictions, dtype=float)
+    residuals = np.asarray(transformed_residuals, dtype=float)
+    residuals = residuals[np.isfinite(residuals)]
+    if residuals.size == 0:
+        return transform.inverse_transform(point)
+    rng = np.random.default_rng(seed)
+    sampled = rng.choice(residuals, size=(simulations, point.size), replace=True)
+    original_scale = transform.inverse_transform(point[None, :] + sampled)
+    return np.mean(original_scale, axis=0)
 
 
 class IQRClipping:

@@ -25,6 +25,8 @@ class ForecastMetrics(BaseModel):
     mape: float | None = None
     wape: float | None = None
     mase: float | None = None
+    smape: float | None = None
+    rmsse: float | None = None
     n_evaluated: int = Field(default=0, ge=0)
     n_missing: int = Field(default=0, ge=0)
     unavailable_reasons: dict[str, str] = Field(default_factory=dict)
@@ -142,6 +144,8 @@ class BacktestEvaluation(BaseModel):
     n_failed_origins: int = 0
     n_evaluated: int = 0
     validation_design: dict[str, object] = Field(default_factory=dict)
+    metric_intervals: dict[str, list[float]] = Field(default_factory=dict)
+    skill_scores: dict[str, float] = Field(default_factory=dict)
     unavailable_reasons: dict[str, str] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
 
@@ -204,6 +208,7 @@ class ResidualDiagnosticsResult(BaseModel):
     interval_coverage: float | None = None
     interval_mean_width: float | None = None
     winkler_score: float | None = None
+    weighted_interval_score: float | None = None
     interval_coverage_by_horizon: dict[int, float] = Field(default_factory=dict)
     interval_width_by_horizon: dict[int, float] = Field(default_factory=dict)
     winkler_score_by_horizon: dict[int, float] = Field(default_factory=dict)
@@ -327,6 +332,7 @@ class AnomalyEvidence(BaseModel):
     method: str = "mad_hampel"
     threshold: float = 3.5
     warnings: list[str] = Field(default_factory=list)
+    classifications: dict[str, list[int]] = Field(default_factory=dict)
 
 
 class ChangePointEvidence(BaseModel):

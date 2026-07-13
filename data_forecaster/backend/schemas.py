@@ -149,6 +149,10 @@ class StatisticalResult(BaseModel):
     observed_frequency: str | None = None
     narrative_label: str = "llm_interpretation"
     narrative_evidence: list[str] = Field(default_factory=list)
+    arch_effects: dict[str, Any] = Field(default_factory=dict)
+    robust_monotonic_trend: dict[str, Any] = Field(default_factory=dict)
+    intermittency: dict[str, Any] = Field(default_factory=dict)
+    anomaly_classifications: dict[str, list[int]] = Field(default_factory=dict)
 
 
 class ModelSelectionResult(BaseModel):
@@ -170,6 +174,7 @@ class ModelSelectionResult(BaseModel):
     # ── Selection policy additions ──────────────────────────────────────────
     selection_method: str = "llm"  # "deterministic" | "llm" | "heuristic" | "forced"
     selection_evidence: dict[str, Any] = Field(default_factory=dict)
+    narrative_claims: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ResidualDiagnostics(BaseModel):
@@ -198,6 +203,7 @@ class ResidualDiagnostics(BaseModel):
     interval_coverage: float | None = None
     interval_mean_width: float | None = None
     winkler_score: float | None = None
+    weighted_interval_score: float | None = None
     interval_coverage_by_horizon: dict[int, float] = Field(default_factory=dict)
     interval_width_by_horizon: dict[int, float] = Field(default_factory=dict)
     winkler_score_by_horizon: dict[int, float] = Field(default_factory=dict)
@@ -218,12 +224,16 @@ class ForecastCandidateResult(BaseModel):
     mape: float | None = None
     wape: float | None = None
     mase: float | None = None
+    smape: float | None = None
+    rmsse: float | None = None
     n_evaluated: int = 0
     n_missing: int = 0
     fitted_configuration: dict[str, Any] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
     interval_label: str = "prediction_interval"
     validation_design: dict[str, Any] = Field(default_factory=dict)
+    metric_intervals: dict[str, list[float]] = Field(default_factory=dict)
+    skill_scores: dict[str, float] = Field(default_factory=dict)
 
 
 class ForecastResult(BaseModel):
@@ -242,6 +252,8 @@ class ForecastResult(BaseModel):
     mape: float | None = None
     wape: float | None = None
     mase: float | None = None
+    smape: float | None = None
+    rmsse: float | None = None
     residual_diagnostics: ResidualDiagnostics | None = None
     candidate_results: list[ForecastCandidateResult] = Field(default_factory=list)
     reasoning_steps: list[dict[str, Any]] = Field(default_factory=list)
@@ -269,6 +281,7 @@ class StatisticalReviewResult(BaseModel):
     # ── Override eligibility additions ──────────────────────────────────────
     can_override_selection: bool = False
     override_reasons: list[str] = Field(default_factory=list)
+    narrative_claims: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class AnalysisResponse(BaseModel):

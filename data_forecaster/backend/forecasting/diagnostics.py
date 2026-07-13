@@ -619,18 +619,40 @@ def detect_anomalies(
     # Scale MAD to approximate standard deviation
     mad_scaled = mad * 1.4826 if mad > 0 else 0.0
     if mad_scaled == 0:
+        tolerance = np.finfo(float).eps * max(1.0, abs(median)) * 10.0
+        anomaly_indices = [
+            int(index)
+            for index, value in enumerate(residuals)
+            if abs(float(value) - median) > tolerance
+        ]
+        positive_indices = [
+            index for index in anomaly_indices if residuals[index] > median
+        ]
+        negative_indices = [
+            index for index in anomaly_indices if residuals[index] < median
+        ]
         return AnomalyEvidence(
             status=DiagnosticStatus.OK,
-            anomaly_count=0,
-            anomaly_ratio=0.0,
+            anomaly_count=len(anomaly_indices),
+            anomaly_ratio=len(anomaly_indices) / n,
+            anomaly_indices=anomaly_indices,
             method="mad_hampel",
             threshold=_MAD_THRESHOLD,
-            warnings=["MAD is zero; no anomalies detected."],
+            warnings=[
+                "MAD is zero; observations differing from the residual median "
+                "were classified using numerical tolerance."
+            ],
+            classifications={
+                "positive_spike": positive_indices,
+                "negative_spike": negative_indices,
+            },
         )
 
     deviations = np.abs(residuals - median) / mad_scaled
     anomaly_mask = deviations > _MAD_THRESHOLD
     anomaly_indices = [int(i) for i in np.nonzero(anomaly_mask)[0]]
+    positive_indices = [index for index in anomaly_indices if residuals[index] > median]
+    negative_indices = [index for index in anomaly_indices if residuals[index] < median]
 
     return AnomalyEvidence(
         status=DiagnosticStatus.OK,
@@ -639,6 +661,10 @@ def detect_anomalies(
         anomaly_indices=anomaly_indices,
         method="mad_hampel",
         threshold=_MAD_THRESHOLD,
+        classifications={
+            "positive_spike": positive_indices,
+            "negative_spike": negative_indices,
+        },
     )
 
 
@@ -890,4 +916,62 @@ def test_white_noise(series: pd.Series, lags: int = 10) -> dict[str, Any]:
         "p_value": p_value,
         "is_white_noise": is_white_noise,
         "interpretation": interpretation,
+    }
+
+
+def assess_arch_effects(series: pd.Series, lags: int = 5) -> dict[str, object]:
+    """Test adjusted residuals for conditional heteroskedasticity."""
+    from statsmodels.stats.diagnostic import het_arch
+
+    residuals = _compute_adjusted_residuals(series.dropna().astype(float), 1)
+    if residuals is None or len(residuals) < max(12, 2 * lags + 1):
+        return {"status": "not_estimable", "p_value": None, "has_arch": None}
+    try:
+        _, p_value, _, _ = het_arch(np.asarray(residuals, dtype=float), nlags=lags)
+        return {
+            "status": "ok",
+            "p_value": float(p_value),
+            "has_arch": bool(p_value < 0.05),
+        }
+    except Exception as exc:  # pylint: disable=broad-except
+        return {
+            "status": "failed",
+            "p_value": None,
+            "has_arch": None,
+            "warning": str(exc),
+        }
+
+
+def assess_sen_trend(series: pd.Series) -> dict[str, object]:
+    """Return Kendall monotonic-trend evidence and a robust Sen slope."""
+    from scipy.stats import kendalltau, theilslopes
+
+    values = series.dropna().astype(float).to_numpy()
+    if values.size < 8:
+        return {"status": "not_estimable", "p_value": None, "sen_slope": None}
+    time = np.arange(values.size, dtype=float)
+    tau, p_value = kendalltau(time, values)
+    slope, _, lower, upper = theilslopes(values, time, alpha=0.95)
+    return {
+        "status": "ok",
+        "kendall_tau": float(tau),
+        "p_value": float(p_value),
+        "sen_slope": float(slope),
+        "sen_slope_ci": [float(lower), float(upper)],
+    }
+
+
+def assess_intermittency(series: pd.Series) -> dict[str, object]:
+    """Characterize zero-heavy nonnegative demand."""
+    values = series.dropna().astype(float).to_numpy()
+    if values.size == 0 or np.any(values < 0):
+        return {"status": "not_applicable", "is_intermittent": False}
+    nonzero = np.flatnonzero(values > 0)
+    zero_ratio = float(np.mean(values == 0))
+    mean_interval = float(np.mean(np.diff(nonzero))) if nonzero.size >= 2 else None
+    return {
+        "status": "ok",
+        "zero_ratio": zero_ratio,
+        "mean_nonzero_interval": mean_interval,
+        "is_intermittent": bool(zero_ratio >= 0.4 or (mean_interval or 0) >= 2.0),
     }

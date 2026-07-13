@@ -48,6 +48,38 @@ from forecasting.preprocessing import IQRClipping
 logger = get_logger(__name__)
 
 
+def _bootstrap_metric_intervals(
+    actual: np.ndarray,
+    predicted: np.ndarray,
+    training: np.ndarray,
+    mase_period: int,
+    *,
+    repetitions: int = 500,
+) -> dict[str, list[float]]:
+    """Return deterministic percentile intervals for aggregate metrics."""
+    if actual.size < 3:
+        return {}
+    rng = np.random.default_rng(42)
+    samples: dict[str, list[float]] = {name: [] for name in ("rmse", "mae", "mase")}
+    for _ in range(repetitions):
+        indices = rng.integers(0, actual.size, actual.size)
+        metrics = calculate_forecast_metrics(
+            actual[indices],
+            predicted[indices],
+            training=training,
+            mase_period=mase_period,
+        )
+        for name in samples:
+            value = getattr(metrics, name)
+            if value is not None and np.isfinite(value):
+                samples[name].append(float(value))
+    return {
+        name: np.quantile(values, [0.025, 0.975]).astype(float).tolist()
+        for name, values in samples.items()
+        if values
+    }
+
+
 # ── Configuration ────────────────────────────────────────────────────────────
 
 
@@ -369,6 +401,12 @@ def evaluate_candidate(
             "mase_period": config.mase_period,
             "apply_iqr_clip": config.apply_iqr_clip,
         },
+        metric_intervals=_bootstrap_metric_intervals(
+            np.asarray(pooled_actuals, dtype=float),
+            np.asarray(pooled_preds, dtype=float),
+            initial_training,
+            config.mase_period,
+        ),
         unavailable_reasons=unavailable,
         warnings=warnings,
     )
@@ -396,4 +434,24 @@ def evaluate_candidates(
     evaluations: dict[str, BacktestEvaluation] = {}
     for name, fn in candidates.items():
         evaluations[name] = evaluate_candidate(name, series, folds, fn, config)
+    references = [
+        evaluations[name]
+        for name in ("Seasonal Naive", "Naive")
+        if name in evaluations and evaluations[name].is_rankable
+    ]
+    if references:
+        reference = min(
+            references,
+            key=lambda item: item.pooled_metrics.mae or float("inf"),
+        )
+        for name, evaluation in list(evaluations.items()):
+            skill: dict[str, float] = {}
+            for metric in ("mae", "rmse"):
+                candidate_value = getattr(evaluation.pooled_metrics, metric)
+                reference_value = getattr(reference.pooled_metrics, metric)
+                if candidate_value is not None and reference_value not in (None, 0):
+                    skill[f"{metric}_skill_vs_{reference.model_name}"] = float(
+                        1.0 - candidate_value / reference_value
+                    )
+            evaluations[name] = evaluation.model_copy(update={"skill_scores": skill})
     return evaluations

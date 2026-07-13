@@ -17,6 +17,7 @@ from typing import Any
 
 from core.llm_factory import get_llm
 from core.logging_config import get_logger
+from forecasting.selection_policy import validate_llm_output
 from prompts.statistical_review_prompt import STATISTICAL_REVIEW_PROMPT
 from schemas import (
     ForecastResult,
@@ -752,6 +753,7 @@ def run_statistical_review_agent(
     prompt = STATISTICAL_REVIEW_PROMPT
     token_usage: dict[str, int] = {}
     reasoning_steps: list[dict[str, Any]] = []
+    narrative_uncertainty = "deterministic_precheck"
 
     try:
         llm = get_llm(temperature=0)
@@ -771,9 +773,28 @@ def run_statistical_review_agent(
         logger.info("Statistical review LLM output: %s", output[:200])
 
         verdict = _parse_verdict(output)
+        narrative_uncertainty = "validated_llm_interpretation"
         llm_flags = _parse_flags(output)
         endorsements = _parse_endorsements(output)
         summary = _parse_summary(output)
+
+        validation_warnings = validate_llm_output(
+            output,
+            list(all_metrics),
+            {
+                "all_metrics": all_metrics,
+                "selected_model": model_selection.selected_model,
+            },
+        )
+        for warning in validation_warnings:
+            llm_flags.append(
+                {
+                    "agent": "statistical",
+                    "severity": "warning",
+                    "issue": f"Unsupported LLM review claim: {warning}",
+                    "recommendation": "Use only the supplied deterministic evidence.",
+                }
+            )
 
         # Merge deterministic flags with LLM flags (deduplicate by issue text)
         all_flags = list(pre_check_flags)
@@ -832,4 +853,11 @@ def run_statistical_review_agent(
         token_usage=token_usage,
         can_override_selection=can_override,
         override_reasons=override_reasons,
+        narrative_claims=[
+            {
+                "claim": summary,
+                "evidence_references": ["deterministic_pre_check", "all_metrics"],
+                "uncertainty": narrative_uncertainty,
+            }
+        ],
     )

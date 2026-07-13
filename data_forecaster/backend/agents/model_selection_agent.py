@@ -1008,6 +1008,16 @@ def run_model_selection_agent(
                     "tie_break_note": outcome.tie_break_note,
                     "evidence_summary": outcome.evidence_summary,
                 },
+                narrative_claims=[
+                    {
+                        "claim": f"Selected {outcome.selected_model} by deterministic ranking.",
+                        "evidence_references": [
+                            "selection_evidence.ranking",
+                            "all_metrics",
+                        ],
+                        "uncertainty": "empirical_backtest_evidence",
+                    }
+                ],
             )
 
     suitability_input = _build_suitability_input(
@@ -1056,6 +1066,13 @@ def run_model_selection_agent(
         token_usage=token_usage,
         selection_method="llm",
         selection_evidence={"llm_validation_warnings": validation_warnings},
+        narrative_claims=[
+            {
+                "claim": f"LLM interpreted suitability for {selected_model}.",
+                "evidence_references": ["selection_evidence.llm_validation_warnings"],
+                "uncertainty": "llm_interpretation",
+            }
+        ],
     )
 
 
@@ -1100,4 +1117,11 @@ def _build_heuristic_result(
         token_usage={},
         selection_method="heuristic",
         selection_evidence={},
+        narrative_claims=[
+            {
+                "claim": f"Selected {fallback_model} using heuristic fallback.",
+                "evidence_references": ["reasoning_steps"],
+                "uncertainty": "heuristic",
+            }
+        ],
     )
