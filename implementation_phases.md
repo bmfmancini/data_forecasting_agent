@@ -4,8 +4,58 @@ This document contains the phased engineering roadmap derived from the statistic
 
 ## Implementation status
 
-- **R1 / Phase 1 — in progress:** typed fit statuses and metric contracts are implemented; unavailable evidence is no longer encoded as zero; central MAE/RMSE/MAPE/WAPE/MASE conventions are active; degraded models are excluded from ranking.
-- **Next R1 work:** complete synthetic regression fixtures, move adapter dictionaries fully onto `ForecastAdapterResult`, and add fitted-configuration provenance before starting common rolling-origin backtesting.
+### R1 / Phase 1 — Honest scoring (in progress)
+
+**Completed tasks:**
+
+1. **Typed contracts** (`forecasting/contracts.py`):
+   - `ForecastFitStatus` (`ok`, `degraded`, `failed`, `not_estimable`)
+   - `ForecastMetrics` (nullable RMSE, MAE, MAPE, WAPE, MASE + `n_evaluated` + `unavailable_reasons`)
+   - `ForecastAdapterResult` (status, forecast, intervals, metrics, `fitted_configuration`, `failure_reason`, `is_fallback`, `warnings`, `is_rankable` property)
+
+2. **Centralized metrics** (`forecasting/metrics.py`):
+   - `calculate_forecast_metrics` and `calculate_holdout_metrics` compute RMSE, MAE, MAPE, WAPE, MASE in one place.
+   - MAPE is unavailable when actuals contain zero (no epsilon adjustment).
+   - MASE uses one documented denominator convention (naive lag supplied by caller).
+   - Missing evaluation evidence is `None`, never zero.
+
+3. **Typed adapter migration** (all four adapters return `ForecastAdapterResult`):
+   - `fit_arima` — preserves `with_intercept` through full-series refit; `fitted_configuration` includes order, trend, intercept.
+   - `fit_sarima` — preserves `with_intercept` and `seasonal_order` through refit; `fitted_configuration` includes order, seasonal_order, seasonal period, used_seasonal flag.
+   - `fit_holt_winters` — selects additive/multiplicative seasonal on the **training split only** (fixes test-data leakage); `fitted_configuration` includes trend, damped state, seasonal type, seasonal period, initialization method.
+   - `fit_ewma` — estimates alpha by minimizing one-step SSE on the training split (no longer fixed at 0.3); uses centralized metrics (no longer routes through `perform_rolling_origin_validation`); `fitted_configuration` includes alpha, initialization, estimated flag.
+
+4. **Forecasting agent** (`agents/forecasting_agent.py`):
+   - `_has_required_metrics` operates on `ForecastAdapterResult` typed objects; requires `status == "ok"` and finite RMSE/MAE/MAPE.
+   - `_calculate_additional_metrics` removed (dead code); WAPE/MASE computed centrally.
+   - Deterministic fallback selection uses lowest RMSE — the LLM never decides model rankings.
+   - All dict lookups replaced with typed attribute access.
+
+5. **Obsolete metric logic removed:**
+   - `perform_rolling_origin_validation` renamed to `terminal_holdout_validation` (accurate label; no backward-compatible alias — greenfield).
+   - No adapter imports the validation helper; all use centralized metrics directly.
+
+6. **Regression fixtures** (`forecasting/fixtures.py`):
+   - Deterministic synthetic series (seed 42) for: constant, near-constant, stationary AR(1), random walk, additive seasonal, multiplicative seasonal, trend, zeros, negative values, missing timestamps, duplicate timestamps, short seasonal (< 2 cycles), isolated anomalies, structural breaks.
+
+7. **Failure-state tests** (`tests/test_forecast_failure_states.py`):
+   - Failed/degraded/not_estimable models cannot win ranking.
+   - Missing holdout metrics remain `None`.
+   - Short-series persistence output is explicitly `not_estimable`.
+   - No fabricated evaluation after a fitting exception.
+   - All `ForecastAdapterResult` objects serialize to JSON.
+   - Fitted configuration (order, seasonal_order, trend, alpha) survives refit.
+
+8. **Regression fixture tests** (`tests/test_forecast_fixtures.py`):
+   - Every fixture is deterministic across calls.
+   - Each fixture has expected statistical properties.
+   - All four adapters survive every fixture without crashing.
+
+**Remaining R1 work:**
+- Harden nullable metric consumers (report builders, renderers, visualizations, statistical review, prompts) so unavailable values render as "not available" and never raise formatting errors.
+- Diagnose the repository test-suite stall.
+- Run the full validation suite.
+- Mark R1/Phase 1 complete only when all suites pass.
 
 ## Phased implementation roadmap
 
