@@ -32,7 +32,11 @@ class FoldSafeImputer:
     """Impute a training window without consulting validation observations."""
 
     def __init__(self, method: str = "interpolate") -> None:
-        self.method = method if method in {"interpolate", "forward-fill", "drop"} else "interpolate"
+        self.method = (
+            method
+            if method in {"interpolate", "forward-fill", "drop"}
+            else "interpolate"
+        )
         self.leading_value: float | None = None
 
     def fit(self, train: pd.Series) -> FoldSafeImputer:

@@ -501,7 +501,9 @@ class ExecutiveReportBuilder:
         else:
             endpoint_direction = "Flat"
         peak_value = max(forecast.forecast) if forecast.forecast else None
-        peak_index = forecast.forecast.index(peak_value) if peak_value is not None else -1
+        peak_index = (
+            forecast.forecast.index(peak_value) if peak_value is not None else -1
+        )
         peak_date = (
             forecast.forecast_dates[peak_index]
             if 0 <= peak_index < len(forecast.forecast_dates)

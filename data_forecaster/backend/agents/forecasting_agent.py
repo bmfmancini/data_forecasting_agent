@@ -115,12 +115,16 @@ def run_forecasting_agent(
     if imputation_method == "Let AI Decide":
         imputation_method = "interpolate"
     smoothing_method = preprocessing_options.get("smoothing", "none")
-    production_series = FoldSafeOutlierTreatment(outlier_strategy).fit(
-        series
-    ).transform_training(series)
-    production_series = FoldSafeImputer(imputation_method).fit(
-        production_series
-    ).transform_training(production_series)
+    production_series = (
+        FoldSafeOutlierTreatment(outlier_strategy)
+        .fit(series)
+        .transform_training(series)
+    )
+    production_series = (
+        FoldSafeImputer(imputation_method)
+        .fit(production_series)
+        .transform_training(production_series)
+    )
     production_series = smooth_training_series(production_series, smoothing_method)
     results_store: dict[str, ForecastAdapterResult] = {}
 
@@ -657,7 +661,9 @@ def _run_backtest_evaluation(
         imputation_method=imputation_method,
         smoothing_method=smoothing_method,
         outlier_strategy=outlier_strategy,
-        final_test_size=(forecast_horizon if len(series) >= 3 * forecast_horizon else 0),
+        final_test_size=(
+            forecast_horizon if len(series) >= 3 * forecast_horizon else 0
+        ),
     )
 
     def _arima_fn(train: pd.Series, fold: BacktestFold) -> FoldPrediction | None:

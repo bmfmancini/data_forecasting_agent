@@ -362,15 +362,17 @@ def evaluate_candidate(
     if folds:
         initial_series = series.iloc[: folds[0].train_end_index].copy()
         strategy = "clip" if config.apply_iqr_clip else config.outlier_strategy
-        initial_series = FoldSafeOutlierTreatment(strategy).fit(
-            initial_series
-        ).transform_training(initial_series)
-        initial_series = FoldSafeImputer(config.imputation_method).fit(
-            initial_series
-        ).transform_training(initial_series)
-        initial_series = smooth_training_series(
-            initial_series, config.smoothing_method
+        initial_series = (
+            FoldSafeOutlierTreatment(strategy)
+            .fit(initial_series)
+            .transform_training(initial_series)
         )
+        initial_series = (
+            FoldSafeImputer(config.imputation_method)
+            .fit(initial_series)
+            .transform_training(initial_series)
+        )
+        initial_series = smooth_training_series(initial_series, config.smoothing_method)
         initial_training = initial_series.to_numpy(dtype=float)
     else:
         initial_training = np.asarray([], dtype=float)
@@ -427,12 +429,16 @@ def evaluate_candidate(
         if final_result is not None and final_result.status == ForecastFitStatus.OK:
             final_training = series.iloc[:final_start].copy()
             strategy = "clip" if config.apply_iqr_clip else config.outlier_strategy
-            final_training = FoldSafeOutlierTreatment(strategy).fit(
-                final_training
-            ).transform_training(final_training)
-            final_training = FoldSafeImputer(config.imputation_method).fit(
-                final_training
-            ).transform_training(final_training)
+            final_training = (
+                FoldSafeOutlierTreatment(strategy)
+                .fit(final_training)
+                .transform_training(final_training)
+            )
+            final_training = (
+                FoldSafeImputer(config.imputation_method)
+                .fit(final_training)
+                .transform_training(final_training)
+            )
             final_training = smooth_training_series(
                 final_training, config.smoothing_method
             )
@@ -444,7 +450,9 @@ def evaluate_candidate(
             )
         else:
             final_test_metrics = ForecastMetrics(
-                unavailable_reasons={"all": "Candidate failed on the untouched final test window."}
+                unavailable_reasons={
+                    "all": "Candidate failed on the untouched final test window."
+                }
             )
     evaluated_horizon = folds[0].horizon if folds else 0
     requested_horizon = config.requested_horizon or config.horizon or evaluated_horizon
