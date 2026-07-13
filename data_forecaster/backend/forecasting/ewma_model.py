@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 
 from core.logging_config import get_logger
+from forecasting.contracts import ForecastFitStatus
 from utils.validation import perform_rolling_origin_validation
 
 logger = get_logger(__name__)
@@ -37,6 +38,8 @@ def fit_ewma(series: pd.Series, forecast_horizon: int, alpha: float = 0.3) -> di
     rmse = metrics.get("rmse")
     mae = metrics.get("mae")
     mape = metrics.get("mape")
+    wape = metrics.get("wape")
+    mase = metrics.get("mase")
     if not metrics:
         logger.warning("EWMA rolling validation failed; metrics unavailable.")
 
@@ -59,10 +62,23 @@ def fit_ewma(series: pd.Series, forecast_horizon: int, alpha: float = 0.3) -> di
     logger.info("EWMA model fitted with alpha=%.2f", alpha)
 
     return {
+        "status": (
+            ForecastFitStatus.OK.value
+            if rmse is not None and mae is not None and mape is not None
+            else ForecastFitStatus.DEGRADED.value
+        ),
+        "failure_reason": (
+            None
+            if rmse is not None and mae is not None and mape is not None
+            else "Validation metrics unavailable."
+        ),
+        "is_fallback": False,
         "forecast": forecast_values,
         "lower_ci": lower_ci,
         "upper_ci": upper_ci,
         "rmse": rmse,
         "mae": mae,
         "mape": mape,
+        "wape": wape,
+        "mase": mase,
     }

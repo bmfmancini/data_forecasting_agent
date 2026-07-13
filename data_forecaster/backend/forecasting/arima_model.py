@@ -6,13 +6,14 @@ import pandas as pd
 
 from core.logging_config import get_logger
 from forecasting.metrics import calculate_holdout_metrics
+from forecasting.contracts import ForecastFitStatus, ForecastMetrics
 from forecasting.pmdarima_compat import import_pmdarima
 
 logger = get_logger(__name__)
 pm = import_pmdarima()
 
 
-def _calculate_metrics(test: pd.Series, model) -> tuple[float, float, float]:
+def _calculate_metrics(train: pd.Series, test: pd.Series, model) -> ForecastMetrics:
     """Calculate RMSE, MAE, and MAPE for the given model and test data.
 
     Args:
@@ -23,10 +24,10 @@ def _calculate_metrics(test: pd.Series, model) -> tuple[float, float, float]:
         tuple[float, float, float]: RMSE, MAE, and MAPE metrics.
     """
     try:
-        return calculate_holdout_metrics(test, model)
+        return calculate_holdout_metrics(test, model, training=train, mase_period=1)
     except Exception as exc:
         logger.warning("ARIMA metrics calculation failed: %s", exc)
-        return 0.0, 0.0, 0.0
+        return ForecastMetrics(unavailable_reasons={"all": str(exc)})
 
 
 def fit_arima(series: pd.Series, forecast_horizon: int) -> dict:
@@ -48,12 +49,15 @@ def fit_arima(series: pd.Series, forecast_horizon: int) -> dict:
         )
         last_val = series.iloc[-1] if not series.empty else 0.0
         return {
+            "status": ForecastFitStatus.NOT_ESTIMABLE.value,
+            "failure_reason": "ARIMA requires at least three observations.",
+            "is_fallback": True,
             "forecast": [last_val] * forecast_horizon,
             "lower_ci": [last_val] * forecast_horizon,
             "upper_ci": [last_val] * forecast_horizon,
-            "rmse": 0.0,
-            "mae": 0.0,
-            "mape": 0.0,
+            "rmse": None,
+            "mae": None,
+            "mape": None,
         }
 
     # Split data into train and test sets for metrics calculation
@@ -66,7 +70,9 @@ def fit_arima(series: pd.Series, forecast_horizon: int) -> dict:
     train, test = series.iloc[:split], series.iloc[split:]
 
     train_model = None
-    rmse, mae, mape = 0.0, 0.0, 0.0
+    metrics = ForecastMetrics(
+        unavailable_reasons={"all": "Training model unavailable."}
+    )
 
     if len(train) >= 2:
         try:
@@ -80,7 +86,7 @@ def fit_arima(series: pd.Series, forecast_horizon: int) -> dict:
                 suppress_warnings=True,
                 information_criterion="aic",
             )
-            rmse, mae, mape = _calculate_metrics(test, train_model)
+            metrics = _calculate_metrics(train, test, train_model)
         except Exception as exc:
             logger.warning("ARIMA training failed: %s", exc)
 
@@ -95,10 +101,21 @@ def fit_arima(series: pd.Series, forecast_horizon: int) -> dict:
     )
 
     return {
+        "status": (
+            ForecastFitStatus.OK.value
+            if metrics.rmse is not None
+            else ForecastFitStatus.DEGRADED.value
+        ),
+        "failure_reason": (
+            None if metrics.rmse is not None else metrics.unavailable_reasons.get("all")
+        ),
+        "is_fallback": train_model is None,
         "forecast": forecast_values.tolist(),
         "lower_ci": conf_int[:, 0].tolist(),
         "upper_ci": conf_int[:, 1].tolist(),
-        "rmse": rmse,
-        "mae": mae,
-        "mape": mape,
+        "rmse": metrics.rmse,
+        "mae": metrics.mae,
+        "mape": metrics.mape,
+        "wape": metrics.wape,
+        "mase": metrics.mase,
     }

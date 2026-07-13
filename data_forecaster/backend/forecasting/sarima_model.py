@@ -6,13 +6,16 @@ import pandas as pd
 
 from core.logging_config import get_logger
 from forecasting.metrics import calculate_holdout_metrics
+from forecasting.contracts import ForecastFitStatus, ForecastMetrics
 from forecasting.pmdarima_compat import import_pmdarima
 
 logger = get_logger(__name__)
 pm = import_pmdarima()
 
 
-def _calculate_metrics(test: pd.Series, model) -> tuple[float, float, float]:
+def _calculate_metrics(
+    train: pd.Series, test: pd.Series, model, seasonal_period: int
+) -> ForecastMetrics:
     """Calculate RMSE, MAE, and MAPE for the given model and test data.
 
     Args:
@@ -23,10 +26,15 @@ def _calculate_metrics(test: pd.Series, model) -> tuple[float, float, float]:
         tuple[float, float, float]: RMSE, MAE, and MAPE metrics.
     """
     try:
-        return calculate_holdout_metrics(test, model)
+        return calculate_holdout_metrics(
+            test,
+            model,
+            training=train,
+            mase_period=seasonal_period if seasonal_period > 1 else 1,
+        )
     except Exception as exc:
         logger.warning("SARIMA metrics calculation failed: %s", exc)
-        return 0.0, 0.0, 0.0
+        return ForecastMetrics(unavailable_reasons={"all": str(exc)})
 
 
 def fit_sarima(
@@ -62,7 +70,9 @@ def fit_sarima(
     train, test = series.iloc[:split], series.iloc[split:]
 
     train_model = None
-    rmse, mae, mape = 0.0, 0.0, 0.0
+    metrics = ForecastMetrics(
+        unavailable_reasons={"all": "Training model unavailable."}
+    )
 
     try:
         train_model = pm.auto_arima(
@@ -79,7 +89,7 @@ def fit_sarima(
             suppress_warnings=True,
             information_criterion="aic",
         )
-        rmse, mae, mape = _calculate_metrics(test, train_model)
+        metrics = _calculate_metrics(train, test, train_model, seasonal_period)
     except Exception as exc:
         logger.warning("SARIMA training failed: %s", exc)
 
@@ -109,10 +119,21 @@ def fit_sarima(
     )
 
     return {
+        "status": (
+            ForecastFitStatus.OK.value
+            if metrics.rmse is not None
+            else ForecastFitStatus.DEGRADED.value
+        ),
+        "failure_reason": (
+            None if metrics.rmse is not None else metrics.unavailable_reasons.get("all")
+        ),
+        "is_fallback": train_model is None or not use_seasonal,
         "forecast": forecast_values.tolist(),
         "lower_ci": conf_int[:, 0].tolist(),
         "upper_ci": conf_int[:, 1].tolist(),
-        "rmse": rmse,
-        "mae": mae,
-        "mape": mape,
+        "rmse": metrics.rmse,
+        "mae": metrics.mae,
+        "mape": metrics.mape,
+        "wape": metrics.wape,
+        "mase": metrics.mase,
     }

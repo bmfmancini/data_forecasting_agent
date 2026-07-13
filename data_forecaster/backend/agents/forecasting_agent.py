@@ -10,6 +10,7 @@ import pandas as pd
 from core.llm_factory import get_llm
 from core.logging_config import get_logger
 from forecasting.arima_model import fit_arima
+from forecasting.contracts import ForecastFitStatus
 from forecasting.ewma_model import fit_ewma
 from forecasting.holt_winters import fit_holt_winters
 from forecasting.sarima_model import fit_sarima
@@ -23,6 +24,8 @@ logger = get_logger(__name__)
 
 def _has_required_metrics(result: dict[str, Any]) -> bool:
     """Return whether required comparison metrics are present and finite."""
+    if result.get("status") != ForecastFitStatus.OK.value:
+        return False
     for metric in ("rmse", "mae", "mape"):
         value = result.get(metric)
         if value is None or not np.isfinite(value):
@@ -188,6 +191,23 @@ def run_forecasting_agent(
                 raise RuntimeError("All forecasting models failed.") from exc
 
     res = results_store[selected]
+    if not _has_required_metrics(res):
+        rankable = {
+            name: candidate
+            for name, candidate in results_store.items()
+            if _has_required_metrics(candidate)
+        }
+        if not rankable:
+            raise RuntimeError(
+                "No forecasting model produced valid evaluation metrics."
+            )
+        selected = min(rankable, key=lambda name: rankable[name]["rmse"])
+        res = rankable[selected]
+        res["is_fallback"] = True
+        logger.warning(
+            "Selected model lacked valid evaluation evidence; falling back to %s",
+            selected,
+        )
 
     # ── Generate forecast dates ───────────────────────────────────────────────
     last_date = series.index[-1] if hasattr(series.index, "max") else None
@@ -235,6 +255,9 @@ def run_forecasting_agent(
 
     forecast_result = ForecastResult(
         model_used=selected,
+        status=ForecastFitStatus(res.get("status", ForecastFitStatus.FAILED.value)),
+        failure_reason=res.get("failure_reason"),
+        is_fallback=bool(res.get("is_fallback", False)),
         forecast=res["forecast"],
         lower_ci=res["lower_ci"],
         upper_ci=res["upper_ci"],

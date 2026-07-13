@@ -11,6 +11,8 @@ from __future__ import annotations
 from typing import Any
 from pydantic import BaseModel, Field
 
+from forecasting.contracts import ForecastFitStatus
+
 
 class UploadResponse(BaseModel):
     """Response returned after a successful file upload."""
@@ -156,13 +158,16 @@ class ForecastResult(BaseModel):
     """Output of the forecasting agent for the selected model."""
 
     model_used: str
+    status: ForecastFitStatus = ForecastFitStatus.OK
+    failure_reason: str | None = None
+    is_fallback: bool = False
     forecast: list[float]
     lower_ci: list[float]
     upper_ci: list[float]
     forecast_dates: list[str]
-    rmse: float
-    mae: float
-    mape: float
+    rmse: float | None = None
+    mae: float | None = None
+    mape: float | None = None
     wape: float | None = None
     mase: float | None = None
     residual_diagnostics: ResidualDiagnostics | None = None

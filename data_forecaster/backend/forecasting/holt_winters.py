@@ -7,6 +7,8 @@ import pandas as pd
 from statsmodels.tsa.holtwinters import ExponentialSmoothing
 
 from core.logging_config import get_logger
+from forecasting.contracts import ForecastFitStatus, ForecastMetrics
+from forecasting.metrics import calculate_forecast_metrics
 
 logger = get_logger(__name__)
 
@@ -68,14 +70,15 @@ def fit_holt_winters(series: pd.Series, forecast_horizon: int) -> dict:
             seasonal_periods=seasonal_period if use_seasonal else None,
         ).fit(optimized=True)
         test_fc = train_fit.forecast(len(test))
-        rmse = float(np.sqrt(np.mean((test.values - test_fc.values) ** 2)))
-        mae = float(np.mean(np.abs(test.values - test_fc.values)))
-        mape = float(
-            np.mean(np.abs((test.values - test_fc.values) / (test.values + 1e-8))) * 100
+        metrics = calculate_forecast_metrics(
+            test.values,
+            test_fc.values,
+            training=train.values,
+            mase_period=seasonal_period if use_seasonal else 1,
         )
     except Exception as exc:
         logger.warning("Holt-Winters metrics failed: %s", exc)
-        rmse = mae = mape = 0.0
+        metrics = ForecastMetrics(unavailable_reasons={"all": str(exc)})
 
     # Fit the model on the full series for final forecasting
     full_fit = ExponentialSmoothing(
@@ -92,12 +95,23 @@ def fit_holt_winters(series: pd.Series, forecast_horizon: int) -> dict:
     upper_ci = (forecast_values.values + 1.96 * resid_std * np.sqrt(h)).tolist()
 
     return {
+        "status": (
+            ForecastFitStatus.OK.value
+            if metrics.rmse is not None
+            else ForecastFitStatus.DEGRADED.value
+        ),
+        "failure_reason": (
+            None if metrics.rmse is not None else metrics.unavailable_reasons.get("all")
+        ),
+        "is_fallback": False,
         "forecast": forecast_values.tolist(),
         "lower_ci": lower_ci,
         "upper_ci": upper_ci,
-        "rmse": rmse,
-        "mae": mae,
-        "mape": mape,
+        "rmse": metrics.rmse,
+        "mae": metrics.mae,
+        "mape": metrics.mape,
+        "wape": metrics.wape,
+        "mase": metrics.mase,
     }
 
 

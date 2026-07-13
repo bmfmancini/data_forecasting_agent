@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from forecasting.metrics import calculate_holdout_metrics
+from forecasting.metrics import calculate_forecast_metrics, calculate_holdout_metrics
 from forecasting import ewma_model
 from agents.forecasting_agent import (
     _calculate_additional_metrics,
@@ -36,17 +36,28 @@ def test_calculate_holdout_metrics_matches_expected_values() -> None:
     test = pd.Series([10.0, 20.0, 40.0])
     model = _Model(np.array([8.0, 22.0, 44.0]))
 
-    rmse, mae, mape = calculate_holdout_metrics(test, model)
+    metrics = calculate_holdout_metrics(test, model)
 
-    assert rmse == pytest.approx(np.sqrt(8.0))
-    assert mae == pytest.approx(8.0 / 3.0)
-    assert mape == pytest.approx(np.mean([0.2, 0.1, 0.1]) * 100)
+    assert metrics.rmse == pytest.approx(np.sqrt(8.0))
+    assert metrics.mae == pytest.approx(8.0 / 3.0)
+    assert metrics.mape == pytest.approx(np.mean([0.2, 0.1, 0.1]) * 100)
 
 
-def test_calculate_holdout_metrics_zeroes_empty_or_missing_model() -> None:
-    """Fallback behavior remains stable when metrics cannot be calculated."""
-    assert calculate_holdout_metrics(pd.Series(dtype=float), None) == (0.0, 0.0, 0.0)
-    assert calculate_holdout_metrics(pd.Series([1.0]), None) == (0.0, 0.0, 0.0)
+def test_calculate_holdout_metrics_marks_missing_evidence_unavailable() -> None:
+    """Missing evaluation evidence is not encoded as perfect performance."""
+    empty = calculate_holdout_metrics(pd.Series(dtype=float), None)
+    missing_model = calculate_holdout_metrics(pd.Series([1.0]), None)
+    assert empty.rmse is None
+    assert missing_model.rmse is None
+    assert empty.unavailable_reasons
+
+
+def test_mape_is_unavailable_when_actual_contains_zero() -> None:
+    """MAPE does not use an arbitrary epsilon for zero actual values."""
+    metrics = calculate_forecast_metrics(np.array([0.0, 10.0]), np.array([1.0, 9.0]))
+    assert metrics.mae == pytest.approx(1.0)
+    assert metrics.mape is None
+    assert "mape" in metrics.unavailable_reasons
 
 
 def test_wape_uses_absolute_actual_denominator() -> None:

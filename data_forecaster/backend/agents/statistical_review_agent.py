@@ -104,7 +104,7 @@ def _check_high_mape(
     Returns:
         A flag dict if MAPE is high, otherwise ``None``.
     """
-    if forecast_result.mape > 20:
+    if forecast_result.mape is not None and forecast_result.mape > 20:
         return {
             "agent": "forecasting",
             "severity": "warning",

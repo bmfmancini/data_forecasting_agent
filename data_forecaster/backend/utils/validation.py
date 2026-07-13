@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-import numpy as np
 import pandas as pd
+
+from forecasting.metrics import calculate_forecast_metrics
 
 ForecastFunction = Callable[[pd.Series, int], pd.Series]
 
@@ -40,10 +41,10 @@ def perform_rolling_origin_validation(
     forecast = forecast_fn(train, len(test)).astype(float)
     forecast_values = forecast.to_numpy()[: len(test)]
     test_values = test.to_numpy()
-    residuals = test_values - forecast_values
-
-    return {
-        "rmse": float(np.sqrt(np.mean(residuals**2))),
-        "mae": float(np.mean(np.abs(residuals))),
-        "mape": float(np.mean(np.abs(residuals / (test_values + 1e-8))) * 100),
-    }
+    metrics = calculate_forecast_metrics(
+        test_values,
+        forecast_values,
+        training=train.values,
+        mase_period=1,
+    )
+    return metrics.model_dump()
