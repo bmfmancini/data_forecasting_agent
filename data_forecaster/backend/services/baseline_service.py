@@ -16,14 +16,24 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from sklearn.metrics import mean_absolute_error, mean_squared_error
 
 from core.logging_config import get_logger
+from forecasting.contracts import ForecastAdapterResult, ForecastFitStatus
+from forecasting.evaluation import (
+    TerminalHoldout,
+    evaluate_predictions,
+    make_terminal_holdout,
+)
 
 logger = get_logger(__name__)
 
 
-def _calculate_metrics(y_true: pd.Series, y_pred: pd.Series) -> dict[str, float]:
+def _evaluate_baseline(
+    name: str,
+    y_pred: pd.Series,
+    split: TerminalHoldout,
+    mase_period: int,
+) -> ForecastAdapterResult:
     """Calculate standard forecast error metrics.
 
     Args:
@@ -33,27 +43,32 @@ def _calculate_metrics(y_true: pd.Series, y_pred: pd.Series) -> dict[str, float]
     Returns:
         A dict with RMSE, MAE, and MAPE.
     """
-    y_true = y_true.values
-    y_pred = y_pred.values
-
-    rmse = np.sqrt(mean_squared_error(y_true, y_pred))
-    mae = mean_absolute_error(y_true, y_pred)
-
-    # Avoid division by zero for MAPE
-    mask = y_true != 0
-    if np.any(mask):
-        mape = np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])) * 100
-    else:
-        mape = 0.0
-
-    return {"RMSE": rmse, "MAE": mae, "MAPE": mape}
+    result = evaluate_predictions(
+        split,
+        y_pred,
+        mase_period=mase_period,
+    )
+    status = (
+        ForecastFitStatus.OK
+        if result.rmse is not None and result.mae is not None
+        else ForecastFitStatus.NOT_ESTIMABLE
+    )
+    return ForecastAdapterResult(
+        status=status,
+        forecast=y_pred.astype(float).tolist(),
+        metrics=result,
+        failure_reason=(
+            None if status == ForecastFitStatus.OK else "Baseline metrics unavailable."
+        ),
+        fitted_configuration={"model": name, "mase_period": mase_period},
+    )
 
 
 def run_baseline_models(
     series: pd.Series,
     forecast_horizon: int,
     seasonal_period: int,
-) -> dict[str, dict[str, float]]:
+) -> dict[str, ForecastAdapterResult]:
     """Compute metrics for all baseline models.
 
     Args:
@@ -65,8 +80,8 @@ def run_baseline_models(
         A dictionary mapping baseline model names to their error metrics.
     """
     # Use an 80/20 split, ensuring test set is at least the horizon length
-    split_point = max(int(len(series) * 0.8), len(series) - forecast_horizon)
-    train, test = series[:split_point], series[split_point:]
+    holdout = make_terminal_holdout(series, forecast_horizon)
+    train, test = holdout.train, holdout.test
 
     # Ensure test set matches horizon if it's longer
     if len(test) > forecast_horizon:
@@ -83,35 +98,35 @@ def run_baseline_models(
     # 1. Naive Forecast
     last_val = train.iloc[-1]
     naive_pred = pd.Series(np.repeat(last_val, h), index=test.index)
-    metrics["Naive"] = _calculate_metrics(test, naive_pred)
+    metrics["Naive"] = _evaluate_baseline("Naive", naive_pred, holdout, seasonal_period)
 
     # 2. Seasonal Naive Forecast
     if len(train) >= seasonal_period:
         final_season = train.iloc[-seasonal_period:]
         snaive_forecast = [final_season.iloc[i % seasonal_period] for i in range(h)]
         snaive_pred = pd.Series(snaive_forecast, index=test.index)
-        metrics["Seasonal Naive"] = _calculate_metrics(test, snaive_pred)
+        metrics["Seasonal Naive"] = _evaluate_baseline(
+            "Seasonal Naive", snaive_pred, holdout, seasonal_period
+        )
 
     # 3. Mean Forecast
     mean_val = train.mean()
     mean_pred = pd.Series(np.repeat(mean_val, h), index=test.index)
-    metrics["Mean Forecast"] = _calculate_metrics(test, mean_pred)
+    metrics["Mean Forecast"] = _evaluate_baseline(
+        "Mean Forecast", mean_pred, holdout, seasonal_period
+    )
 
     # 4. Drift Forecast
     if len(train) > 1:
         drift = (train.iloc[-1] - train.iloc[0]) / (len(train) - 1)
         drift_pred_values = [train.iloc[-1] + i * drift for i in range(1, h + 1)]
         drift_pred = pd.Series(drift_pred_values, index=test.index)
-        metrics["Drift"] = _calculate_metrics(test, drift_pred)
+        metrics["Drift"] = _evaluate_baseline(
+            "Drift", drift_pred, holdout, seasonal_period
+        )
 
     # Log the results for traceability
-    for model, m in metrics.items():
-        logger.info(
-            "Baseline model %s -> MAE: %.4f, RMSE: %.4f, MAPE: %.2f%%",
-            model,
-            m["MAE"],
-            m["RMSE"],
-            m["MAPE"],
-        )
+    for model, result in metrics.items():
+        logger.info("Baseline model %s -> metrics=%s", model, result.metrics)
 
     return metrics

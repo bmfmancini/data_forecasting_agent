@@ -12,12 +12,14 @@ from forecasting.contracts import (
     ForecastFitStatus,
     ForecastMetrics,
 )
-from forecasting.metrics import calculate_forecast_metrics
+from forecasting.evaluation import evaluate_predictions, make_terminal_holdout
 
 logger = get_logger(__name__)
 
 
-def fit_holt_winters(series: pd.Series, forecast_horizon: int) -> ForecastAdapterResult:
+def fit_holt_winters(
+    series: pd.Series, forecast_horizon: int, mase_period: int = 1
+) -> ForecastAdapterResult:
     """Fit Holt-Winters Triple Exponential Smoothing and return a typed result.
 
     The adapter selects additive versus multiplicative seasonality on the
@@ -35,15 +37,17 @@ def fit_holt_winters(series: pd.Series, forecast_horizon: int) -> ForecastAdapte
     """
     series = series.dropna().astype(float)
     seasonal_period = _infer_seasonal_period(series)
-    use_seasonal = len(series) >= 2 * seasonal_period
 
     trend = "add"
     seasonal: str | None = None
 
     # Split data into train and test sets for metrics calculation and
     # model-form selection (additive vs multiplicative seasonal).
-    split = max(int(len(series) * 0.8), len(series) - forecast_horizon)
-    train, test = series.iloc[:split], series.iloc[split:]
+    holdout = make_terminal_holdout(series, forecast_horizon)
+    train, test = holdout.train, holdout.test
+    # Seasonal model-form selection is valid only when the training sample,
+    # not merely the full series, contains enough cycles.
+    use_seasonal = len(train) >= 2 * seasonal_period
 
     # ── Select seasonal type on the *training* split only ────────────────────
     if use_seasonal:
@@ -83,11 +87,10 @@ def fit_holt_winters(series: pd.Series, forecast_horizon: int) -> ForecastAdapte
             seasonal_periods=seasonal_period if use_seasonal else None,
         ).fit(optimized=True)
         test_fc = train_fit.forecast(len(test))
-        metrics = calculate_forecast_metrics(
-            test.values,
+        metrics = evaluate_predictions(
+            holdout,
             test_fc.values,
-            training=train.values,
-            mase_period=seasonal_period if use_seasonal else 1,
+            mase_period=mase_period,
         )
     except Exception as exc:  # pylint: disable=broad-except
         logger.warning("Holt-Winters metrics failed: %s", exc)

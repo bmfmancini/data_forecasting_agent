@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+import math
 
 from pydantic import BaseModel, Field
 
@@ -25,6 +26,7 @@ class ForecastMetrics(BaseModel):
     wape: float | None = None
     mase: float | None = None
     n_evaluated: int = Field(default=0, ge=0)
+    n_missing: int = Field(default=0, ge=0)
     unavailable_reasons: dict[str, str] = Field(default_factory=dict)
 
 
@@ -45,6 +47,6 @@ class ForecastAdapterResult(BaseModel):
     def is_rankable(self) -> bool:
         """Return whether this result has valid point-error evidence."""
         return self.status == ForecastFitStatus.OK and all(
-            value is not None
-            for value in (self.metrics.rmse, self.metrics.mae, self.metrics.mape)
+            value is not None and math.isfinite(value)
+            for value in (self.metrics.rmse, self.metrics.mae)
         )

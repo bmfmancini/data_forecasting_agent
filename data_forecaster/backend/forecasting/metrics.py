@@ -77,6 +77,7 @@ def calculate_forecast_metrics(
             }
         )
     finite = np.isfinite(y_true) & np.isfinite(y_pred)
+    n_missing = int(y_true.size - np.count_nonzero(finite))
     y_true = y_true[finite]
     y_pred = y_pred[finite]
     if y_true.size == 0:
@@ -126,5 +127,6 @@ def calculate_forecast_metrics(
         wape=wape,
         mase=mase,
         n_evaluated=int(y_true.size),
+        n_missing=n_missing,
         unavailable_reasons=reasons,
     )

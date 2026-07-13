@@ -10,16 +10,14 @@ from forecasting.contracts import (
     ForecastFitStatus,
     ForecastMetrics,
 )
-from forecasting.metrics import calculate_holdout_metrics
+from forecasting.evaluation import evaluate_predictions, make_terminal_holdout
 from forecasting.pmdarima_compat import import_pmdarima
 
 logger = get_logger(__name__)
 pm = import_pmdarima()
 
 
-def _calculate_metrics(
-    train: pd.Series, test: pd.Series, model, seasonal_period: int
-) -> ForecastMetrics:
+def _calculate_metrics(holdout, model, mase_period: int) -> ForecastMetrics:
     """Calculate holdout metrics for the given SARIMA model.
 
     Args:
@@ -32,11 +30,13 @@ def _calculate_metrics(
         Typed metrics. Unavailable evidence is never encoded as zero.
     """
     try:
-        return calculate_holdout_metrics(
-            test,
-            model,
-            training=train,
-            mase_period=seasonal_period if seasonal_period > 1 else 1,
+        predictions, _ = model.predict(
+            n_periods=len(holdout.test), return_conf_int=True
+        )
+        return evaluate_predictions(
+            holdout,
+            predictions,
+            mase_period=mase_period,
         )
     except Exception as exc:  # pylint: disable=broad-except
         logger.warning("SARIMA metrics calculation failed: %s", exc)
@@ -47,6 +47,7 @@ def fit_sarima(
     series: pd.Series,
     forecast_horizon: int,
     seasonal_period: int = 12,
+    mase_period: int = 1,
 ) -> ForecastAdapterResult:
     """Fit SARIMA via pmdarima auto_arima and return a typed adapter result.
 
@@ -80,8 +81,8 @@ def fit_sarima(
     use_seasonal = seasonal_period > 1
 
     # Split data into train and test sets for metrics calculation
-    split = max(int(len(series) * 0.8), len(series) - forecast_horizon)
-    train, test = series.iloc[:split], series.iloc[split:]
+    holdout = make_terminal_holdout(series, forecast_horizon)
+    train, test = holdout.train, holdout.test
 
     train_model = None
     metrics = ForecastMetrics(
@@ -103,7 +104,7 @@ def fit_sarima(
             suppress_warnings=True,
             information_criterion="aic",
         )
-        metrics = _calculate_metrics(train, test, train_model, seasonal_period)
+        metrics = _calculate_metrics(holdout, train_model, mase_period)
     except Exception as exc:  # pylint: disable=broad-except
         logger.warning("SARIMA training failed: %s", exc)
 

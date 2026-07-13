@@ -15,7 +15,12 @@ from forecasting.ewma_model import fit_ewma
 from forecasting.holt_winters import fit_holt_winters
 from forecasting.sarima_model import fit_sarima
 from prompts.forecasting_prompt import FORECASTING_PROMPT
-from schemas import ForecastResult, ModelSelectionResult, StatisticalResult
+from schemas import (
+    ForecastCandidateResult,
+    ForecastResult,
+    ModelSelectionResult,
+    StatisticalResult,
+)
 from utils.statistical_analysis import analyze_residuals
 from utils.token_tracking import estimate_input_text, extract_token_usage
 
@@ -25,13 +30,13 @@ logger = get_logger(__name__)
 def _has_required_metrics(result: ForecastAdapterResult) -> bool:
     """Return whether required comparison metrics are present and finite.
 
-    A model is rankable only when ``status == ok`` and the core point-error
-    metrics (RMSE, MAE, MAPE) are all present and finite. Finiteness alone
-    is insufficient — a degraded or failed model is never rankable.
+    A model is rankable only when ``status == ok`` and RMSE/MAE are present
+    and finite. MAPE is deliberately optional because it is undefined for
+    holdouts containing zero actual values.
     """
     if result.status != ForecastFitStatus.OK:
         return False
-    for metric in (result.metrics.rmse, result.metrics.mae, result.metrics.mape):
+    for metric in (result.metrics.rmse, result.metrics.mae):
         if metric is None or not np.isfinite(metric):
             return False
     return True
@@ -79,15 +84,24 @@ def run_forecasting_agent(
 
     # ── Fit all models directly in Python ─────────────────────────────────────
     for name, fn, kwargs in [
-        ("Holt-Winters", fit_holt_winters, {}),
-        ("ARIMA", fit_arima, {}),
-        ("SARIMA", fit_sarima, {"seasonal_period": seasonal_period}),
-        ("EWMA", fit_ewma, {}),
+        ("Holt-Winters", fit_holt_winters, {"mase_period": seasonal_period}),
+        ("ARIMA", fit_arima, {"mase_period": seasonal_period}),
+        (
+            "SARIMA",
+            fit_sarima,
+            {"seasonal_period": seasonal_period, "mase_period": seasonal_period},
+        ),
+        ("EWMA", fit_ewma, {"mase_period": seasonal_period}),
     ]:
         try:
             results_store[name] = fn(series, forecast_horizon, **kwargs)
         except Exception as exc:  # pylint: disable=broad-except
             logger.warning("%s fitting failed: %s", name, exc)
+            results_store[name] = ForecastAdapterResult(
+                status=ForecastFitStatus.FAILED,
+                failure_reason=str(exc),
+                fitted_configuration={"model": name},
+            )
 
     comparison_summary = "Model comparison metrics (lower is better):\n"
     for name, res in results_store.items():
@@ -106,7 +120,7 @@ def run_forecasting_agent(
         )
         comparison_summary += (
             f"- {name}: RMSE={res.metrics.rmse:.4f}, MAE={res.metrics.mae:.4f}, "
-            f"MAPE={res.metrics.mape:.2f}%{wape_text}{mase_text}\n"
+            f"MAPE={_format_metric(res.metrics.mape, '.2f')}%{wape_text}{mase_text}\n"
         )
 
     # ── LLM Setup ────────────────────────────────────────────────────────────
@@ -150,14 +164,23 @@ def run_forecasting_agent(
         # Try to fit the selected model directly
         try:
             if selected == "Holt-Winters":
-                results_store[selected] = fit_holt_winters(series, forecast_horizon)
+                results_store[selected] = fit_holt_winters(
+                    series, forecast_horizon, mase_period=seasonal_period
+                )
             elif selected == "ARIMA":
-                results_store[selected] = fit_arima(series, forecast_horizon)
+                results_store[selected] = fit_arima(
+                    series, forecast_horizon, mase_period=seasonal_period
+                )
             elif selected == "EWMA":
-                results_store[selected] = fit_ewma(series, forecast_horizon)
+                results_store[selected] = fit_ewma(
+                    series, forecast_horizon, mase_period=seasonal_period
+                )
             else:
                 results_store[selected] = fit_sarima(
-                    series, forecast_horizon, seasonal_period
+                    series,
+                    forecast_horizon,
+                    seasonal_period,
+                    mase_period=seasonal_period,
                 )
         except Exception as exc:  # pylint: disable=broad-except
             logger.error("Could not fit selected model %s: %s", selected, exc)
@@ -211,9 +234,9 @@ def run_forecasting_agent(
         if not _has_required_metrics(r):
             continue
         all_metrics[name] = {
-            "RMSE": r.metrics.rmse or float("nan"),
-            "MAE": r.metrics.mae or float("nan"),
-            "MAPE": r.metrics.mape or float("nan"),
+            "RMSE": r.metrics.rmse if r.metrics.rmse is not None else float("nan"),
+            "MAE": r.metrics.mae if r.metrics.mae is not None else float("nan"),
+            "MAPE": r.metrics.mape if r.metrics.mape is not None else float("nan"),
             "WAPE": r.metrics.wape if r.metrics.wape is not None else float("nan"),
             "MASE": r.metrics.mase if r.metrics.mase is not None else float("nan"),
         }
@@ -246,6 +269,24 @@ def run_forecasting_agent(
         wape=res.metrics.wape,
         mase=res.metrics.mase,
         residual_diagnostics=residual_diagnostics,
+        candidate_results=[
+            ForecastCandidateResult(
+                model=name,
+                status=candidate.status,
+                failure_reason=candidate.failure_reason,
+                is_fallback=candidate.is_fallback,
+                rmse=candidate.metrics.rmse,
+                mae=candidate.metrics.mae,
+                mape=candidate.metrics.mape,
+                wape=candidate.metrics.wape,
+                mase=candidate.metrics.mase,
+                n_evaluated=candidate.metrics.n_evaluated,
+                n_missing=candidate.metrics.n_missing,
+                fitted_configuration=candidate.fitted_configuration,
+                warnings=candidate.warnings,
+            )
+            for name, candidate in results_store.items()
+        ],
         reasoning_steps=reasoning_steps,
         token_usage=token_usage,
     )

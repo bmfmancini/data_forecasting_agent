@@ -188,7 +188,14 @@ def plot_model_comparison(all_metrics: dict[str, dict[str, float]]) -> dict[str,
 
     fig = go.Figure()
     for metric, color in zip(metrics, colors):
-        values = [all_metrics[m].get(metric, 0) for m in models]
+        values = [
+            (
+                all_metrics[m].get(metric)
+                if all_metrics[m].get(metric) is not None
+                else float("nan")
+            )
+            for m in models
+        ]
         fig.add_trace(go.Bar(name=metric, x=models, y=values, marker_color=color))
 
     fig.update_layout(

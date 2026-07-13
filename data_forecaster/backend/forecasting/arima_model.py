@@ -10,14 +10,14 @@ from forecasting.contracts import (
     ForecastFitStatus,
     ForecastMetrics,
 )
-from forecasting.metrics import calculate_holdout_metrics
+from forecasting.evaluation import evaluate_predictions, make_terminal_holdout
 from forecasting.pmdarima_compat import import_pmdarima
 
 logger = get_logger(__name__)
 pm = import_pmdarima()
 
 
-def _calculate_metrics(train: pd.Series, test: pd.Series, model) -> ForecastMetrics:
+def _calculate_metrics(holdout, model, mase_period: int) -> ForecastMetrics:
     """Calculate RMSE, MAE, and MAPE for the given model and test data.
 
     Args:
@@ -29,13 +29,18 @@ def _calculate_metrics(train: pd.Series, test: pd.Series, model) -> ForecastMetr
         Typed metrics. Unavailable evidence is never encoded as zero.
     """
     try:
-        return calculate_holdout_metrics(test, model, training=train, mase_period=1)
+        predictions, _ = model.predict(
+            n_periods=len(holdout.test), return_conf_int=True
+        )
+        return evaluate_predictions(holdout, predictions, mase_period=mase_period)
     except Exception as exc:  # pylint: disable=broad-except
         logger.warning("ARIMA metrics calculation failed: %s", exc)
         return ForecastMetrics(unavailable_reasons={"all": str(exc)})
 
 
-def fit_arima(series: pd.Series, forecast_horizon: int) -> ForecastAdapterResult:
+def fit_arima(
+    series: pd.Series, forecast_horizon: int, mase_period: int = 1
+) -> ForecastAdapterResult:
     """Fit ARIMA via pmdarima auto_arima and return a typed adapter result.
 
     The adapter discovers an order on a training split, evaluates holdout
@@ -75,14 +80,8 @@ def fit_arima(series: pd.Series, forecast_horizon: int) -> ForecastAdapterResult
         )
 
     # Split data into train and test sets for metrics calculation
-    split = max(
-        1,
-        min(
-            len(series) - 1,
-            max(int(len(series) * 0.8), len(series) - forecast_horizon),
-        ),
-    )
-    train, test = series.iloc[:split], series.iloc[split:]
+    holdout = make_terminal_holdout(series, forecast_horizon)
+    train, test = holdout.train, holdout.test
 
     train_model = None
     metrics = ForecastMetrics(
@@ -101,7 +100,7 @@ def fit_arima(series: pd.Series, forecast_horizon: int) -> ForecastAdapterResult
                 suppress_warnings=True,
                 information_criterion="aic",
             )
-            metrics = _calculate_metrics(train, test, train_model)
+            metrics = _calculate_metrics(holdout, train_model, mase_period)
         except Exception as exc:  # pylint: disable=broad-except
             logger.warning("ARIMA training failed: %s", exc)
 

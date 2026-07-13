@@ -154,11 +154,29 @@ class ResidualDiagnostics(BaseModel):
     disabled_tests: list[str] = Field(default_factory=list)
 
 
+class ForecastCandidateResult(BaseModel):
+    """Fit status and evaluation evidence for one candidate model."""
+
+    model: str
+    status: ForecastFitStatus
+    failure_reason: str | None = None
+    is_fallback: bool = False
+    rmse: float | None = None
+    mae: float | None = None
+    mape: float | None = None
+    wape: float | None = None
+    mase: float | None = None
+    n_evaluated: int = 0
+    n_missing: int = 0
+    fitted_configuration: dict[str, Any] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+
+
 class ForecastResult(BaseModel):
     """Output of the forecasting agent for the selected model."""
 
     model_used: str
-    status: ForecastFitStatus = ForecastFitStatus.OK
+    status: ForecastFitStatus
     failure_reason: str | None = None
     is_fallback: bool = False
     forecast: list[float]
@@ -171,6 +189,7 @@ class ForecastResult(BaseModel):
     wape: float | None = None
     mase: float | None = None
     residual_diagnostics: ResidualDiagnostics | None = None
+    candidate_results: list[ForecastCandidateResult] = Field(default_factory=list)
     reasoning_steps: list[dict[str, Any]] = Field(default_factory=list)
     token_usage: dict[str, Any] = Field(default_factory=dict)
 

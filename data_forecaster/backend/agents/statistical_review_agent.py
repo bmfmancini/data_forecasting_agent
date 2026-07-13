@@ -12,6 +12,7 @@ on :class:`AnalysisResponse`.
 from __future__ import annotations
 
 import re
+import math
 from typing import Any
 
 from core.llm_factory import get_llm
@@ -34,6 +35,11 @@ _FLAG_PATTERN = re.compile(
     r"(.*?)\s*\|\s*Recommendation:\s*(.*)",
     re.IGNORECASE,
 )
+
+
+def _format_optional_metric(value: float | None, fmt: str) -> str:
+    """Format a nullable metric for evidence passed to the reviewer."""
+    return "not available" if value is None else format(value, fmt)
 
 
 def _check_seasonality_mismatch(
@@ -238,12 +244,18 @@ def _check_suboptimal_rmse(
     """
     if not all_metrics or selected not in all_metrics:
         return None
-    selected_rmse = all_metrics[selected].get("RMSE", float("inf"))
-    best_model = min(
-        all_metrics,
-        key=lambda m: all_metrics[m].get("RMSE", float("inf")),
-    )
-    best_rmse = all_metrics[best_model].get("RMSE", float("inf"))
+    selected_rmse = all_metrics[selected].get("RMSE")
+    if selected_rmse is None or not math.isfinite(selected_rmse):
+        return None
+    comparable = {
+        name: metrics["RMSE"]
+        for name, metrics in all_metrics.items()
+        if metrics.get("RMSE") is not None and math.isfinite(metrics["RMSE"])
+    }
+    if not comparable:
+        return None
+    best_model = min(comparable, key=comparable.get)
+    best_rmse = comparable[best_model]
     if best_model != selected and best_rmse > 0:
         ratio = selected_rmse / best_rmse
         if ratio > 1.5:
@@ -439,11 +451,21 @@ def _build_forecast_text(forecast_result: ForecastResult) -> str:
             f"Disabled: {diag.disabled_tests}"
         )
 
+    candidate_text = (
+        "; ".join(
+            f"{candidate.model}={candidate.status.value}"
+            + (f" ({candidate.failure_reason})" if candidate.failure_reason else "")
+            for candidate in forecast_result.candidate_results
+        )
+        or "not available"
+    )
+
     return (
         f"- Model used: {forecast_result.model_used}\n"
-        f"- RMSE: {forecast_result.rmse:.4f}\n"
-        f"- MAE: {forecast_result.mae:.4f}\n"
-        f"- MAPE: {forecast_result.mape:.2f}%\n"
+        f"- RMSE: {_format_optional_metric(forecast_result.rmse, '.4f')}\n"
+        f"- MAE: {_format_optional_metric(forecast_result.mae, '.4f')}\n"
+        f"- MAPE: {_format_optional_metric(forecast_result.mape, '.2f')}%\n"
+        f"- Candidate fit statuses: {candidate_text}\n"
         f"- Forecast sample (first 10): {forecast_sample}\n"
         f"- Residual Diagnostics: {residual_text}\n"
         f"- Forecast dates: "
@@ -452,15 +474,15 @@ def _build_forecast_text(forecast_result: ForecastResult) -> str:
 
 
 def _build_all_metrics_text(
-    all_metrics: dict[str, dict[str, float]],
+    all_metrics: dict[str, dict[str, float | None]],
 ) -> str:
     """Build a text summary of all model metrics for the LLM prompt."""
     lines = []
     for name, metrics in all_metrics.items():
         lines.append(
-            f"- {name}: RMSE={metrics.get('RMSE', 0):.4f}, "
-            f"MAE={metrics.get('MAE', 0):.4f}, "
-            f"MAPE={metrics.get('MAPE', 0):.2f}%"
+            f"- {name}: RMSE={_format_optional_metric(metrics.get('RMSE'), '.4f')}, "
+            f"MAE={_format_optional_metric(metrics.get('MAE'), '.4f')}, "
+            f"MAPE={_format_optional_metric(metrics.get('MAPE'), '.2f')}%"
         )
     return "\n".join(lines) if lines else "No metrics available."
 

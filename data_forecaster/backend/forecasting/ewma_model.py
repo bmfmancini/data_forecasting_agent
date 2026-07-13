@@ -8,8 +8,6 @@ flat (the final estimated level), which is the correct SES behaviour.
 
 from __future__ import annotations
 
-from itertools import product
-
 import numpy as np
 import pandas as pd
 
@@ -19,7 +17,7 @@ from forecasting.contracts import (
     ForecastFitStatus,
     ForecastMetrics,
 )
-from forecasting.metrics import calculate_forecast_metrics
+from forecasting.evaluation import evaluate_predictions, make_terminal_holdout
 
 logger = get_logger(__name__)
 
@@ -43,8 +41,13 @@ def _estimate_alpha(train: pd.Series) -> float:
     best_alpha = 0.3
     best_sse = float("inf")
     for alpha in _ALPHA_GRID:
-        smoothed = train.ewm(alpha=float(alpha), adjust=False).mean()
-        sse = float(np.sum((train - smoothed) ** 2))
+        # Compare y[t] with the level available at t-1. Comparing with the
+        # contemporaneous smoothed value leaks y[t] into its own prediction
+        # and degenerately favors alpha values near one.
+        levels = train.ewm(alpha=float(alpha), adjust=False).mean()
+        one_step_forecast = levels.shift(1)
+        errors = train.iloc[1:] - one_step_forecast.iloc[1:]
+        sse = float(np.sum(errors**2))
         if sse < best_sse:
             best_sse = sse
             best_alpha = float(alpha)
@@ -52,7 +55,10 @@ def _estimate_alpha(train: pd.Series) -> float:
 
 
 def fit_ewma(
-    series: pd.Series, forecast_horizon: int, alpha: float | None = None
+    series: pd.Series,
+    forecast_horizon: int,
+    alpha: float | None = None,
+    mase_period: int = 1,
 ) -> ForecastAdapterResult:
     """Fit SES/EWMA and return a typed adapter result.
 
@@ -94,14 +100,8 @@ def fit_ewma(
         )
 
     # Split data into train and test sets for metrics calculation.
-    split = max(
-        1,
-        min(
-            len(series) - 1,
-            max(int(len(series) * 0.8), len(series) - forecast_horizon),
-        ),
-    )
-    train, test = series.iloc[:split], series.iloc[split:]
+    holdout = make_terminal_holdout(series, forecast_horizon)
+    train, test = holdout.train, holdout.test
 
     estimated_alpha = alpha if alpha is not None else _estimate_alpha(train)
 
@@ -110,11 +110,10 @@ def fit_ewma(
         train_ewma = train.ewm(alpha=estimated_alpha, adjust=False).mean()
         last_train_level = float(train_ewma.iloc[-1])
         test_fc = np.full(len(test), last_train_level)
-        metrics = calculate_forecast_metrics(
-            test.values,
+        metrics = evaluate_predictions(
+            holdout,
             test_fc,
-            training=train.values,
-            mase_period=1,
+            mase_period=mase_period,
         )
     except Exception as exc:  # pylint: disable=broad-except
         logger.warning("EWMA metrics calculation failed: %s", exc)

@@ -25,6 +25,7 @@ from report.renderers import HTMLRenderer, MarkdownRenderer
 from schemas import (
     AnalysisResponse,
     ForecastResult,
+    ForecastCandidateResult,
     ModelSelectionResult,
     StatisticalResult,
     StatisticalReviewResult,
@@ -372,7 +373,40 @@ def _run_forecast_stages(
     progress(75, "Forecast complete")
 
     logger.info("Running baseline model comparisons")
-    all_metrics.update(run_baseline_models(series, forecast_horizon, seasonal_period))
+    baseline_results = run_baseline_models(series, forecast_horizon, seasonal_period)
+    for name, result in baseline_results.items():
+        all_metrics[name] = {
+            "RMSE": result.metrics.rmse,
+            "MAE": result.metrics.mae,
+            "MAPE": result.metrics.mape,
+            "WAPE": result.metrics.wape,
+            "MASE": result.metrics.mase,
+        }
+    forecast_result = forecast_result.model_copy(
+        update={
+            "candidate_results": [
+                *forecast_result.candidate_results,
+                *[
+                    ForecastCandidateResult(
+                        model=name,
+                        status=result.status,
+                        failure_reason=result.failure_reason,
+                        is_fallback=result.is_fallback,
+                        rmse=result.metrics.rmse,
+                        mae=result.metrics.mae,
+                        mape=result.metrics.mape,
+                        wape=result.metrics.wape,
+                        mase=result.metrics.mase,
+                        n_evaluated=result.metrics.n_evaluated,
+                        n_missing=result.metrics.n_missing,
+                        fitted_configuration=result.fitted_configuration,
+                        warnings=result.warnings,
+                    )
+                    for name, result in baseline_results.items()
+                ],
+            ]
+        }
+    )
     logger.info("Baseline models complete")
 
     statistical_review = _run_statistical_review(

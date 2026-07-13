@@ -38,6 +38,7 @@ from report.models import (
     ReportMetadata,
     Risk,
     StatisticalAudit,
+    format_metric,
 )
 from report.dashboard import build_dashboard
 from report.rules import (
@@ -549,11 +550,27 @@ class ExecutiveReportBuilder:
             entries.append(
                 ModelComparisonEntry(
                     model=name,
-                    rmse=round(rmse, 4) if rmse is not None and np.isfinite(rmse) else None,
+                    rmse=(
+                        round(rmse, 4)
+                        if rmse is not None and np.isfinite(rmse)
+                        else None
+                    ),
                     mae=round(mae, 4) if mae is not None and np.isfinite(mae) else None,
-                    mape=round(mape, 2) if mape is not None and np.isfinite(mape) else None,
-                    wape=round(wape * 100, 2) if wape is not None and np.isfinite(wape) else None,
-                    mase=round(mase, 4) if mase is not None and np.isfinite(mase) else None,
+                    mape=(
+                        round(mape, 2)
+                        if mape is not None and np.isfinite(mape)
+                        else None
+                    ),
+                    wape=(
+                        round(wape * 100, 2)
+                        if wape is not None and np.isfinite(wape)
+                        else None
+                    ),
+                    mase=(
+                        round(mase, 4)
+                        if mase is not None and np.isfinite(mase)
+                        else None
+                    ),
                     selected=(name == selected),
                     rejected_reason=(
                         rejection_map.get(name) if name != selected else None
@@ -618,7 +635,11 @@ class ExecutiveReportBuilder:
                 supporting_evidence=[
                     EvidenceRef(
                         metric="MAPE",
-                        value=f"{forecast.mape:.2f}%",
+                        value=(
+                            f"{format_metric(forecast.mape, '.2f')}%"
+                            if forecast.mape is not None
+                            else "not available"
+                        ),
                         source_section="Forecast Reliability",
                     ),
                     EvidenceRef(
@@ -779,7 +800,7 @@ class ExecutiveReportBuilder:
         risks: list[Risk] = []
 
         # Risk: High forecast uncertainty
-        if forecast.mape > 20:
+        if forecast.mape is not None and forecast.mape > 20:
             risks.append(
                 Risk(
                     category="Model",
@@ -799,7 +820,7 @@ class ExecutiveReportBuilder:
                     ),
                     evidence=[
                         f"MAPE: {forecast.mape:.2f}%",
-                        f"RMSE: {forecast.rmse:.4f}",
+                        f"RMSE: {format_metric(forecast.rmse, '.4f')}",
                     ],
                     severity="High",
                 )
@@ -1109,7 +1130,7 @@ class ExecutiveReportBuilder:
                 )
             )
 
-        if forecast.mape < 10:
+        if forecast.mape is not None and forecast.mape < 10:
             items.append(
                 ExplainabilityItem(
                     finding="Low validation error",
@@ -1257,7 +1278,7 @@ class ExecutiveReportBuilder:
             primary_risk = _REVIEW_CRITICAL_MSG
         elif data_quality.rating == "Poor":
             primary_risk = "Poor data quality may compromise reliability"
-        elif forecast.mape > 20:
+        elif forecast.mape is not None and forecast.mape > 20:
             primary_risk = "High forecast uncertainty"
         else:
             primary_risk = "Forecast accuracy may decline over longer horizons"
