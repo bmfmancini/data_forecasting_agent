@@ -116,13 +116,19 @@ def fit_holt_winters(
         )
     except Exception as exc:  # pylint: disable=broad-except
         logger.warning("Holt-Winters model selection failed: %s", exc)
+        last_val = float(series.iloc[-1]) if not series.empty else 0.0
         return ForecastAdapterResult(
             status=ForecastFitStatus.NOT_ESTIMABLE,
             failure_reason=str(exc),
+            is_fallback=True,
+            forecast=[last_val] * forecast_horizon,
+            lower_ci=[last_val] * forecast_horizon,
+            upper_ci=[last_val] * forecast_horizon,
             metrics=ForecastMetrics(unavailable_reasons={"all": str(exc)}),
             fitted_configuration={
                 "model": "Holt-Winters",
                 "requested_seasonal_period": seasonal_period,
+                "fallback": "persistence",
             },
         )
 

@@ -92,7 +92,7 @@ def test_seasonal_naive_cycles_final_season_for_long_horizon() -> None:
 
     metrics = run_baseline_models(series, forecast_horizon=3, seasonal_period=2)
 
-    assert metrics["Seasonal Naive"]["MAE"] == pytest.approx(0.0)
+    assert metrics["Seasonal Naive"].metrics.mae == pytest.approx(0.0)
 
 
 def test_analyze_residuals_bounds_ljung_box_lag_for_short_series() -> None:
