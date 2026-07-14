@@ -440,10 +440,15 @@ def _check_invented_metrics(
             evidence_rmse_values.add(round(float(rmse), 4))
     for num_str in numbers:
         try:
-            val = round(float(num_str), 4)
-            if evidence_rmse_values and val not in evidence_rmse_values:
+            val = float(num_str)
+            matches_evidence = any(
+                math.isclose(val, evidence_value, rel_tol=1e-3, abs_tol=5e-3)
+                for evidence_value in evidence_rmse_values
+            )
+            if evidence_rmse_values and not matches_evidence:
                 warnings_list.append(
-                    f"LLM cited RMSE={val} which does not match any " f"evidence value."
+                    f"LLM cited RMSE={val:g} which does not match any "
+                    "evidence value within reporting tolerance."
                 )
         except ValueError:
             pass

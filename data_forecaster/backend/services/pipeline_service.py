@@ -15,7 +15,10 @@ import pandas as pd
 
 from agents.data_validation_agent import run_validation_agent
 from agents.forecasting_agent import run_forecasting_agent
-from agents.model_selection_agent import run_model_selection_agent
+from agents.model_selection_agent import (
+    build_model_rejection_reasons,
+    run_model_selection_agent,
+)
 from agents.report_generation_agent import run_report_agent
 from agents.statistical_analysis_agent import run_statistical_agent
 from agents.statistical_review_agent import run_statistical_review_agent
@@ -79,6 +82,32 @@ class ForecastStageOutput:
     forecast: ForecastResult
     statistical_review: StatisticalReviewResult
     all_metrics: dict[str, dict[str, float]]
+
+
+def _deterministic_selection_reasoning(
+    selected_model: str,
+    all_metrics: dict[str, dict[str, float]],
+    decision_loss: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Build final-model reasoning for user-facing selection surfaces."""
+    metric = str(decision_loss.get("resolved", "mase")).upper()
+    selected_metrics = all_metrics.get(selected_model, {})
+    metric_value = selected_metrics.get(metric)
+    observation = f"Selected {selected_model} using rolling-origin {metric}"
+    if metric_value is not None:
+        observation += f"={metric_value:.4f} (lower is better)"
+    winners = decision_loss.get("winners_by_metric", {})
+    if winners:
+        observation += f". Sensitivity winners: {winners}."
+    return [
+        {
+            "thought": (
+                "Applied the final deterministic ranking to common "
+                "rolling-origin evidence."
+            ),
+            "observation": observation,
+        }
+    ]
 
 
 @dataclass(frozen=True)
@@ -164,6 +193,9 @@ def run_pipeline(
     statistical_stage = _run_statistical_stages(
         prepared, date_col, value_col, preflight_options, _progress
     )
+    forecast_options = dict(preflight_options or {})
+    if user_prompt:
+        forecast_options["user_context"] = user_prompt
     forecast_stage = _run_forecast_stages(
         statistical_stage.forecasting_series,
         statistical_stage.statistical,
@@ -172,7 +204,7 @@ def run_pipeline(
         prepared.disabled_statistical_tests,
         forecast_horizon,
         forced_model,
-        preflight_options,
+        forecast_options,
         _progress,
     )
     report_stage = _run_report_stage(
@@ -346,11 +378,14 @@ def _apply_agent_remediation(
         and "change_points" not in disabled_statistical_tests
     ):
         logger.info(
-            "Agent detected significant change points. Adding note to analysis."
+            "Agent identified candidate change points. Adding note to analysis."
         )
         stat_result.summary += (
-            "\n\n(Note: Change point analysis detected structural breaks. "
-            "Consider segmenting the data for improved forecasting accuracy.)"
+            "\n\n(Note: Change-point analysis identified candidate breaks. "
+            "Validate candidate break dates, effect sizes, and persistence before "
+            "choosing a response. Only if a durable break is confirmed should "
+            "intervention terms, recency weighting, segmentation, or "
+            "regime-specific models be compared.)"
         )
     return remediated
 
@@ -378,25 +413,57 @@ def _run_forecast_stages(
         forecast_horizon,
         freq,
         disabled_tests=disabled_statistical_tests,
-        loss_preference=(preflight_options or {}).get("loss_metric", "mase"),
+        loss_preference=(preflight_options or {}).get("loss_metric", "auto"),
         preprocessing_options=preflight_options,
     )
     if model_selection.selection_method != "forced":
+        decision_loss = forecast_result.validation_design.get("decision_loss", {})
+        resolved_loss = str(decision_loss.get("resolved", "mase")).upper()
+        loss_source = decision_loss.get("resolution_source")
+        if loss_source == "llm_recommended":
+            loss_explanation = (
+                f"The forecasting assistant recommended {resolved_loss} from "
+                "the supplied business context."
+            )
+        elif loss_source == "user_selected":
+            loss_explanation = f"The user selected {resolved_loss}."
+        else:
+            loss_explanation = (
+                f"Automatic recommendation was unavailable, so {resolved_loss} "
+                "was used as the safe default."
+            )
+        if decision_loss.get("selection_sensitive"):
+            loss_explanation += (
+                " The preferred model changes under another supported loss "
+                "metric, so this forecast is decision-loss sensitive."
+            )
+        rejection_reasons = build_model_rejection_reasons(
+            forecast_result.model_used,
+            stat_result,
+            all_metrics,
+        )
         model_selection = model_selection.model_copy(
             update={
                 "selected_model": forecast_result.model_used,
                 "selection_method": "deterministic",
                 "explanation": (
                     "Selected from common rolling-origin out-of-sample evidence. "
-                    "LLM narrative did not control the numerical ranking."
+                    "The forecasting assistant could recommend the decision "
+                    "loss when Auto was requested, but deterministic code "
+                    f"controlled the numerical ranking. {loss_explanation}"
                 ),
                 "selection_evidence": {
                     "metric_source": "rolling_origin_backtest",
                     "validation_design": forecast_result.validation_design,
+                    "decision_loss": forecast_result.validation_design.get(
+                        "decision_loss", {}
+                    ),
                     "all_metrics": all_metrics,
                     "forecast_context": {
                         key: (preflight_options or {}).get(key)
                         for key in (
+                            "user_context",
+                            "data_domain",
                             "units",
                             "loss_metric",
                             "interventions",
@@ -409,6 +476,15 @@ def _run_forecast_stages(
                         if (preflight_options or {}).get(key) is not None
                     },
                 },
+                "reasoning_steps": _deterministic_selection_reasoning(
+                    forecast_result.model_used,
+                    all_metrics,
+                    decision_loss,
+                ),
+                "holt_winters_rejected_reason": rejection_reasons["Holt-Winters"],
+                "arima_rejected_reason": rejection_reasons["ARIMA"],
+                "sarima_rejected_reason": rejection_reasons["SARIMA"],
+                "ewma_rejected_reason": rejection_reasons["EWMA"],
             }
         )
     progress(75, "Forecast complete")
@@ -564,6 +640,7 @@ def _maybe_retry_forecast_after_review(
     prev_forecast_usage = dict(forecast_result.token_usage)
     prev_review_usage = dict(statistical_review.token_usage)
     review_feedback = statistical_review.summary
+    retry_exclusions: list[str] = []
 
     if forced_model:
         logger.info(
@@ -581,19 +658,15 @@ def _maybe_retry_forecast_after_review(
         )
     else:
         previous_model = model_selection.selected_model
+        retry_exclusions = [previous_model]
         model_selection = run_model_selection_agent(
             stat_result,
             review_feedback=review_feedback,
             exclude_model=previous_model,
             all_metrics=all_metrics,
-        )
-        model_selection = model_selection.model_copy(
-            update={
-                "explanation": (
-                    f"{model_selection.explanation}\n\n"
-                    f"[Statistical Review Feedback]: {review_feedback}"
-                )
-            }
+            loss_preference=forecast_result.validation_design.get(
+                "decision_loss", {}
+            ).get("resolved", "mase"),
         )
 
     progress(85, "Re-running forecast with revised model…")
@@ -605,9 +678,53 @@ def _maybe_retry_forecast_after_review(
         freq,
         existing_metrics=all_metrics,
         disabled_tests=disabled_statistical_tests,
-        loss_preference=(preflight_options or {}).get("loss_metric", "mase"),
+        loss_preference=(preflight_options or {}).get("loss_metric", "auto"),
         preprocessing_options=preflight_options,
+        exclude_models=retry_exclusions,
     )
+    if not forced_model:
+        retry_selected_model = model_selection.selected_model
+        rejection_reasons = build_model_rejection_reasons(
+            forecast_result.model_used,
+            stat_result,
+            all_metrics,
+            retry_exclusions,
+        )
+        selection_evidence = dict(model_selection.selection_evidence)
+        selection_evidence.update(
+            {
+                "retry_exclusions": retry_exclusions,
+                "decision_loss": forecast_result.validation_design.get(
+                    "decision_loss", {}
+                ),
+            }
+        )
+        model_selection = model_selection.model_copy(
+            update={
+                "selected_model": forecast_result.model_used,
+                "selection_method": "deterministic",
+                "selection_evidence": selection_evidence,
+                "reasoning_steps": _deterministic_selection_reasoning(
+                    forecast_result.model_used,
+                    all_metrics,
+                    forecast_result.validation_design.get("decision_loss", {}),
+                ),
+                "explanation": (
+                    model_selection.explanation
+                    if retry_selected_model == forecast_result.model_used
+                    else (
+                        f"Selected model: {forecast_result.model_used}. Final "
+                        "selection was synchronized to the deterministic "
+                        "forecasting result after applying statistical-review "
+                        "exclusions and the configured decision loss."
+                    )
+                ),
+                "holt_winters_rejected_reason": rejection_reasons["Holt-Winters"],
+                "arima_rejected_reason": rejection_reasons["ARIMA"],
+                "sarima_rejected_reason": rejection_reasons["SARIMA"],
+                "ewma_rejected_reason": rejection_reasons["EWMA"],
+            }
+        )
     progress(87, "Re-running statistical review…")
     statistical_review = run_statistical_review_agent(
         stat_result, model_selection, forecast_result, all_metrics

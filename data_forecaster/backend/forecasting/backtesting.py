@@ -43,12 +43,7 @@ from forecasting.contracts import (
     ForecastMetrics,
 )
 from forecasting.metrics import calculate_forecast_metrics
-from forecasting.preprocessing import IQRClipping
-from forecasting.preprocessing import (
-    FoldSafeImputer,
-    FoldSafeOutlierTreatment,
-    smooth_training_series,
-)
+from forecasting.preprocessing import prepare_training_series
 
 logger = get_logger(__name__)
 
@@ -235,14 +230,13 @@ def _process_fold(
     """
     train = series.iloc[: fold.train_end_index].copy()
     strategy = "clip" if config.apply_iqr_clip else config.outlier_strategy
-    outlier = FoldSafeOutlierTreatment(strategy).fit(train)
-    train = outlier.transform_training(train)
-    imputer = FoldSafeImputer(config.imputation_method).fit(train)
-    train = imputer.transform_training(train)
-    train = smooth_training_series(train, config.smoothing_method)
-    if config.apply_iqr_clip:
-        clipper = IQRClipping().fit(train)
-        train = clipper.transform_series(train)
+    train = prepare_training_series(
+        train,
+        outlier_strategy=strategy,
+        imputation_method=config.imputation_method,
+        smoothing_method=config.smoothing_method,
+        apply_iqr_clip=config.apply_iqr_clip,
+    )
     test = series.iloc[fold.test_start_index : fold.test_end_index]
     if len(train) < 2 or len(test) == 0:
         warnings.append(f"Fold {fold.fold_index} skipped (insufficient data).")
@@ -360,19 +354,13 @@ def evaluate_candidate(
             fold_results.append(result)
 
     if folds:
-        initial_series = series.iloc[: folds[0].train_end_index].copy()
         strategy = "clip" if config.apply_iqr_clip else config.outlier_strategy
-        initial_series = (
-            FoldSafeOutlierTreatment(strategy)
-            .fit(initial_series)
-            .transform_training(initial_series)
+        initial_series = prepare_training_series(
+            series.iloc[: folds[0].train_end_index].copy(),
+            outlier_strategy=strategy,
+            imputation_method=config.imputation_method,
+            smoothing_method=config.smoothing_method,
         )
-        initial_series = (
-            FoldSafeImputer(config.imputation_method)
-            .fit(initial_series)
-            .transform_training(initial_series)
-        )
-        initial_series = smooth_training_series(initial_series, config.smoothing_method)
         initial_training = initial_series.to_numpy(dtype=float)
     else:
         initial_training = np.asarray([], dtype=float)
@@ -427,20 +415,12 @@ def evaluate_candidate(
             config,
         )
         if final_result is not None and final_result.status == ForecastFitStatus.OK:
-            final_training = series.iloc[:final_start].copy()
             strategy = "clip" if config.apply_iqr_clip else config.outlier_strategy
-            final_training = (
-                FoldSafeOutlierTreatment(strategy)
-                .fit(final_training)
-                .transform_training(final_training)
-            )
-            final_training = (
-                FoldSafeImputer(config.imputation_method)
-                .fit(final_training)
-                .transform_training(final_training)
-            )
-            final_training = smooth_training_series(
-                final_training, config.smoothing_method
+            final_training = prepare_training_series(
+                series.iloc[:final_start].copy(),
+                outlier_strategy=strategy,
+                imputation_method=config.imputation_method,
+                smoothing_method=config.smoothing_method,
             )
             final_test_metrics = calculate_forecast_metrics(
                 np.asarray(final_actuals, dtype=float),

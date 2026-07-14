@@ -144,9 +144,9 @@ class PredictionInterval(BaseModel):
         lower_ci:         Lower bound of the prediction interval.
         upper_ci:         Upper bound of the prediction interval.
         confidence_level: Confidence level label (e.g. "95%").
-        interval_label:   Label — ``"prediction_interval"`` when the interval
-                          is model-based/calibrated, or ``"experimental"``
-                          when coverage cannot be evaluated.
+        interval_label:   Technical provenance label. Report-facing prose uses
+                          model-based/estimated language unless empirical
+                          calibration evidence is also displayed.
     """
 
     date: str
@@ -173,6 +173,8 @@ class ForecastMetrics(BaseModel):
         mape:          Mean absolute percentage error (validation).
         wape:          Weighted absolute percentage error (validation).
         mase:          Mean absolute scaled error (validation).
+        interval_label: Provenance/status for the interval rows; ``unavailable``
+                        means the forecast produced no usable bounds.
         prediction_intervals: Per-period prediction intervals.
     """
 
@@ -193,9 +195,11 @@ class ForecastMetrics(BaseModel):
     mape: float | None = None
     wape: float | None = None
     mase: float | None = None
+    interval_label: str = "prediction_interval"
     prediction_intervals: list[PredictionInterval] = Field(default_factory=list)
     selection_metrics: dict[str, float | None] = Field(default_factory=dict)
     final_test_metrics: dict[str, object] = Field(default_factory=dict)
+    final_test_assessment: str | None = None
 
 
 # ── Model Comparison ─────────────────────────────────────────────────────────

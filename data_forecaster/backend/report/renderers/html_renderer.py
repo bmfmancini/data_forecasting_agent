@@ -179,6 +179,12 @@ class HTMLRenderer:
             "metrics. Untouched final-test metrics were not used for ranking: "
             f"RMSE {format_metric(final_rmse)}, MAE {format_metric(final_mae)}.</p>"
         )
+        holdout_assessment = (
+            "<p><strong>Recent Holdout Assessment:</strong> "
+            f"{escape(m.final_test_assessment)}</p>"
+            if m.final_test_assessment
+            else ""
+        )
         peak_context = ""
         if m.peak_value is not None:
             peak_date = f" on {escape(m.peak_date)}" if m.peak_date else ""
@@ -187,6 +193,12 @@ class HTMLRenderer:
                 f"({format_metric(m.peak_change_pct, '+.1f')}% versus the first "
                 "forecast period).</p>"
             )
+        if not m.prediction_intervals:
+            figure_label = "Point Forecast (prediction intervals unavailable)"
+        elif m.interval_label == "experimental":
+            figure_label = "Forecast with Estimated Prediction Intervals"
+        else:
+            figure_label = "Forecast with Model-Based Prediction Intervals"
         return (
             '<section class="report-forecast-outlook mb-3">'
             "<h5>Future Growth & Forecast Outlook</h5>"
@@ -194,8 +206,8 @@ class HTMLRenderer:
             f"({escape(m.endpoint_direction)}) over {m.horizon} periods.</p>"
             f"<p><strong>Forecast Pattern:</strong> {escape(m.forecast_pattern)}.</p>"
             f"{peak_context}"
-            f"{provenance}{narrative}"
-            '<p class="mt-3"><strong>Figure: Forecast with Prediction Intervals</strong></p>'
+            f"{provenance}{holdout_assessment}{narrative}"
+            f'<p class="mt-3"><strong>Figure: {escape(figure_label)}</strong></p>'
             "<p>[VISUAL:FORECAST]</p>"
             "</section>"
         )
@@ -321,10 +333,23 @@ class HTMLRenderer:
 
     def _render_prediction_intervals(self, report: ExecutiveReport) -> str:
         """Render prediction intervals as an HTML table."""
-        intervals = report.forecast_outlook.metrics.prediction_intervals
+        metrics = report.forecast_outlook.metrics
+        intervals = metrics.prediction_intervals
         if not intervals:
-            return ""
+            return (
+                '<section class="report-prediction-intervals mb-3">'
+                "<h5>Prediction Intervals Unavailable</h5>"
+                "<p>The forecasting model did not produce usable interval bounds; "
+                "no 95% planning range is shown.</p>"
+                "</section>"
+            )
         confidence_level = intervals[0].confidence_level
+        nominal_level = confidence_level.split(" ", maxsplit=1)[0]
+        interval_heading = (
+            f"Estimated Prediction Intervals ({nominal_level}; coverage not evaluated)"
+            if intervals[0].interval_label == "experimental"
+            else f"Model-Based Prediction Intervals ({confidence_level})"
+        )
         rows = "".join(
             f"<tr><td>{escape(pi.date)}</td>"
             f"<td>{pi.forecast}</td>"
@@ -334,7 +359,7 @@ class HTMLRenderer:
         )
         return (
             '<section class="report-prediction-intervals mb-3">'
-            f"<h5>Prediction Intervals ({escape(confidence_level)})</h5>"
+            f"<h5>{escape(interval_heading)}</h5>"
             '<table class="table table-sm table-striped">'
             "<thead><tr><th>Date</th><th>Forecast</th>"
             "<th>Lower Bound</th><th>Upper Bound</th></tr></thead>"

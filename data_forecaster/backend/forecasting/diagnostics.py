@@ -397,10 +397,10 @@ def assess_stationarity(
         )
 
     try:
-        adf_const_p = _run_adf(values, regression="c")
-        adf_trend_p = _run_adf(values, regression="ct")
-        kpss_const_p = _run_kpss(values, regression="c")
-        kpss_trend_p = _run_kpss(values, regression="ct")
+        adf_const_stat, adf_const_p = _run_adf(values, regression="c")
+        adf_trend_stat, adf_trend_p = _run_adf(values, regression="ct")
+        kpss_const_stat, kpss_const_p = _run_kpss(values, regression="c")
+        kpss_trend_stat, kpss_trend_p = _run_kpss(values, regression="ct")
     except Exception as exc:  # pylint: disable=broad-except
         logger.warning("Stationarity testing failed: %s", exc)
         return StationarityEvidence(
@@ -421,16 +421,22 @@ def assess_stationarity(
 
     return StationarityEvidence(
         status=DiagnosticStatus.OK,
+        adf_statistic=adf_const_stat,
         adf_p_value=adf_const_p,
+        adf_trend_statistic=adf_trend_stat,
         adf_trend_p_value=adf_trend_p,
+        kpss_statistic=kpss_const_stat,
         kpss_p_value=kpss_const_p,
+        kpss_trend_statistic=kpss_trend_stat,
         kpss_trend_p_value=kpss_trend_p,
         classification=classification,
         is_stationary=is_stationary,
     )
 
 
-def _run_adf(values: np.ndarray, regression: str = "c") -> float | None:
+def _run_adf(
+    values: np.ndarray, regression: str = "c"
+) -> tuple[float | None, float | None]:
     """Run the ADF test with the specified regression specification.
 
     Args:
@@ -442,13 +448,15 @@ def _run_adf(values: np.ndarray, regression: str = "c") -> float | None:
     """
     try:
         result = adfuller(values, regression=regression, autolag="AIC")
-        return float(result[1])
+        return float(result[0]), float(result[1])
     except Exception as exc:  # pylint: disable=broad-except
         logger.debug("ADF (%s) failed: %s", regression, exc)
-        return None
+        return None, None
 
 
-def _run_kpss(values: np.ndarray, regression: str = "c") -> float | None:
+def _run_kpss(
+    values: np.ndarray, regression: str = "c"
+) -> tuple[float | None, float | None]:
     """Run the KPSS test with the specified regression specification.
 
     Args:
@@ -462,10 +470,10 @@ def _run_kpss(values: np.ndarray, regression: str = "c") -> float | None:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             result = kpss(values, regression=regression, nlags="auto")
-        return float(result[1])
+        return float(result[0]), float(result[1])
     except Exception as exc:  # pylint: disable=broad-except
         logger.debug("KPSS (%s) failed: %s", regression, exc)
-        return None
+        return None, None
 
 
 def _classify_stationarity(

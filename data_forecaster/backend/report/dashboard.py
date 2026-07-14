@@ -8,7 +8,11 @@ from report.models import (
     DashboardItem,
     DataQualitySection,
 )
-from report.rules import FORECAST_DIRECTIONS
+from report.rules import (
+    FORECAST_DIRECTIONS,
+    RECENT_HOLDOUT_RMSE_RATIO_THRESHOLD,
+    recent_holdout_rmse_ratio,
+)
 from schemas import ForecastResult, ModelSelectionResult, StatisticalReviewResult
 
 _REVIEW_CRITICAL_MSG = "Statistical review identified critical issues"
@@ -32,7 +36,7 @@ def build_dashboard(
     risk_label, risk_status = primary_risk(
         review, data_quality, forecast, has_structural_breaks
     )
-    action, action_status = recommended_action(review, data_quality)
+    action, action_status = recommended_action(review, data_quality, forecast)
 
     return Dashboard(
         widgets=[
@@ -169,7 +173,7 @@ def primary_risk(
         return "High forecast uncertainty (MAPE > 20%)", "warning"
     if has_structural_breaks:
         return (
-            "Structural breaks detected — monitor for regime shifts",
+            "Candidate structural breaks require validation",
             "warning",
         )
     return "Forecast accuracy may decline over longer horizons", "neutral"
@@ -178,16 +182,57 @@ def primary_risk(
 def recommended_action(
     review: StatisticalReviewResult | None,
     data_quality: DataQualitySection,
+    forecast: ForecastResult | None = None,
 ) -> tuple[str, str]:
     """Return ``(action description, status token)`` for the dashboard."""
+    holdout_ratio = None
+    if forecast is not None:
+        pooled_rmse = forecast.selection_metrics.get("rmse")
+        if not isinstance(pooled_rmse, (int, float)):
+            pooled_rmse = forecast.rmse
+        holdout_ratio = recent_holdout_rmse_ratio(
+            forecast.final_test_metrics.get("rmse"), pooled_rmse
+        )
     if review and review.verdict in ("warn", "fail"):
+        if (
+            holdout_ratio is not None
+            and holdout_ratio >= RECENT_HOLDOUT_RMSE_RATIO_THRESHOLD
+        ):
+            return (
+                "Review statistical audit findings and monitor future actuals "
+                f"closely; latest untouched holdout RMSE was {holdout_ratio:.2f}× "
+                "rolling-origin RMSE",
+                "warning",
+            )
         return (
-            "Review statistical audit findings and validate forecast",
+            "Review statistical audit findings and monitor future actuals",
+            "warning",
+        )
+    if (
+        holdout_ratio is not None
+        and holdout_ratio >= RECENT_HOLDOUT_RMSE_RATIO_THRESHOLD
+    ):
+        return (
+            "Monitor future actuals closely because latest untouched holdout RMSE "
+            f"was {holdout_ratio:.2f}× rolling-origin RMSE",
             "warning",
         )
     if data_quality.rating != "Good":
-        return "Improve data quality and re-run analysis", "warning"
+        has_collection_issue = any(
+            (
+                data_quality.missing_values,
+                data_quality.duplicate_timestamps,
+                data_quality.missing_timestamps,
+            )
+        ) or not data_quality.is_regular
+        if has_collection_issue:
+            return "Improve data collection quality and re-run analysis", "warning"
+        if data_quality.outlier_count:
+            return "Review detected anomalies and monitor future actuals", "warning"
+        if data_quality.issues:
+            return "Review validation issues and monitor future actuals", "warning"
+        return "Review the data-quality rating and monitor future actuals", "warning"
     return (
-        "Use forecast for near-term planning; validate against actuals",
+        "Use forecast for near-term planning; monitor future actuals",
         "positive",
     )

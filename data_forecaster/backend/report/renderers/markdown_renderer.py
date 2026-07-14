@@ -11,14 +11,7 @@ the pre-computed structured fields and LLM-generated narrative strings.
 
 from __future__ import annotations
 
-from report.models import (
-    ExecutiveReport,
-    HealthIndicator,
-    PredictionInterval,
-    Recommendation,
-    Risk,
-    format_metric,
-)
+from report.models import ExecutiveReport, format_metric
 
 
 def _sanitize_cell(value: str) -> str:
@@ -185,11 +178,31 @@ class MarkdownRenderer:
             f"**Untouched Final Test:** RMSE {format_metric(final_rmse)}, "
             f"MAE {format_metric(final_mae)}"
         )
+        if m.final_test_assessment:
+            lines.append(f"**Recent Holdout Assessment:** {m.final_test_assessment}")
         if report.forecast_outlook.narrative:
             lines.append("")
             lines.append(report.forecast_outlook.narrative)
         lines.append("")
-        lines.append("### Prediction Intervals (95%)")
+        interval_label = m.interval_label
+        if not m.prediction_intervals:
+            lines.append("### Prediction Intervals Unavailable")
+            lines.append("")
+            lines.append(
+                "The forecasting model did not produce usable prediction-interval "
+                "bounds; no 95% planning range is shown."
+            )
+            lines.append("")
+            lines.append("**Figure: Point Forecast**")
+            lines.append("")
+            lines.append("[VISUAL:FORECAST]")
+            return "\n".join(lines)
+        interval_heading = (
+            "Estimated 95% Prediction Intervals (coverage not evaluated)"
+            if interval_label == "experimental"
+            else "Model-Based 95% Prediction Intervals"
+        )
+        lines.append(f"### {interval_heading}")
         lines.append("")
         lines.append("| Date | Forecast | Lower Bound | Upper Bound |")
         lines.append("|------|----------|-------------|-------------|")
@@ -198,8 +211,18 @@ class MarkdownRenderer:
                 f"| {pi.date} | {pi.forecast} | {pi.lower_ci} | {pi.upper_ci} |"
             )
         lines.append("")
-        lines.append("**Figure: Forecast with Prediction Intervals**")
-        lines.append("The projected values with 95% prediction range for planning.")
+        figure_label = (
+            "Forecast with Estimated Prediction Intervals"
+            if interval_label == "experimental"
+            else "Forecast with Model-Based Prediction Intervals"
+        )
+        lines.append(f"**Figure: {figure_label}**")
+        lines.append(
+            "The projected values with an estimated 95% planning range; empirical "
+            "coverage was not evaluated."
+            if interval_label == "experimental"
+            else "The projected values with a model-based 95% planning range."
+        )
         lines.append("")
         lines.append("[VISUAL:FORECAST]")
         return "\n".join(lines)

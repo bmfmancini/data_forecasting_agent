@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import numpy as np
@@ -28,11 +29,9 @@ from forecasting.selection_policy import CandidateEvidence, select_model_determi
 from forecasting.sarima_model import fit_sarima
 from forecasting.preprocessing import (
     BoxCoxTransform,
-    FoldSafeImputer,
-    FoldSafeOutlierTreatment,
     YeoJohnsonTransform,
     bias_adjusted_inverse,
-    smooth_training_series,
+    prepare_training_series,
 )
 from prompts.forecasting_prompt import FORECASTING_PROMPT
 from schemas import (
@@ -46,20 +45,13 @@ from utils.token_tracking import estimate_input_text, extract_token_usage
 
 logger = get_logger(__name__)
 
+_SUPPORTED_LOSS_METRICS = ("mase", "wape", "rmse", "mae")
+_AUTO_LOSS_VALUES = {"auto", "ai", "recommended", "let ai decide"}
+
 
 def _has_required_metrics(result: ForecastAdapterResult) -> bool:
-    """Return whether required comparison metrics are present and finite.
-
-    A model is rankable only when ``status == ok`` and RMSE/MAE are present
-    and finite. MAPE is deliberately optional because it is undefined for
-    holdouts containing zero actual values.
-    """
-    if result.status != ForecastFitStatus.OK:
-        return False
-    for metric in (result.metrics.rmse, result.metrics.mae):
-        if metric is None or not np.isfinite(metric):
-            return False
-    return True
+    """Compatibility wrapper for the contract's rankability rule."""
+    return result.is_rankable
 
 
 def _format_metric(value: float | None, fmt: str) -> str:
@@ -67,6 +59,63 @@ def _format_metric(value: float | None, fmt: str) -> str:
     if value is None or not np.isfinite(value):
         return "not available"
     return format(value, fmt)
+
+
+def _business_context(options: dict[str, Any]) -> str:
+    """Format decision-relevant context for loss recommendation."""
+    keys = (
+        "user_context",
+        "data_domain",
+        "units",
+        "interventions",
+        "censoring_or_stockouts",
+        "known_future_covariates",
+        "aggregation",
+        "minimum_value",
+        "maximum_value",
+    )
+    lines = [f"- {key}: {options[key]}" for key in keys if options.get(key) is not None]
+    return "\n".join(lines) or "No decision-specific business context was provided."
+
+
+def _resolve_loss_preference(requested: str, llm_text: str | None) -> tuple[str, str]:
+    """Resolve an explicit or LLM-recommended loss to a supported metric."""
+    normalized = str(requested or "auto").strip().lower()
+    if normalized in _SUPPORTED_LOSS_METRICS:
+        return normalized, "user_selected"
+    if normalized not in _AUTO_LOSS_VALUES:
+        return "mase", "invalid_setting_fallback"
+    if llm_text:
+        match = re.search(
+            r"recommended\s+decision\s+loss\s*:\s*(mase|wape|rmse|mae)\b",
+            llm_text,
+            flags=re.IGNORECASE,
+        )
+        if match:
+            return match.group(1).lower(), "llm_recommended"
+    return "mase", "llm_unavailable_fallback"
+
+
+def _loss_recommendation_rationale(
+    resolved: str,
+    source: str,
+    llm_text: str | None,
+) -> str:
+    """Return a concise auditable rationale for the resolved loss."""
+    if source == "user_selected":
+        return "The user explicitly selected this decision-loss objective."
+    if source == "llm_recommended" and llm_text:
+        match = re.search(
+            r"decision-loss\s+rationale\s*:\s*([^\r\n]+)",
+            llm_text,
+            flags=re.IGNORECASE,
+        )
+        if match:
+            return match.group(1).strip()[:300]
+        return f"The forecasting assistant recommended {resolved.upper()} from the supplied context."
+    if source == "invalid_setting_fallback":
+        return "The requested setting was unsupported, so MASE was used safely."
+    return "The automatic recommendation was unavailable, so MASE was used safely."
 
 
 def run_forecasting_agent(
@@ -77,8 +126,9 @@ def run_forecasting_agent(
     freq: str,
     existing_metrics: dict[str, dict[str, float]] | None = None,
     disabled_tests: list[str] | None = None,
-    loss_preference: str = "mase",
+    loss_preference: str = "auto",
     preprocessing_options: dict[str, Any] | None = None,
+    exclude_models: list[str] | None = None,
 ) -> tuple[ForecastResult, dict[str, dict[str, float]]]:
     """Run all forecasting models, return ForecastResult for the selected model
     and an all-metrics dict for the comparison chart.
@@ -103,6 +153,7 @@ def run_forecasting_agent(
     """
     seasonal_period = max(1, stat_result.seasonal_period or 1)
     preprocessing_options = preprocessing_options or {}
+    excluded_models = set(exclude_models or [])
     outlier_strategy = {
         "Clip (Winsorize)": "clip",
         "clip": "clip",
@@ -115,17 +166,12 @@ def run_forecasting_agent(
     if imputation_method == "Let AI Decide":
         imputation_method = "interpolate"
     smoothing_method = preprocessing_options.get("smoothing", "none")
-    production_series = (
-        FoldSafeOutlierTreatment(outlier_strategy)
-        .fit(series)
-        .transform_training(series)
+    production_series = prepare_training_series(
+        series,
+        outlier_strategy=outlier_strategy,
+        imputation_method=imputation_method,
+        smoothing_method=smoothing_method,
     )
-    production_series = (
-        FoldSafeImputer(imputation_method)
-        .fit(production_series)
-        .transform_training(production_series)
-    )
-    production_series = smooth_training_series(production_series, smoothing_method)
     results_store: dict[str, ForecastAdapterResult] = {}
 
     # ── Fit all models directly in Python ─────────────────────────────────────
@@ -183,7 +229,7 @@ def run_forecasting_agent(
         warnings_text = ""
         if res.warnings:
             warnings_text = f" [warnings: {'; '.join(res.warnings)}]"
-        if not _has_required_metrics(res):
+        if not res.is_rankable:
             comparison_summary += (
                 f"- {name}:{status_text}{warnings_text} required metrics unavailable\n"
             )
@@ -220,14 +266,31 @@ def run_forecasting_agent(
 
     prompt = FORECASTING_PROMPT
     token_usage: dict[str, int] = {}
+    loss_context = _business_context(preprocessing_options)
+    resolved_loss, loss_resolution_source = _resolve_loss_preference(
+        loss_preference, None
+    )
+    loss_rationale = _loss_recommendation_rationale(
+        resolved_loss, loss_resolution_source, None
+    )
 
     try:
         chain = prompt | llm
         inputs = {
             "selected": model_selection.selected_model,
             "summary": comparison_summary,
+            "requested_loss": loss_preference,
+            "business_context": loss_context,
         }
         response = chain.invoke(inputs)
+        resolved_loss, loss_resolution_source = _resolve_loss_preference(
+            loss_preference, str(response.content)
+        )
+        loss_rationale = _loss_recommendation_rationale(
+            resolved_loss,
+            loss_resolution_source,
+            str(response.content),
+        )
         token_usage = extract_token_usage(
             response, input_text=estimate_input_text(prompt, inputs)
         )
@@ -252,6 +315,7 @@ def run_forecasting_agent(
 
     # ── Select from common rolling-origin evidence ───────────────────────────
     selected = model_selection.selected_model
+    sensitivity_winners: dict[str, str] = {}
     if model_selection.selection_method != "forced":
         rankable = {
             name: evaluation
@@ -263,18 +327,29 @@ def run_forecasting_agent(
             )
         }
         if rankable:
-            outcome = select_model_deterministic(
-                [
-                    CandidateEvidence(
-                        name=name,
-                        adapter_result=results_store.get(name),
-                        backtest=evaluation,
-                        is_baseline=name in _BASELINE_NAMES,
-                    )
-                    for name, evaluation in rankable.items()
-                ],
-                user_loss_preference=loss_preference,
-            )
+            candidate_evidence = [
+                CandidateEvidence(
+                    name=name,
+                    adapter_result=results_store.get(name),
+                    backtest=evaluation,
+                    is_baseline=name in _BASELINE_NAMES,
+                )
+                for name, evaluation in rankable.items()
+            ]
+            outcomes = {
+                metric: select_model_deterministic(
+                    candidate_evidence,
+                    exclude_models=list(excluded_models),
+                    user_loss_preference=metric,
+                )
+                for metric in _SUPPORTED_LOSS_METRICS
+            }
+            sensitivity_winners = {
+                metric: metric_outcome.selected_model
+                for metric, metric_outcome in outcomes.items()
+                if metric_outcome.selected_model
+            }
+            outcome = outcomes[resolved_loss]
             if outcome.selected_model:
                 selected = outcome.selected_model
     if selected not in results_store and selected in _BASELINE_NAMES:
@@ -328,11 +403,11 @@ def run_forecasting_agent(
                 raise RuntimeError("All forecasting models failed.") from exc
 
     res = results_store[selected]
-    if not _has_required_metrics(res):
+    if not res.is_rankable:
         rankable = {
             name: candidate
             for name, candidate in results_store.items()
-            if _has_required_metrics(candidate)
+            if candidate.is_rankable and name not in excluded_models
         }
         if not rankable:
             raise RuntimeError(
@@ -409,6 +484,18 @@ def run_forecasting_agent(
     logger.info("Forecasting complete. Selected: %s", selected)
 
     selected_evaluation = backtest_evals.get(selected)
+    validation_design = (
+        dict(selected_evaluation.validation_design) if selected_evaluation else {}
+    )
+    distinct_winners = set(sensitivity_winners.values())
+    validation_design["decision_loss"] = {
+        "requested": loss_preference,
+        "resolved": resolved_loss,
+        "resolution_source": loss_resolution_source,
+        "rationale": loss_rationale,
+        "winners_by_metric": sensitivity_winners,
+        "selection_sensitive": len(distinct_winners) > 1,
+    }
     reported_metrics = (
         selected_evaluation.pooled_metrics
         if selected_evaluation is not None and selected_evaluation.is_rankable
@@ -535,9 +622,7 @@ def run_forecasting_agent(
         reasoning_steps=reasoning_steps,
         token_usage=token_usage,
         interval_label=interval_label,
-        validation_design=(
-            selected_evaluation.validation_design if selected_evaluation else {}
-        ),
+        validation_design=validation_design,
         selection_metrics=reported_metrics.model_dump(
             include={"rmse", "mae", "mape", "wape", "mase", "smape", "rmsse"}
         ),

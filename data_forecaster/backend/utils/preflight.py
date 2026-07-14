@@ -11,6 +11,7 @@ from utils.data_cleaning import (
     detect_outliers_iqr,
     reindex_series,
     resolve_duplicates,
+    time_index_quality,
 )
 
 AGGREGATION_OPTIONS = ["Let AI Decide", "sum", "mean", "latest"]
@@ -62,14 +63,13 @@ def run_preflight_checks(
     """
     selected = _selected_frame(df, date_col, value_col)
     series = selected.set_index(date_col)[value_col]
-    diffs = series.index.to_series().diff().dropna()
-    mode_diff = diffs.mode()[0] if len(diffs) > 0 else None
+    detected_frequency = _infer_frequency(selected.set_index(date_col))
 
     duplicate_ts = int(selected[date_col].duplicated().sum())
     missing_values = int(series.isna().sum())
-    missing_ts = int((diffs > mode_diff * 1.5).sum()) if mode_diff is not None else 0
-    is_regular = bool(diffs.nunique() == 1) if len(diffs) > 0 else True
-    detected_frequency = _infer_frequency(selected.set_index(date_col))
+    missing_ts, is_regular, _ = time_index_quality(
+        series.index, detected_frequency
+    )
     usable_observations = int(series.dropna().shape[0])
 
     outlier_info = detect_outliers_iqr(series.dropna())
@@ -84,7 +84,7 @@ def run_preflight_checks(
         "data_domain": "Skip / Let AI Guess",
         "outlier_strategy": "Let AI Decide",
         "continue_short_series": "continue",
-        "loss_metric": "mase",
+        "loss_metric": "auto",
         "units": "Unspecified",
         "interventions": "None known",
         "censoring_or_stockouts": "None known",
@@ -146,9 +146,13 @@ def run_preflight_checks(
             PreflightDecision(
                 key="loss_metric",
                 label="Decision loss",
-                message="Which out-of-sample loss should control model ranking?",
-                options=["mase", "rmse", "mae", "wape"],
-                default="mase",
+                message=(
+                    "What kind of forecast error matters most? Auto lets the "
+                    "forecasting assistant recommend an objective from your "
+                    "business context; model ranking remains deterministic."
+                ),
+                options=["auto", "rmse", "mae", "wape", "mase"],
+                default="auto",
             ),
             PreflightDecision(
                 key="units",

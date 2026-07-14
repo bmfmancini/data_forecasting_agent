@@ -180,16 +180,32 @@ def _compute_visual_strategy(
         forecast.mape is not None
         and forecast.mape > VISUAL_STRATEGY_THRESHOLDS["mape_high"]
     ):
-        strategy.append(
-            {
-                "chart": "Forecast Confidence Intervals",
-                "reason": (
-                    "High variance in data requires emphasis on the 95% CI "
-                    "ribbon to communicate risk and uncertainty to the "
-                    "C-suite."
-                ),
-            }
-        )
+        if forecast.interval_label == "unavailable":
+            strategy.append(
+                {
+                    "chart": "Forecast Error Monitoring",
+                    "reason": (
+                        "Forecast error is elevated and prediction-interval bounds "
+                        "are unavailable; emphasize holdout performance and future "
+                        "actuals instead of implying a 95% range."
+                    ),
+                }
+            )
+        else:
+            interval_name = (
+                "Estimated 95% Prediction Intervals (coverage not evaluated)"
+                if forecast.interval_label == "experimental"
+                else "Model-Based 95% Prediction Intervals"
+            )
+            strategy.append(
+                {
+                    "chart": interval_name,
+                    "reason": (
+                        "Elevated forecast error requires emphasis on the prediction-"
+                        "interval ribbon to communicate risk and uncertainty."
+                    ),
+                }
+            )
     if model_selection.selected_model == "SARIMA":
         strategy.append(
             {
@@ -205,9 +221,9 @@ def _compute_visual_strategy(
             {
                 "chart": "Box Plot",
                 "reason": (
-                    "Significant outliers detected; a box plot would "
-                    "effectively display the distribution and highlight "
-                    "extreme values."
+                    "The anomaly ratio exceeds the review threshold; a box plot "
+                    "would display the distribution and flagged values without "
+                    "assuming their business impact."
                 ),
             }
         )

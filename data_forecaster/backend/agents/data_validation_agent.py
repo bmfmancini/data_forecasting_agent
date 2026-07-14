@@ -10,7 +10,7 @@ from core.llm_factory import get_llm
 from core.logging_config import get_logger
 from prompts.data_validation_prompt import DATA_VALIDATION_PROMPT
 from schemas import ValidationResult
-from utils.data_cleaning import audit_series, validate_schema
+from utils.data_cleaning import audit_series, time_index_quality, validate_schema
 from utils.token_tracking import estimate_input_text, extract_token_usage
 
 logger = get_logger(__name__)
@@ -51,12 +51,9 @@ def run_validation_agent(
     series = df.set_index(date_col)[value_col]
 
     # ── Compute structured values directly ───────────────────────────────────
-    diffs = series.index.to_series().diff().dropna()
-    mode_diff = diffs.mode()[0] if len(diffs) > 0 else None
-    missing_ts = int((diffs > mode_diff * 1.5).sum()) if mode_diff is not None else 0
+    missing_ts, is_regular, _ = time_index_quality(series.index, freq)
     duplicate_ts = int(df[date_col].duplicated().sum())
     missing_vals = int(series.isna().sum())
-    is_regular = (diffs.nunique() == 1) if len(diffs) > 0 else True
 
     issues: list[str] = []
     if missing_ts > 0:

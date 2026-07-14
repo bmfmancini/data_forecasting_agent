@@ -619,6 +619,25 @@ def _business_selection_reasons(
     return reasons
 
 
+def build_model_rejection_reasons(
+    selected_model: str,
+    stat_result: StatisticalResult,
+    all_metrics: dict[str, dict[str, float]] | None = None,
+    excluded_models: list[str] | None = None,
+) -> dict[str, str | None]:
+    """Build final rejection reasons aligned to the production model."""
+    reasons = _business_selection_reasons(selected_model, stat_result, all_metrics)
+    for excluded_model in excluded_models or []:
+        if excluded_model in reasons and excluded_model != selected_model:
+            reasons[excluded_model] = (
+                "Excluded following statistical review; its validation metrics "
+                "remain visible for transparency but it was not eligible during "
+                "this retry."
+            )
+    reasons[selected_model] = None
+    return reasons
+
+
 # ── LLM invocation ───────────────────────────────────────────────────────────
 
 
@@ -656,7 +675,10 @@ def _format_metrics_text(
     for name, metrics in all_metrics.items():
         rmse_s = _format_metric_value(metrics.get("RMSE"), ".4f")
         mae_s = _format_metric_value(metrics.get("MAE"), ".4f")
-        mape_s = _format_metric_value(metrics.get("MAPE"), ".2f", percent=True)
+        mape_value = _format_metric_value(metrics.get("MAPE"), ".2f")
+        mape_s = (
+            f"{mape_value}%" if mape_value != _NOT_AVAILABLE else _NOT_AVAILABLE
+        )
         wape_s = _format_metric_value(metrics.get("WAPE"), ".2f", percent=True)
         mase_s = _format_metric_value(metrics.get("MASE"), ".4f")
         lines.append(
@@ -896,8 +918,9 @@ def _build_deterministic_explanation(
     metric = _primary_metric(all_metrics, outcome.selected_model)
     if metric:
         metric_name, value = metric
+        evidence_scope = "eligible " if outcome.exclusion_reasons else ""
         parts.append(
-            f"It had the strongest available validation evidence "
+            f"It had the strongest available {evidence_scope}empirical validation metrics "
             f"({_format_metric(metric_name, value)}, lower is better)."
         )
     parts.append(
@@ -927,6 +950,7 @@ def run_model_selection_agent(
     review_feedback: str | None = None,
     exclude_model: str | None = None,
     all_metrics: dict[str, dict[str, float]] | None = None,
+    loss_preference: str = "mase",
 ) -> ModelSelectionResult:
     """Use the LLM to reason over statistical findings and select the best model.
 
@@ -968,7 +992,7 @@ def run_model_selection_agent(
         outcome = select_model_deterministic(
             candidates,
             exclude_models=[exclude_model] if exclude_model else None,
-            user_loss_preference="mase",
+            user_loss_preference=loss_preference,
         )
         if outcome.selected_model:
             logger.info(
@@ -981,8 +1005,11 @@ def run_model_selection_agent(
             explanation = _build_deterministic_explanation(
                 outcome, stat_result, all_metrics, review_feedback
             )
-            reasons = _business_selection_reasons(
-                outcome.selected_model, stat_result, all_metrics
+            reasons = build_model_rejection_reasons(
+                outcome.selected_model,
+                stat_result,
+                all_metrics,
+                list(outcome.exclusion_reasons),
             )
             return ModelSelectionResult(
                 selected_model=outcome.selected_model,

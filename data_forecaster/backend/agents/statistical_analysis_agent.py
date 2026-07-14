@@ -146,10 +146,18 @@ def run_statistical_agent(
     kpss_p = stationarity.kpss_p_value
     return StatisticalResult(
         is_stationary_adf=bool(adf_p is not None and adf_p < 0.05),
-        adf_statistic=0.0,
+        adf_statistic=(
+            stationarity.adf_statistic
+            if stationarity.adf_statistic is not None
+            else float("nan")
+        ),
         adf_p_value=adf_p if adf_p is not None else 1.0,
         is_stationary_kpss=bool(kpss_p is not None and kpss_p >= 0.05),
-        kpss_statistic=0.0,
+        kpss_statistic=(
+            stationarity.kpss_statistic
+            if stationarity.kpss_statistic is not None
+            else float("nan")
+        ),
         kpss_p_value=kpss_p if kpss_p is not None else 1.0,
         has_trend=trend.has_trend,
         trend_slope=trend.slope,

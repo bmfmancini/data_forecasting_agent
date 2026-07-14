@@ -301,9 +301,13 @@ class StationarityEvidence(BaseModel):
     """
 
     status: DiagnosticStatus = DiagnosticStatus.OK
+    adf_statistic: float | None = None
     adf_p_value: float | None = None
+    adf_trend_statistic: float | None = None
     adf_trend_p_value: float | None = None
+    kpss_statistic: float | None = None
     kpss_p_value: float | None = None
+    kpss_trend_statistic: float | None = None
     kpss_trend_p_value: float | None = None
     classification: str = "not_estimable"
     is_stationary: bool = False

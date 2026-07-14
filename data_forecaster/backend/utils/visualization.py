@@ -109,21 +109,31 @@ def plot_acf_pacf(acf_values: list, pacf_values: list, lags: list) -> str:
 def plot_forecast(series: pd.Series, forecast_result: ForecastResult) -> dict[str, Any]:
     """Historical series + forecast line + prediction-interval ribbon.
 
-    The ribbon is labelled "Prediction Interval" (or "Prediction Interval
-    (experimental)" when the adapter labels its intervals as experimental)
-    rather than "95% CI".
+    The ribbon uses conservative model-based/estimated language and identifies
+    experimental intervals whose empirical coverage was not evaluated.
     """
     hist_dates = _index_to_str(series)
     fc_dates = forecast_result.forecast_dates or [
         str(i) for i in range(len(forecast_result.forecast))
     ]
 
-    # Choose the ribbon label from the adapter's interval label.
+    # Choose the ribbon label from the adapter's interval label. Do not add a
+    # ribbon when the adapter produced no complete, finite set of bounds.
     interval_label = getattr(forecast_result, "interval_label", "prediction_interval")
+    bounds_available = (
+        interval_label != "unavailable"
+        and bool(fc_dates)
+        and len(forecast_result.lower_ci) == len(fc_dates)
+        and len(forecast_result.upper_ci) == len(fc_dates)
+        and all(
+            np.isfinite(float(value))
+            for value in forecast_result.lower_ci + forecast_result.upper_ci
+        )
+    )
     ribbon_name = (
-        "Prediction Interval (experimental)"
+        "Estimated 95% prediction interval (coverage not evaluated)"
         if interval_label == "experimental"
-        else "95% Prediction Interval"
+        else "Model-based 95% prediction interval"
     )
 
     fig = go.Figure()
@@ -140,17 +150,18 @@ def plot_forecast(series: pd.Series, forecast_result: ForecastResult) -> dict[st
     )
 
     # Prediction interval ribbon
-    fig.add_trace(
-        go.Scatter(
-            x=fc_dates + fc_dates[::-1],
-            y=forecast_result.upper_ci + forecast_result.lower_ci[::-1],
-            fill="toself",
-            fillcolor="rgba(220,38,38,0.15)",
-            line={"color": "rgba(255,255,255,0)"},
-            name=ribbon_name,
-            showlegend=True,
+    if bounds_available:
+        fig.add_trace(
+            go.Scatter(
+                x=fc_dates + fc_dates[::-1],
+                y=forecast_result.upper_ci + forecast_result.lower_ci[::-1],
+                fill="toself",
+                fillcolor="rgba(220,38,38,0.15)",
+                line={"color": "rgba(255,255,255,0)"},
+                name=ribbon_name,
+                showlegend=True,
+            )
         )
-    )
 
     # Forecast line
     fig.add_trace(

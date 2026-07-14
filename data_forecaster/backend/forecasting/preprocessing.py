@@ -69,6 +69,31 @@ def smooth_training_series(series: pd.Series, method: str) -> pd.Series:
     return smooth_series(series, method)
 
 
+def prepare_training_series(
+    series: pd.Series,
+    *,
+    outlier_strategy: str = "none",
+    imputation_method: str = "interpolate",
+    smoothing_method: str = "none",
+    apply_iqr_clip: bool = False,
+) -> pd.Series:
+    """Apply the common fold-safe preparation pipeline to training data."""
+    prepared = (
+        FoldSafeOutlierTreatment(outlier_strategy)
+        .fit(series)
+        .transform_training(series)
+    )
+    prepared = (
+        FoldSafeImputer(imputation_method)
+        .fit(prepared)
+        .transform_training(prepared)
+    )
+    prepared = smooth_training_series(prepared, smoothing_method)
+    if apply_iqr_clip:
+        prepared = IQRClipping().fit(prepared).transform_series(prepared)
+    return prepared
+
+
 class FoldSafeOutlierTreatment:
     """Fit clipping/removal thresholds using training observations only."""
 

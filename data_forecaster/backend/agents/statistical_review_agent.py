@@ -45,6 +45,32 @@ def _format_optional_metric(value: float | None, fmt: str) -> str:
     return _NOT_AVAILABLE if value is None else format(value, fmt)
 
 
+def _flag_key(flag: dict[str, Any]) -> str:
+    """Return a semantic key so deterministic and LLM paraphrases do not repeat."""
+    issue = str(flag.get("issue", "")).lower()
+    if "residual" in issue and ("autocorrel" in issue or "ljung-box" in issue):
+        return "residual_autocorrelation"
+    if "change point" in issue or "structural break" in issue:
+        return "change_points"
+    if "outlier" in issue:
+        return "outliers"
+    return re.sub(r"[^a-z0-9]+", " ", issue).strip()
+
+
+def _merge_review_flags(
+    deterministic: list[dict[str, Any]], llm_flags: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Merge flags while preserving deterministic findings as canonical."""
+    merged = list(deterministic)
+    existing = {_flag_key(flag) for flag in merged}
+    for flag in llm_flags:
+        key = _flag_key(flag)
+        if key not in existing:
+            merged.append(flag)
+            existing.add(key)
+    return merged
+
+
 def _check_seasonality_mismatch(
     stat_result: StatisticalResult,
     selected: str,
@@ -300,16 +326,16 @@ def _check_residual_autocorrelation(
         )
         return {
             "agent": "forecasting",
-            "severity": "critical",
+            "severity": "warning",
             "issue": (
                 f"Model residuals are autocorrelated (Ljung-Box p-value="
-                f"{p_value}). The model has failed to "
-                "capture all predictable patterns in the data."
+                f"{p_value}). The model may leave predictable "
+                "patterns in the errors."
             ),
             "recommendation": (
-                "The model is likely misspecified. Consider a different "
-                "model (e.g., SARIMA if seasonality is present) or "
-                "different model orders."
+                "Review model specification and compare residual diagnostics "
+                "for viable alternatives before overriding the model selected "
+                "by out-of-sample accuracy."
             ),
         }
     return None
@@ -796,12 +822,7 @@ def run_statistical_review_agent(
                 }
             )
 
-        # Merge deterministic flags with LLM flags (deduplicate by issue text)
-        all_flags = list(pre_check_flags)
-        existing_issues = {f["issue"] for f in all_flags}
-        for flag in llm_flags:
-            if flag["issue"] not in existing_issues:
-                all_flags.append(flag)
+        all_flags = _merge_review_flags(pre_check_flags, llm_flags)
 
         verdict = _compute_verdict(verdict, pre_check_flags)
 
