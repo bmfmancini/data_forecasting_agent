@@ -55,6 +55,12 @@ ALLOWED_MIME_TYPES: list[str] = [
 
 CHROMA_PERSIST_DIR: str = os.getenv("CHROMA_PERSIST_DIR", "./chroma_db")
 
+# Sentence-transformers model used by the RAG knowledge base for embeddings.
+# Change this to use a different embedding model without editing code.
+EMBED_MODEL: str = os.getenv(
+    "EMBED_MODEL", "sentence-transformers/all-MiniLM-L6-v2"
+)
+
 # Directory for disk-backed uploaded file storage.  DataFrames are
 # persisted as parquet files so they survive process restarts and don't
 # consume process memory.  An in-memory metadata index is kept for fast
