@@ -353,21 +353,41 @@ def run_forecasting_agent(
             if outcome.selected_model:
                 selected = outcome.selected_model
     if selected not in results_store and selected in _BASELINE_NAMES:
-        results_store[selected] = _fit_baseline_production(
-            selected,
-            production_series,
-            forecast_horizon,
-            seasonal_period,
-            backtest_evals.get(selected),
-        )
+        try:
+            results_store[selected] = _fit_baseline_production(
+                selected,
+                production_series,
+                forecast_horizon,
+                seasonal_period,
+                backtest_evals.get(selected),
+            )
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.warning(
+                "Baseline production refit failed for %s: %s", selected, exc
+            )
+            results_store[selected] = ForecastAdapterResult(
+                status=ForecastFitStatus.FAILED,
+                failure_reason=str(exc),
+                fitted_configuration={"model": selected},
+            )
     if " + " in selected and selected not in results_store:
-        results_store[selected] = _fit_transformed_production(
-            selected,
-            production_series,
-            forecast_horizon,
-            seasonal_period,
-            backtest_evals.get(selected),
-        )
+        try:
+            results_store[selected] = _fit_transformed_production(
+                selected,
+                production_series,
+                forecast_horizon,
+                seasonal_period,
+                backtest_evals.get(selected),
+            )
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.warning(
+                "Transformed production refit failed for %s: %s", selected, exc
+            )
+            results_store[selected] = ForecastAdapterResult(
+                status=ForecastFitStatus.FAILED,
+                failure_reason=str(exc),
+                fitted_configuration={"model": selected},
+            )
     if selected not in results_store:
         # Try to fit the selected model directly
         try:

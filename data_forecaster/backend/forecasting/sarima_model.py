@@ -144,11 +144,16 @@ def fit_sarima(
     forecast_values, conf_int = full_model.predict(
         n_periods=forecast_horizon, return_conf_int=True
     )
-    converged = bool(
-        getattr(getattr(full_model, "arima_res_", None), "mle_retvals", {}).get(
-            "converged", True
+    converged_raw = getattr(
+        getattr(full_model, "arima_res_", None), "mle_retvals", {}
+    ).get("converged")
+    if converged_raw is None:
+        logger.warning(
+            "SARIMA convergence status unknown; defaulting to not-converged."
         )
-    )
+        converged = False
+    else:
+        converged = bool(converged_raw)
     roots_estimable = True
     try:
         ar_roots = np.asarray(full_model.arroots(), dtype=complex)
@@ -156,10 +161,16 @@ def fit_sarima(
     except Exception as exc:  # pylint: disable=broad-except
         logger.warning("SARIMA root diagnostics unavailable: %s", exc)
         roots_estimable = False
-        ar_roots = np.asarray([], dtype=complex)
-        ma_roots = np.asarray([], dtype=complex)
-    stationary = bool(ar_roots.size == 0 or np.all(np.abs(ar_roots) > 1.0))
-    invertible = bool(ma_roots.size == 0 or np.all(np.abs(ma_roots) > 1.0))
+        ar_roots = None
+        ma_roots = None
+    if not roots_estimable:
+        # Unavailable evidence is represented as unknown (None) in provenance;
+        # the boolean flags are forced False so status moves away from OK.
+        stationary: bool | None = None
+        invertible: bool | None = None
+    else:
+        stationary = bool(ar_roots.size == 0 or np.all(np.abs(ar_roots) > 1.0))
+        invertible = bool(ma_roots.size == 0 or np.all(np.abs(ma_roots) > 1.0))
     fit_warnings: list[str] = []
     if not roots_estimable:
         fit_warnings.append("AR/MA root diagnostics were not estimable.")
@@ -220,7 +231,7 @@ def fit_sarima(
             "max_d": 2,
             "max_D": 1,
             "information_criterion": "aicc",
-            "converged": converged,
+            "converged": converged_raw,
             "stationary_roots": stationary,
             "invertible_roots": invertible,
             "root_diagnostics_estimable": roots_estimable,
