@@ -252,9 +252,7 @@ def test_recent_holdout_degradation_is_interpreted() -> None:
 def test_recent_holdout_degradation_reduces_confidence_once_at_threshold() -> None:
     """The shared 1.25 ratio produces one deterministic confidence deduction."""
     builder = ExecutiveReportBuilder()
-    base_forecast = _forecast().model_copy(
-        update={"selection_metrics": {"rmse": 16.0}}
-    )
+    base_forecast = _forecast().model_copy(update={"selection_metrics": {"rmse": 16.0}})
     below_threshold = base_forecast.model_copy(
         update={
             "final_test_metrics": {
@@ -264,9 +262,7 @@ def test_recent_holdout_degradation_reduces_confidence_once_at_threshold() -> No
     )
     at_threshold = base_forecast.model_copy(
         update={
-            "final_test_metrics": {
-                "rmse": 16.0 * RECENT_HOLDOUT_RMSE_RATIO_THRESHOLD
-            }
+            "final_test_metrics": {"rmse": 16.0 * RECENT_HOLDOUT_RMSE_RATIO_THRESHOLD}
         }
     )
 
@@ -334,9 +330,7 @@ def test_airline_data_quality_separates_collection_and_anomaly_policy() -> None:
         update={"outlier_count": 11, "outlier_ratio": 0.076}
     )
 
-    quality = ExecutiveReportBuilder()._compute_data_quality(
-        _validation(), statistical
-    )
+    quality = ExecutiveReportBuilder()._compute_data_quality(_validation(), statistical)
 
     assert quality.rating == "Fair"
     assert "Collection quality is good" in quality.rating_explanation
@@ -561,9 +555,7 @@ def test_narrative_guards_reject_report_review_claims() -> None:
 
     data_prompt = " ".join(
         str(message.content)
-        for message in DATA_QUALITY_NARRATIVE_PROMPT.format_messages(
-            section_json="{}"
-        )
+        for message in DATA_QUALITY_NARRATIVE_PROMPT.format_messages(section_json="{}")
     ).lower()
     assert "describe completeness and interval regularity separately" in data_prompt
     assert "never call anomalies or outliers insignificant" in data_prompt
@@ -676,9 +668,7 @@ def test_visual_strategy_uses_prediction_interval_provenance() -> None:
     forecast = _forecast().model_copy(update={"mape": 25.0})
 
     strategy = _compute_visual_strategy(_statistical(), forecast, model_selection)
-    strategy_text = " ".join(
-        f"{item['chart']} {item['reason']}" for item in strategy
-    )
+    strategy_text = " ".join(f"{item['chart']} {item['reason']}" for item in strategy)
 
     assert "Model-Based 95% Prediction Intervals" in strategy_text
     assert "confidence interval" not in strategy_text.lower()
@@ -690,8 +680,7 @@ def test_visual_strategy_uses_prediction_interval_provenance() -> None:
         model_selection,
     )
     assert any(
-        item["chart"]
-        == "Estimated 95% Prediction Intervals (coverage not evaluated)"
+        item["chart"] == "Estimated 95% Prediction Intervals (coverage not evaluated)"
         for item in experimental_strategy
     )
 
@@ -700,7 +689,9 @@ def test_visual_strategy_uses_prediction_interval_provenance() -> None:
         forecast.model_copy(update={"interval_label": "unavailable"}),
         model_selection,
     )
-    assert any(item["chart"] == "Forecast Error Monitoring" for item in unavailable_strategy)
+    assert any(
+        item["chart"] == "Forecast Error Monitoring" for item in unavailable_strategy
+    )
     assert not any("95%" in item["chart"] for item in unavailable_strategy)
 
 

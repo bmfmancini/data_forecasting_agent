@@ -256,7 +256,7 @@ def _check_explanation_mismatch(
 
 
 def _check_suboptimal_rmse(
-    selected: str,
+    model_selection: ModelSelectionResult,
     all_metrics: dict[str, dict[str, float]],
 ) -> dict[str, Any] | None:
     """Flag when the selected model has significantly worse RMSE than the best.
@@ -264,13 +264,19 @@ def _check_suboptimal_rmse(
     If the selected model has significantly worse RMSE than the best
     available model, flag it as a critical model selection issue.
 
+    Deterministic selections are handled exclusively by
+    ``_check_deterministic_policy_violation`` to avoid duplicate flags.
+
     Args:
-        selected:    The model selected by the model selection agent.
-        all_metrics: Dict of all model metrics.
+        model_selection: Output of the model selection agent.
+        all_metrics:      Dict of all model metrics.
 
     Returns:
         A flag dict if the selected model is suboptimal, otherwise ``None``.
     """
+    if model_selection.selection_method == "deterministic":
+        return None
+    selected = model_selection.selected_model
     if not all_metrics or selected not in all_metrics:
         return None
     selected_rmse = all_metrics[selected].get("RMSE")
@@ -502,7 +508,7 @@ def _deterministic_pre_check(
         _check_outliers(stat_result),
         _check_trend_ewma_lag(stat_result, selected),
         _check_explanation_mismatch(model_selection, selected),
-        _check_suboptimal_rmse(selected, all_metrics),
+        _check_suboptimal_rmse(model_selection, all_metrics),
         _check_deterministic_policy_violation(model_selection, all_metrics),
         _check_residual_autocorrelation(forecast_result),
         _check_residual_normality(forecast_result),

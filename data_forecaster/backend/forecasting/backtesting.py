@@ -391,14 +391,17 @@ def evaluate_candidate(
     final_test_metrics = ForecastMetrics(
         unavailable_reasons={"all": "No untouched final test window was reserved."}
     )
-    if config.final_test_size > 0 and len(series) > config.final_test_size:
-        final_start = len(series) - config.final_test_size
+    # Reuse the same clamped final_test_size as generate_folds so at least
+    # two training observations are preserved.
+    final_test_size = max(0, min(config.final_test_size, max(0, len(series) - 2)))
+    if final_test_size > 0 and len(series) > final_test_size:
+        final_start = len(series) - final_test_size
         final_fold = BacktestFold(
             fold_index=len(folds),
             train_end_index=final_start,
             test_start_index=final_start,
             test_end_index=len(series),
-            horizon=config.final_test_size,
+            horizon=final_test_size,
         )
         final_actuals: list[float] = []
         final_predictions: list[float] = []
@@ -464,8 +467,8 @@ def evaluate_candidate(
             "outlier_strategy": config.outlier_strategy,
             "imputation_method": config.imputation_method,
             "smoothing_method": config.smoothing_method,
-            "final_test_size": config.final_test_size,
-            "selection_end_index": len(series) - config.final_test_size,
+            "final_test_size": final_test_size,
+            "selection_end_index": len(series) - final_test_size,
         },
         metric_intervals=_bootstrap_metric_intervals(
             np.asarray(pooled_actuals, dtype=float),

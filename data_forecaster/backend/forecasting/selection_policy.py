@@ -201,11 +201,13 @@ def _rank_candidates(
 
 def _apply_tie_break(
     ranked: list[CandidateEvidence],
+    loss_metric: str = "rmse",
 ) -> tuple[CandidateEvidence, str]:
-    """Apply tie-breaking: prefer simpler model on negligible RMSE difference.
+    """Apply tie-breaking: prefer simpler model on negligible metric difference.
 
     Args:
-        ranked: Ranked list of candidates (best first).
+        ranked:      Ranked list of candidates (best first).
+        loss_metric: Metric used for ranking (e.g. ``"rmse"``, ``"mase"``).
 
     Returns:
         A tuple of (selected_candidate, tie_break_note).
@@ -218,12 +220,12 @@ def _apply_tie_break(
         return selected, tie_break_note
 
     second = ranked[1]
-    best_rmse = best.rmse
-    second_rmse = second.rmse
-    if not (best_rmse and second_rmse and best_rmse > 0):
+    best_val = best.metric_value(loss_metric)
+    second_val = second.metric_value(loss_metric)
+    if not (best_val and second_val and best_val > 0):
         return selected, tie_break_note
 
-    ratio = second_rmse / best_rmse
+    ratio = second_val / best_val
     if ratio >= _NEGLIGIBLE_RMSE_RATIO:
         return selected, tie_break_note
 
@@ -233,7 +235,7 @@ def _apply_tie_break(
     if second_simplicity < best_simplicity:
         selected = second
         tie_break_note = (
-            f"RMSE difference between {best.name} and "
+            f"{loss_metric.upper()} difference between {best.name} and "
             f"{second.name} is negligible (ratio={ratio:.3f}); "
             f"preferring simpler model {second.name}."
         )
@@ -244,6 +246,7 @@ def _check_baseline_retention(
     selected: CandidateEvidence,
     ranked: list[CandidateEvidence],
     tie_break_note: str,
+    loss_metric: str = "rmse",
 ) -> tuple[CandidateEvidence, str]:
     """Retain a baseline if the complex model doesn't add sufficient value.
 
@@ -251,6 +254,7 @@ def _check_baseline_retention(
         selected:       Currently selected candidate.
         ranked:         Ranked list of candidates.
         tie_break_note: Existing tie-break note.
+        loss_metric:    Metric used for ranking (e.g. ``"rmse"``, ``"mase"``).
 
     Returns:
         A tuple of (possibly_updated_selected, updated_tie_break_note).
@@ -262,13 +266,15 @@ def _check_baseline_retention(
     if not baselines:
         return selected, tie_break_note
 
-    best_baseline = min(baselines, key=lambda c: c.rmse or float("inf"))
-    selected_rmse = selected.rmse
-    baseline_rmse = best_baseline.rmse
-    if not (selected_rmse and baseline_rmse and selected_rmse > 0):
+    best_baseline = min(
+        baselines, key=lambda c: c.metric_value(loss_metric) or float("inf")
+    )
+    selected_val = selected.metric_value(loss_metric)
+    baseline_val = best_baseline.metric_value(loss_metric)
+    if not (selected_val and baseline_val and selected_val > 0):
         return selected, tie_break_note
 
-    improvement = baseline_rmse / selected_rmse
+    improvement = baseline_val / selected_val
     if improvement >= _BASELINE_IMPROVEMENT_RATIO:
         return selected, tie_break_note
 
@@ -325,9 +331,9 @@ def select_model_deterministic(
     ranked = _rank_candidates(rankable, loss_metric)
     ranking = [(c.name, c.rmse or float("inf")) for c in ranked]
 
-    selected, tie_break_note = _apply_tie_break(ranked)
+    selected, tie_break_note = _apply_tie_break(ranked, loss_metric)
     selected, tie_break_note = _check_baseline_retention(
-        selected, ranked, tie_break_note
+        selected, ranked, tie_break_note, loss_metric
     )
 
     logger.info(
@@ -356,18 +362,24 @@ def select_model_deterministic(
 def _simplicity_index(model_name: str) -> int:
     """Return the simplicity index for a model (lower = simpler).
 
+    Names are matched in descending specificity so that longer names
+    (e.g. ``"SARIMA"``, ``"Seasonal Naive"``) are recognized before their
+    shorter substrings (``"ARIMA"``, ``"Naive"``).
+
     Args:
         model_name: Model name.
 
     Returns:
         Simplicity index (0 = simplest).
     """
-    for i, name in enumerate(_SIMPLICITY_ORDER):
-        if name.lower() in model_name.lower():
+    model_lower = model_name.lower()
+    # Iterate in reverse so longer/more-specific names match first.
+    for i, name in reversed(list(enumerate(_SIMPLICITY_ORDER))):
+        if name.lower() in model_lower:
             return i
     # Baselines are simplest
-    for i, name in enumerate(_BASELINE_MODELS):
-        if name.lower() in model_name.lower():
+    for i, name in reversed(list(enumerate(_BASELINE_MODELS))):
+        if name.lower() in model_lower:
             return -1 + i
     return len(_SIMPLICITY_ORDER)
 
@@ -472,8 +484,9 @@ def _check_contradictory_selection(
 
     warnings_list: list[str] = []
     selected_matches = re.findall(r"selected model\s*:\s*(\w+)", text_lower)
+    valid_models_lower = {vm.lower() for vm in valid_models}
     for match in selected_matches:
-        if match.title() not in valid_models and match != "no":
+        if match.lower() not in valid_models_lower and match != "no":
             warnings_list.append(f"LLM selected '{match}' which is not a valid model.")
     return warnings_list
 

@@ -119,90 +119,143 @@ def fit_arima(
 
     # Refit on the full series using the exact selected order and intercept
     # configuration so the production forecast reflects the chosen model.
-    full_model = pm.ARIMA(
+    return _refit_full_series_arima(
+        series=series,
         order=order,
         with_intercept=with_intercept,
-        suppress_warnings=True,
-    ).fit(series)
-
-    logger.info("ARIMA selected order: %s", full_model.order)
-
-    converged = bool(
-        getattr(getattr(full_model, "arima_res_", None), "mle_retvals", {}).get(
-            "converged", True
-        )
-    )
-    roots_estimable = True
-    try:
-        ar_roots = np.asarray(full_model.arroots(), dtype=complex)
-        ma_roots = np.asarray(full_model.maroots(), dtype=complex)
-    except Exception as exc:  # pylint: disable=broad-except
-        logger.warning("ARIMA root diagnostics unavailable: %s", exc)
-        roots_estimable = False
-        ar_roots = np.asarray([], dtype=complex)
-        ma_roots = np.asarray([], dtype=complex)
-    stationary = bool(ar_roots.size == 0 or np.all(np.abs(ar_roots) > 1.0))
-    invertible = bool(ma_roots.size == 0 or np.all(np.abs(ma_roots) > 1.0))
-    fit_warnings: list[str] = []
-    if not roots_estimable:
-        fit_warnings.append("AR/MA root diagnostics were not estimable.")
-    if not converged:
-        fit_warnings.append("Maximum-likelihood optimization did not converge.")
-    if not stationary:
-        fit_warnings.append("Fitted AR roots do not satisfy stationarity.")
-    if not invertible:
-        fit_warnings.append("Fitted MA roots do not satisfy invertibility.")
-
-    forecast_values, conf_int = full_model.predict(
-        n_periods=forecast_horizon, return_conf_int=True
-    )
-
-    # Expose fitted innovations for residual diagnostics.
-    innovations: list[float] = []
-    try:
-        resid = np.asarray(full_model.resid(), dtype=float)
-        innovations = resid[np.isfinite(resid)].tolist()
-    except Exception as exc:  # pylint: disable=broad-except
-        logger.warning("ARIMA innovations unavailable: %s", exc)
-
-    # AR+MA order sum for the Ljung-Box degrees-of-freedom adjustment.
-    ar_ma_order = int(order[0]) + int(order[2])
-
-    status = (
-        ForecastFitStatus.OK if metrics.rmse is not None else ForecastFitStatus.DEGRADED
-    )
-    failure_reason = (
-        None if metrics.rmse is not None else metrics.unavailable_reasons.get("all")
-    )
-
-    return ForecastAdapterResult(
-        status=(
-            status
-            if converged and stationary and invertible
-            else ForecastFitStatus.DEGRADED
-        ),
-        failure_reason=failure_reason,
-        is_fallback=train_model is None,
-        forecast=forecast_values.tolist(),
-        lower_ci=conf_int[:, 0].tolist(),
-        upper_ci=conf_int[:, 1].tolist(),
+        forecast_horizon=forecast_horizon,
         metrics=metrics,
-        fitted_configuration={
-            "model": "ARIMA",
-            "order": list(full_model.order),
-            "trend": "c" if with_intercept else "n",
-            "with_intercept": with_intercept,
-            "refit_order": list(order),
-            "ar_ma_order": ar_ma_order,
-            "differencing_test": "kpss",
-            "max_d": 2,
-            "information_criterion": "aicc",
-            "converged": converged,
-            "stationary_roots": stationary,
-            "invertible_roots": invertible,
-            "root_diagnostics_estimable": roots_estimable,
-        },
-        warnings=fit_warnings,
-        innovations=innovations,
-        interval_label="prediction_interval",
+        train_model=train_model,
     )
+
+
+def _refit_full_series_arima(
+    series: pd.Series,
+    order: tuple[int, int, int],
+    with_intercept: bool | None,
+    forecast_horizon: int,
+    metrics: ForecastMetrics,
+    train_model: object | None,
+) -> ForecastAdapterResult:
+    """Refit the selected ARIMA order on the full series and build the result.
+
+    Performs the full-history refit, root/convergence diagnostics, prediction,
+    and innovations extraction. Any failure is caught and converted into a
+    typed ``FAILED`` result so callers (e.g. ``_fit_transformed_production``)
+    never receive a propagated exception.
+
+    Args:
+        series:           The full cleaned time series.
+        order:            Selected ``(p, d, q)`` order from the training fit.
+        with_intercept:   Intercept configuration from the training fit.
+        forecast_horizon: Number of periods to forecast.
+        metrics:          Holdout metrics from the training fit.
+        train_model:      The training-fit model (``None`` if unavailable).
+
+    Returns:
+        :class:`ForecastAdapterResult` with the production forecast, or a
+        typed ``FAILED`` result if the refit or diagnostics raise.
+    """
+    try:
+        full_model = pm.ARIMA(
+            order=order,
+            with_intercept=with_intercept,
+            suppress_warnings=True,
+        ).fit(series)
+
+        logger.info("ARIMA selected order: %s", full_model.order)
+
+        converged = bool(
+            getattr(getattr(full_model, "arima_res_", None), "mle_retvals", {}).get(
+                "converged", True
+            )
+        )
+        roots_estimable = True
+        try:
+            ar_roots = np.asarray(full_model.arroots(), dtype=complex)
+            ma_roots = np.asarray(full_model.maroots(), dtype=complex)
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.warning("ARIMA root diagnostics unavailable: %s", exc)
+            roots_estimable = False
+            ar_roots = np.asarray([], dtype=complex)
+            ma_roots = np.asarray([], dtype=complex)
+        stationary = bool(ar_roots.size == 0 or np.all(np.abs(ar_roots) > 1.0))
+        invertible = bool(ma_roots.size == 0 or np.all(np.abs(ma_roots) > 1.0))
+        fit_warnings: list[str] = []
+        if not roots_estimable:
+            fit_warnings.append("AR/MA root diagnostics were not estimable.")
+        if not converged:
+            fit_warnings.append("Maximum-likelihood optimization did not converge.")
+        if not stationary:
+            fit_warnings.append("Fitted AR roots do not satisfy stationarity.")
+        if not invertible:
+            fit_warnings.append("Fitted MA roots do not satisfy invertibility.")
+
+        forecast_values, conf_int = full_model.predict(
+            n_periods=forecast_horizon, return_conf_int=True
+        )
+
+        # Expose fitted innovations for residual diagnostics.
+        innovations: list[float] = []
+        try:
+            resid = np.asarray(full_model.resid(), dtype=float)
+            innovations = resid[np.isfinite(resid)].tolist()
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.warning("ARIMA innovations unavailable: %s", exc)
+
+        # AR+MA order sum for the Ljung-Box degrees-of-freedom adjustment.
+        ar_ma_order = int(order[0]) + int(order[2])
+
+        status = (
+            ForecastFitStatus.OK
+            if metrics.rmse is not None
+            else ForecastFitStatus.DEGRADED
+        )
+        failure_reason = (
+            None
+            if metrics.rmse is not None
+            else metrics.unavailable_reasons.get("all")
+        )
+
+        return ForecastAdapterResult(
+            status=(
+                status
+                if converged and stationary and invertible
+                else ForecastFitStatus.DEGRADED
+            ),
+            failure_reason=failure_reason,
+            is_fallback=train_model is None,
+            forecast=forecast_values.tolist(),
+            lower_ci=conf_int[:, 0].tolist(),
+            upper_ci=conf_int[:, 1].tolist(),
+            metrics=metrics,
+            fitted_configuration={
+                "model": "ARIMA",
+                "order": list(full_model.order),
+                "trend": "c" if with_intercept else "n",
+                "with_intercept": with_intercept,
+                "refit_order": list(order),
+                "ar_ma_order": ar_ma_order,
+                "differencing_test": "kpss",
+                "max_d": 2,
+                "information_criterion": "aicc",
+                "converged": converged,
+                "stationary_roots": stationary,
+                "invertible_roots": invertible,
+                "root_diagnostics_estimable": roots_estimable,
+            },
+            warnings=fit_warnings,
+            innovations=innovations,
+            interval_label="prediction_interval",
+        )
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.warning("ARIMA full-series refit failed: %s", exc)
+        return ForecastAdapterResult(
+            status=ForecastFitStatus.FAILED,
+            failure_reason=str(exc),
+            fitted_configuration={
+                "model": "ARIMA",
+                "order": list(order),
+                "with_intercept": with_intercept,
+            },
+        )
