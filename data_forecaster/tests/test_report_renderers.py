@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import re
+from types import SimpleNamespace
 
 import pytest
+from jinja2 import Environment, FileSystemLoader
 
+from forecasting.contracts import ForecastFitStatus
 from report.builder import ExecutiveReportBuilder
 from report.renderers import HTMLRenderer, MarkdownRenderer
 from schemas import (
@@ -63,6 +66,7 @@ def sample_report() -> "object":
     )
     forecast = ForecastResult(
         model_used="SARIMA",
+        status=ForecastFitStatus.OK,
         forecast=[400.0, 410.0, 420.0],
         lower_ci=[380.0, 390.0, 400.0],
         upper_ci=[420.0, 430.0, 440.0],
@@ -118,9 +122,38 @@ class TestMarkdownRenderer:
     def test_prediction_intervals_table_present(self, sample_report: "object") -> None:
         renderer = MarkdownRenderer()
         md = renderer.render(sample_report)
-        assert "Prediction Intervals" in md
+        assert "Model-Based 95% Prediction Intervals" in md
+        assert "calibrated" not in md.lower()
         assert "Lower Bound" in md
         assert "Upper Bound" in md
+
+    def test_experimental_interval_caption_is_not_model_based(
+        self, sample_report: "object"
+    ) -> None:
+        report = sample_report.model_copy(deep=True)
+        report.forecast_outlook.metrics.interval_label = "experimental"
+        for interval in report.forecast_outlook.metrics.prediction_intervals:
+            interval.interval_label = "experimental"
+            interval.confidence_level = "95% (experimental)"
+
+        section = MarkdownRenderer()._render_forecast_outlook(report)
+
+        assert "Estimated 95% Prediction Intervals (coverage not evaluated)" in section
+        assert "empirical coverage was not evaluated" in section
+        assert "model-based 95% planning range" not in section.lower()
+
+    def test_unavailable_intervals_are_explicit(
+        self, sample_report: "object"
+    ) -> None:
+        report = sample_report.model_copy(deep=True)
+        report.forecast_outlook.metrics.prediction_intervals = []
+        report.forecast_outlook.metrics.interval_label = "unavailable"
+
+        section = MarkdownRenderer()._render_forecast_outlook(report)
+
+        assert "Prediction Intervals Unavailable" in section
+        assert "no 95% planning range is shown" in section
+        assert "Model-Based 95%" not in section
 
     def test_visual_tags_present(self, sample_report: "object") -> None:
         renderer = MarkdownRenderer()
@@ -135,8 +168,8 @@ class TestMarkdownRenderer:
         renderer = MarkdownRenderer()
         md = renderer.render(sample_report)
         assert "## 1. Executive Dashboard" in md
-        assert "Forecast Direction" in md
-        assert "Expected Growth" in md
+        assert "Forecast Pattern" in md
+        assert "Forecast Endpoint Change" in md
 
     def test_confidence_score_in_output(self, sample_report: "object") -> None:
         renderer = MarkdownRenderer()
@@ -196,7 +229,7 @@ class TestHTMLRenderer:
         renderer = HTMLRenderer()
         html = renderer.render(sample_report)
         assert "dashboard-card" in html
-        assert "Forecast Direction" in html
+        assert "Forecast Pattern" in html
 
     def test_confidence_badge_present(self, sample_report: "object") -> None:
         renderer = HTMLRenderer()
@@ -214,8 +247,117 @@ class TestHTMLRenderer:
     def test_prediction_intervals_table(self, sample_report: "object") -> None:
         renderer = HTMLRenderer()
         html = renderer.render(sample_report)
-        assert "Prediction Intervals" in html
+        assert "Model-Based Prediction Intervals (95%)" in html
+        assert "calibrated" not in html.lower()
         assert "Lower Bound" in html
+
+    def test_experimental_interval_heading_is_not_nested(
+        self, sample_report: "object"
+    ) -> None:
+        report = sample_report.model_copy(deep=True)
+        report.forecast_outlook.metrics.interval_label = "experimental"
+        for interval in report.forecast_outlook.metrics.prediction_intervals:
+            interval.interval_label = "experimental"
+            interval.confidence_level = "95% (experimental)"
+
+        section = HTMLRenderer()._render_prediction_intervals(report)
+
+        assert "Estimated Prediction Intervals (95%; coverage not evaluated)" in section
+        assert "95% (experimental);" not in section
+
+    def test_unavailable_intervals_are_explicit(
+        self, sample_report: "object"
+    ) -> None:
+        report = sample_report.model_copy(deep=True)
+        report.forecast_outlook.metrics.prediction_intervals = []
+        report.forecast_outlook.metrics.interval_label = "unavailable"
+
+        section = HTMLRenderer()._render_prediction_intervals(report)
+
+        assert "Prediction Intervals Unavailable" in section
+        assert "no 95% planning range is shown" in section
+        assert "Model-Based" not in section
+
+    def test_frontend_template_renders_interval_provenance_branches(
+        self, sample_report: "object"
+    ) -> None:
+        template_root = "data_forecaster/frontend/templates"
+        environment = Environment(loader=FileSystemLoader(template_root))
+        environment.globals.update(
+            csrf_token=lambda: "",
+            current_user=SimpleNamespace(
+                is_authenticated=False,
+                is_admin=False,
+                username="",
+            ),
+            get_flashed_messages=lambda **_kwargs: [],
+            request=SimpleNamespace(endpoint="", blueprint=""),
+            session={},
+            url_for=lambda *_args, **_kwargs: "#",
+        )
+        template = environment.get_template("main/report.html")
+
+        experimental = sample_report.model_copy(deep=True)
+        experimental.forecast_outlook.metrics.interval_label = "experimental"
+        for interval in experimental.forecast_outlook.metrics.prediction_intervals:
+            interval.interval_label = "experimental"
+        experimental_html = template.render(
+            er=experimental,
+            segments=[],
+            llm_fallback=False,
+            export_url="#",
+            custom_settings=[],
+        )
+
+        unavailable = sample_report.model_copy(deep=True)
+        unavailable.forecast_outlook.metrics.interval_label = "unavailable"
+        unavailable.forecast_outlook.metrics.prediction_intervals = []
+        unavailable_html = template.render(
+            er=unavailable,
+            segments=[],
+            llm_fallback=False,
+            export_url="#",
+            custom_settings=[],
+        )
+
+        assert "Estimated 95% Forecast Range (coverage not evaluated)" in experimental_html
+        assert "Model-Based 95% Forecast Range" not in experimental_html
+        assert "Prediction Intervals Unavailable" in unavailable_html
+        assert "Model-Based 95% Forecast Range" not in unavailable_html
+
+    def test_forecast_template_treats_partial_bounds_as_unavailable(self) -> None:
+        environment = Environment(
+            loader=FileSystemLoader("data_forecaster/frontend/templates")
+        )
+        environment.globals.update(
+            csrf_token=lambda: "",
+            current_user=SimpleNamespace(
+                is_authenticated=False,
+                is_admin=False,
+                username="",
+            ),
+            get_flashed_messages=lambda **_kwargs: [],
+            request=SimpleNamespace(endpoint="", blueprint=""),
+            session={},
+            url_for=lambda *_args, **_kwargs: "#",
+        )
+
+        html = environment.get_template("main/forecast.html").render(
+            fc={"interval_label": "prediction_interval"},
+            forecast_rows=[
+                {
+                    "date": "2026-01-01",
+                    "forecast": 100.0,
+                    "lower_ci": None,
+                    "upper_ci": None,
+                }
+            ],
+            forecast_json=None,
+        )
+
+        assert "Prediction-interval bounds are unavailable" in html
+        assert "Model-based 95% prediction-interval bounds" not in html
+        assert "<th>Lower Bound</th>" not in html
 
     def test_recommendations_with_evidence(self, sample_report: "object") -> None:
         renderer = HTMLRenderer()

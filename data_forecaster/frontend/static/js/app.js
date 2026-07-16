@@ -99,8 +99,16 @@
       (messages.length ? "<ul class=\"mb-0 mt-2\">" + messages.map(function (message) { return "<li>" + escapeHtml(message) + "</li>"; }).join("") + "</ul>" : "") + "</div>";
     decisions.innerHTML = (result.decisions || []).map(function (decision) {
       var current = preflightOptions[decision.key] || decision.default || "";
+      var lossLabels = {
+        auto: "Auto — forecasting assistant recommends",
+        rmse: "Avoid occasional large errors (RMSE)",
+        mae: "Minimize the typical absolute error (MAE)",
+        wape: "Control error relative to total volume (WAPE)",
+        mase: "Compare accuracy against a naive forecast (MASE)"
+      };
       var options = (decision.options || []).map(function (option) {
-        return '<option value="' + escapeHtml(option) + '"' + (option === current ? " selected" : "") + ">" + escapeHtml(option) + "</option>";
+        var label = decision.key === "loss_metric" ? lossLabels[option] || option : option;
+        return '<option value="' + escapeHtml(option) + '"' + (option === current ? " selected" : "") + ">" + escapeHtml(label) + "</option>";
       }).join("");
       return '<div class="card mb-3"><div class="card-body"><label class="form-label" for="pf-' + escapeHtml(decision.key) + '">' + escapeHtml(decision.label) + "</label>" +
         '<p class="small text-muted">' + escapeHtml(decision.message) + '</p><select class="form-select preflight-choice" id="pf-' + escapeHtml(decision.key) + '" data-key="' + escapeHtml(decision.key) + '">' + options + "</select></div></div>";

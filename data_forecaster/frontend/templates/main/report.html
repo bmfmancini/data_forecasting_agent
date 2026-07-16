@@ -119,20 +119,36 @@
 </div>
 
 {# ── Prediction Intervals Table ───────────────────────────────────────── #}
-{% if er.forecast_outlook.metrics.prediction_intervals %}
+{% set report_intervals = er.forecast_outlook.metrics.prediction_intervals %}
+{% if report_intervals %}
 <section class="report-panel report-prediction-intervals mb-4">
     <div class="report-section-heading">
         <p class="report-kicker mb-1">Planning Range</p>
-        <h5 class="mb-0">Forecast Range (95%)</h5>
+        {% set interval_label = er.forecast_outlook.metrics.interval_label %}
+        <h5 class="mb-0">
+            {% if interval_label == 'experimental' %}
+            Estimated 95% Forecast Range (coverage not evaluated)
+            {% else %}
+            Model-Based 95% Forecast Range
+            {% endif %}
+        </h5>
     </div>
     <table class="table table-sm table-striped">
         <thead><tr><th>Date</th><th>Forecast</th><th>Lower Bound</th><th>Upper Bound</th></tr></thead>
         <tbody>
-            {% for pi in er.forecast_outlook.metrics.prediction_intervals %}
+            {% for pi in report_intervals %}
             <tr><td>{{ pi.date }}</td><td>{{ pi.forecast }}</td><td>{{ pi.lower_ci }}</td><td>{{ pi.upper_ci }}</td></tr>
             {% endfor %}
         </tbody>
     </table>
+</section>
+{% elif er.forecast_outlook.metrics.interval_label == 'unavailable' %}
+<section class="report-panel report-prediction-intervals mb-4">
+    <div class="report-section-heading">
+        <p class="report-kicker mb-1">Planning Range</p>
+        <h5 class="mb-0">Prediction Intervals Unavailable</h5>
+    </div>
+    <p>The forecasting model did not produce usable interval bounds; no 95% planning range is shown.</p>
 </section>
 {% endif %}
 

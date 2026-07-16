@@ -15,6 +15,7 @@ import os
 import re
 import tempfile
 from binascii import Error as BinasciiError
+from pathlib import Path
 from typing import Any
 
 from fpdf import FPDF
@@ -22,6 +23,22 @@ from fpdf import FPDF
 logger = logging.getLogger(__name__)
 
 _VISUAL_TAG_LINE_RE: re.Pattern[str] = re.compile(r"^\s*\[VISUAL:([A-Z_]+)\]\s*$")
+_PDF_FONT_FAMILY = "DejaVuSans"
+_DEFAULT_PDF_FONT_DIR = Path("/usr/share/fonts/truetype/dejavu")
+_PDF_FONT_FILES = {
+    "": "DejaVuSans.ttf",
+    "B": "DejaVuSans-Bold.ttf",
+}
+_PDF_SYMBOL_FALLBACKS = str.maketrans(
+    {
+        "📈": "↗",
+        "📊": "▥",
+        "🎯": "◎",
+        "🔍": "◉",
+        "🤖": "◆",
+        "✅": "✓",
+    }
+)
 
 # Maps visual tags to base64 PNG fields in the analysis result.
 _CHART_PNG_FIELD_BY_TAG: dict[str, str] = {
@@ -34,15 +51,32 @@ _CHART_PNG_FIELD_BY_TAG: dict[str, str] = {
 
 
 def _sanitize(text: str) -> str:
-    """Replace characters outside Latin-1 so core fpdf2 fonts do not crash.
+    """Preserve Unicode and map unsupported dashboard emoji to text glyphs.
 
     Args:
         text: Arbitrary Unicode string.
 
     Returns:
-        String with non-Latin-1 characters replaced by ``?``.
+        Unicode text supported by the embedded font.
     """
-    return text.encode("latin-1", errors="replace").decode("latin-1")
+    return text.translate(_PDF_SYMBOL_FALLBACKS)
+
+
+def _register_pdf_fonts(pdf: FPDF) -> None:
+    """Register regular and bold Unicode fonts required by the report.
+
+    ``PDF_FONT_DIR`` is resolved at call time so values loaded after module import
+    (for example from a Flask ``.env`` file) are honored.
+    """
+    font_dir = Path(os.getenv("PDF_FONT_DIR", str(_DEFAULT_PDF_FONT_DIR)))
+    for style, filename in _PDF_FONT_FILES.items():
+        font_path = font_dir / filename
+        if not font_path.is_file():
+            raise RuntimeError(
+                f"Required PDF font is unavailable: {font_path}. "
+                "Install fonts-dejavu-core or set PDF_FONT_DIR."
+            )
+        pdf.add_font(_PDF_FONT_FAMILY, style=style, fname=font_path)
 
 
 def _strip_inline(text: str) -> str:
@@ -146,24 +180,24 @@ def _process_line(
         return
     if line.startswith("### "):
         pdf.ln(3)
-        pdf.set_font("Helvetica", "B", 13)
+        pdf.set_font(_PDF_FONT_FAMILY, "B", 13)
         _cell(7, _sanitize(_strip_inline(line[4:])))
         pdf.ln(1)
     elif line.startswith("## "):
         pdf.ln(4)
-        pdf.set_font("Helvetica", "B", 15)
+        pdf.set_font(_PDF_FONT_FAMILY, "B", 15)
         _cell(8, _sanitize(_strip_inline(line[3:])))
         pdf.ln(2)
     elif line.startswith("# "):
         pdf.ln(5)
-        pdf.set_font("Helvetica", "B", 17)
+        pdf.set_font(_PDF_FONT_FAMILY, "B", 17)
         _cell(9, _sanitize(_strip_inline(line[2:])))
         pdf.ln(2)
     elif re.match(r"^[-*] ", line):
-        pdf.set_font("Helvetica", "", 11)
+        pdf.set_font(_PDF_FONT_FAMILY, "", 11)
         _cell(6, _sanitize("  - " + _strip_inline(line[2:])))
     elif re.match(r"^\d+\. ", line):
-        pdf.set_font("Helvetica", "", 11)
+        pdf.set_font(_PDF_FONT_FAMILY, "", 11)
         _cell(6, _sanitize("  " + _strip_inline(line)))
     elif re.match(r"^-{3,}$", line) or re.match(r"^\*{3,}$", line):
         pdf.ln(2)
@@ -174,7 +208,7 @@ def _process_line(
     elif line == "":
         pdf.ln(3)
     else:
-        pdf.set_font("Helvetica", "", 11)
+        pdf.set_font(_PDF_FONT_FAMILY, "", 11)
         _cell(6, _sanitize(_strip_inline(line)))
 
 
@@ -200,12 +234,13 @@ def report_to_pdf(
     """
     result = result or {}
     pdf = FPDF()
+    _register_pdf_fonts(pdf)
     pdf.set_margins(20, 20, 20)
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=20)
     max_img_width = pdf.w - pdf.l_margin - pdf.r_margin
 
-    pdf.set_font("Helvetica", "B", 20)
+    pdf.set_font(_PDF_FONT_FAMILY, "B", 20)
     pdf.set_x(pdf.l_margin)
     pdf.multi_cell(0, 12, _sanitize(title), align="C")
     pdf.ln(6)

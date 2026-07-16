@@ -8,7 +8,11 @@ from report.models import (
     DashboardItem,
     DataQualitySection,
 )
-from report.rules import FORECAST_DIRECTIONS
+from report.rules import (
+    FORECAST_DIRECTIONS,
+    RECENT_HOLDOUT_RMSE_RATIO_THRESHOLD,
+    recent_holdout_rmse_ratio,
+)
 from schemas import ForecastResult, ModelSelectionResult, StatisticalReviewResult
 
 _REVIEW_CRITICAL_MSG = "Statistical review identified critical issues"
@@ -25,32 +29,34 @@ def build_dashboard(
     has_structural_breaks: bool = False,
 ) -> Dashboard:
     """Build reusable dashboard widgets for the executive report."""
+    del model_selection  # ForecastResult is authoritative after retries/fallbacks.
     first_val, last_val, pct_change = forecast_change
-    direction, dir_status = direction_status(trend_slope)
+    del trend_slope  # Historical trend is reported separately from forecast direction.
+    pattern, dir_status = forecast_pattern_status(forecast.forecast)
     risk_label, risk_status = primary_risk(
         review, data_quality, forecast, has_structural_breaks
     )
-    action, action_status = recommended_action(review, data_quality)
+    action, action_status = recommended_action(review, data_quality, forecast)
 
     return Dashboard(
         widgets=[
             DashboardItem(
-                title="Forecast Direction",
-                value=direction,
+                title="Forecast Pattern",
+                value=pattern,
                 status=dir_status,
                 description=(
-                    f"The metric is projected to trend {direction.lower()} "
+                    f"The plotted forecast follows a {pattern.lower()} path "
                     f"over the {len(forecast.forecast)}-period horizon."
                 ),
                 icon="📈",
                 priority=1,
             ),
             DashboardItem(
-                title="Expected Growth",
+                title="Forecast Endpoint Change",
                 value=f"{pct_change:+.1f}%",
                 status=growth_status(pct_change),
                 description=(
-                    f"Projected change from {round(first_val, 2)} to "
+                    f"Endpoint change from {round(first_val, 2)} to "
                     f"{round(last_val, 2)} over the forecast horizon."
                 ),
                 icon="📊",
@@ -74,7 +80,7 @@ def build_dashboard(
             ),
             DashboardItem(
                 title="Model Selected",
-                value=model_selection.selected_model,
+                value=forecast.model_used,
                 status="info",
                 description=(
                     "Selected based on validation performance and data "
@@ -103,13 +109,26 @@ def build_dashboard(
     )
 
 
-def direction_status(slope: float) -> tuple[str, str]:
-    """Return ``(direction label, status token)`` for a trend slope."""
-    if slope > 0:
+def direction_status(endpoint_change_pct: float) -> tuple[str, str]:
+    """Return direction from first-to-last forecast change."""
+    if endpoint_change_pct > 0:
         return FORECAST_DIRECTIONS["upward"], "positive"
-    if slope < 0:
+    if endpoint_change_pct < 0:
         return FORECAST_DIRECTIONS["downward"], "negative"
     return FORECAST_DIRECTIONS["flat"], "neutral"
+
+
+def forecast_pattern_status(values: list[float]) -> tuple[str, str]:
+    """Classify monotonic direction separately from a variable seasonal path."""
+    if len(values) < 2:
+        return FORECAST_DIRECTIONS["flat"], "neutral"
+    changes = [current - previous for previous, current in zip(values, values[1:])]
+    tolerance = max(max(abs(value) for value in values) * 1e-9, 1e-12)
+    if all(change >= -tolerance for change in changes):
+        return FORECAST_DIRECTIONS["upward"], "positive"
+    if all(change <= tolerance for change in changes):
+        return FORECAST_DIRECTIONS["downward"], "negative"
+    return "Seasonal / Variable", "info"
 
 
 def growth_status(pct_change: float) -> str:
@@ -150,11 +169,11 @@ def primary_risk(
         return _REVIEW_CRITICAL_MSG, "negative"
     if data_quality.rating == "Poor":
         return "Poor data quality may compromise reliability", "negative"
-    if forecast.mape > 20:
+    if forecast.mape is not None and forecast.mape > 20:
         return "High forecast uncertainty (MAPE > 20%)", "warning"
     if has_structural_breaks:
         return (
-            "Structural breaks detected — monitor for regime shifts",
+            "Candidate structural breaks require validation",
             "warning",
         )
     return "Forecast accuracy may decline over longer horizons", "neutral"
@@ -163,16 +182,57 @@ def primary_risk(
 def recommended_action(
     review: StatisticalReviewResult | None,
     data_quality: DataQualitySection,
+    forecast: ForecastResult | None = None,
 ) -> tuple[str, str]:
     """Return ``(action description, status token)`` for the dashboard."""
+    holdout_ratio = None
+    if forecast is not None:
+        pooled_rmse = forecast.selection_metrics.get("rmse")
+        if not isinstance(pooled_rmse, (int, float)):
+            pooled_rmse = forecast.rmse
+        holdout_ratio = recent_holdout_rmse_ratio(
+            forecast.final_test_metrics.get("rmse"), pooled_rmse
+        )
     if review and review.verdict in ("warn", "fail"):
+        if (
+            holdout_ratio is not None
+            and holdout_ratio >= RECENT_HOLDOUT_RMSE_RATIO_THRESHOLD
+        ):
+            return (
+                "Review statistical audit findings and monitor future actuals "
+                f"closely; latest untouched holdout RMSE was {holdout_ratio:.2f}× "
+                "rolling-origin RMSE",
+                "warning",
+            )
         return (
-            "Review statistical audit findings and validate forecast",
+            "Review statistical audit findings and monitor future actuals",
+            "warning",
+        )
+    if (
+        holdout_ratio is not None
+        and holdout_ratio >= RECENT_HOLDOUT_RMSE_RATIO_THRESHOLD
+    ):
+        return (
+            "Monitor future actuals closely because latest untouched holdout RMSE "
+            f"was {holdout_ratio:.2f}× rolling-origin RMSE",
             "warning",
         )
     if data_quality.rating != "Good":
-        return "Improve data quality and re-run analysis", "warning"
+        has_collection_issue = any(
+            (
+                data_quality.missing_values,
+                data_quality.duplicate_timestamps,
+                data_quality.missing_timestamps,
+            )
+        ) or not data_quality.is_regular
+        if has_collection_issue:
+            return "Improve data collection quality and re-run analysis", "warning"
+        if data_quality.outlier_count:
+            return "Review detected anomalies and monitor future actuals", "warning"
+        if data_quality.issues:
+            return "Review validation issues and monitor future actuals", "warning"
+        return "Review the data-quality rating and monitor future actuals", "warning"
     return (
-        "Use forecast for near-term planning; validate against actuals",
+        "Use forecast for near-term planning; monitor future actuals",
         "positive",
     )

@@ -12,10 +12,12 @@ on :class:`AnalysisResponse`.
 from __future__ import annotations
 
 import re
+import math
 from typing import Any
 
 from core.llm_factory import get_llm
 from core.logging_config import get_logger
+from forecasting.selection_policy import validate_llm_output
 from prompts.statistical_review_prompt import STATISTICAL_REVIEW_PROMPT
 from schemas import (
     ForecastResult,
@@ -27,6 +29,8 @@ from utils.token_tracking import estimate_input_text, extract_token_usage
 
 logger = get_logger(__name__)
 
+_NOT_AVAILABLE = "not available"
+
 _VERDICT_PATTERN = re.compile(r"Verdict:\s*(PASS|WARN|FAIL)", re.IGNORECASE)
 _FLAG_PATTERN = re.compile(
     r"-\s*\[(CRITICAL|WARNING|INFO)\]\s*"
@@ -34,6 +38,37 @@ _FLAG_PATTERN = re.compile(
     r"(.*?)\s*\|\s*Recommendation:\s*(.*)",
     re.IGNORECASE,
 )
+
+
+def _format_optional_metric(value: float | None, fmt: str) -> str:
+    """Format a nullable metric for evidence passed to the reviewer."""
+    return _NOT_AVAILABLE if value is None else format(value, fmt)
+
+
+def _flag_key(flag: dict[str, Any]) -> str:
+    """Return a semantic key so deterministic and LLM paraphrases do not repeat."""
+    issue = str(flag.get("issue", "")).lower()
+    if "residual" in issue and ("autocorrel" in issue or "ljung-box" in issue):
+        return "residual_autocorrelation"
+    if "change point" in issue or "structural break" in issue:
+        return "change_points"
+    if "outlier" in issue:
+        return "outliers"
+    return re.sub(r"[^a-z0-9]+", " ", issue).strip()
+
+
+def _merge_review_flags(
+    deterministic: list[dict[str, Any]], llm_flags: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Merge flags while preserving deterministic findings as canonical."""
+    merged = list(deterministic)
+    existing = {_flag_key(flag) for flag in merged}
+    for flag in llm_flags:
+        key = _flag_key(flag)
+        if key not in existing:
+            merged.append(flag)
+            existing.add(key)
+    return merged
 
 
 def _check_seasonality_mismatch(
@@ -104,7 +139,7 @@ def _check_high_mape(
     Returns:
         A flag dict if MAPE is high, otherwise ``None``.
     """
-    if forecast_result.mape > 20:
+    if forecast_result.mape is not None and forecast_result.mape > 20:
         return {
             "agent": "forecasting",
             "severity": "warning",
@@ -221,7 +256,7 @@ def _check_explanation_mismatch(
 
 
 def _check_suboptimal_rmse(
-    selected: str,
+    model_selection: ModelSelectionResult,
     all_metrics: dict[str, dict[str, float]],
 ) -> dict[str, Any] | None:
     """Flag when the selected model has significantly worse RMSE than the best.
@@ -229,21 +264,33 @@ def _check_suboptimal_rmse(
     If the selected model has significantly worse RMSE than the best
     available model, flag it as a critical model selection issue.
 
+    Deterministic selections are handled exclusively by
+    ``_check_deterministic_policy_violation`` to avoid duplicate flags.
+
     Args:
-        selected:    The model selected by the model selection agent.
-        all_metrics: Dict of all model metrics.
+        model_selection: Output of the model selection agent.
+        all_metrics:      Dict of all model metrics.
 
     Returns:
         A flag dict if the selected model is suboptimal, otherwise ``None``.
     """
+    if model_selection.selection_method == "deterministic":
+        return None
+    selected = model_selection.selected_model
     if not all_metrics or selected not in all_metrics:
         return None
-    selected_rmse = all_metrics[selected].get("RMSE", float("inf"))
-    best_model = min(
-        all_metrics,
-        key=lambda m: all_metrics[m].get("RMSE", float("inf")),
-    )
-    best_rmse = all_metrics[best_model].get("RMSE", float("inf"))
+    selected_rmse = all_metrics[selected].get("RMSE")
+    if selected_rmse is None or not math.isfinite(selected_rmse):
+        return None
+    comparable = {
+        name: metrics["RMSE"]
+        for name, metrics in all_metrics.items()
+        if metrics.get("RMSE") is not None and math.isfinite(metrics["RMSE"])
+    }
+    if not comparable:
+        return None
+    best_model = min(comparable, key=comparable.get)
+    best_rmse = comparable[best_model]
     if best_model != selected and best_rmse > 0:
         ratio = selected_rmse / best_rmse
         if ratio > 1.5:
@@ -281,20 +328,20 @@ def _check_residual_autocorrelation(
         p_value = (
             f"{diag.ljung_box_p_value:.4f}"
             if diag.ljung_box_p_value is not None
-            else "not available"
+            else _NOT_AVAILABLE
         )
         return {
             "agent": "forecasting",
-            "severity": "critical",
+            "severity": "warning",
             "issue": (
                 f"Model residuals are autocorrelated (Ljung-Box p-value="
-                f"{p_value}). The model has failed to "
-                "capture all predictable patterns in the data."
+                f"{p_value}). The model may leave predictable "
+                "patterns in the errors."
             ),
             "recommendation": (
-                "The model is likely misspecified. Consider a different "
-                "model (e.g., SARIMA if seasonality is present) or "
-                "different model orders."
+                "Review model specification and compare residual diagnostics "
+                "for viable alternatives before overriding the model selected "
+                "by out-of-sample accuracy."
             ),
         }
     return None
@@ -316,7 +363,7 @@ def _check_residual_normality(
         p_value = (
             f"{diag.shapiro_wilk_p_value:.4f}"
             if diag.shapiro_wilk_p_value is not None
-            else "not available"
+            else _NOT_AVAILABLE
         )
         return {
             "agent": "forecasting",
@@ -344,6 +391,93 @@ def _check_residual_mean(forecast_result: ForecastResult) -> dict[str, Any] | No
             "recommendation": "Review model specification; the forecast may be consistently too high or too low.",
         }
     return None
+
+
+def _check_deterministic_policy_violation(
+    model_selection: ModelSelectionResult,
+    all_metrics: dict[str, dict[str, float]],
+) -> dict[str, Any] | None:
+    """Flag when a deterministic selection contradicts the metric evidence.
+
+    The deterministic policy is the source of truth for model rankings. The
+    review agent may only override it with a typed, code-recognized reason.
+    This check detects when the selected model is objectively worse than
+    another candidate by a large margin — a code-recognized reason to flag
+    the selection.
+
+    Args:
+        model_selection: Output of the model selection agent.
+        all_metrics:      Dict of all model metrics.
+
+    Returns:
+        A flag dict if a policy violation is detected, otherwise ``None``.
+    """
+    if model_selection.selection_method != "deterministic":
+        return None
+    selected = model_selection.selected_model
+    if not all_metrics or selected not in all_metrics:
+        return None
+    selected_rmse = all_metrics[selected].get("RMSE")
+    if selected_rmse is None or not math.isfinite(selected_rmse):
+        return None
+    comparable = {
+        name: metrics["RMSE"]
+        for name, metrics in all_metrics.items()
+        if metrics.get("RMSE") is not None and math.isfinite(metrics["RMSE"])
+    }
+    if not comparable:
+        return None
+    best_model = min(comparable, key=comparable.get)
+    best_rmse = comparable[best_model]
+    if best_model != selected and best_rmse > 0:
+        ratio = selected_rmse / best_rmse
+        if ratio > 1.5:
+            return {
+                "agent": "model_selection",
+                "severity": "critical",
+                "issue": (
+                    f"Deterministic policy selected '{selected}' (RMSE="
+                    f"{selected_rmse:.4f}) which is {ratio:.1f}x worse than "
+                    f"the best candidate '{best_model}' (RMSE="
+                    f"{best_rmse:.4f})."
+                ),
+                "recommendation": (
+                    "The selection policy may have excluded the best model "
+                    "due to a status or assumption violation. Review the "
+                    "selection_evidence for exclusion reasons."
+                ),
+            }
+    return None
+
+
+def _compute_override_eligibility(
+    model_selection: ModelSelectionResult,
+    pre_check_flags: list[dict[str, Any]],
+) -> tuple[bool, list[str]]:
+    """Determine whether the review can override the deterministic selection.
+
+    The statistical review agent is a critic, but it cannot override the
+    deterministic numerical policy without a typed, code-recognized reason.
+    Only critical flags on the ``model_selection`` or ``forecasting``
+    agents constitute valid override reasons.
+
+    Args:
+        model_selection: Output of the model selection agent.
+        pre_check_flags:  Flags from the deterministic pre-check.
+
+    Returns:
+        A tuple of (can_override, override_reasons).
+    """
+    if model_selection.selection_method != "deterministic":
+        # Non-deterministic selections (LLM, heuristic) can always be overridden.
+        return True, []
+    override_reasons = [
+        flag["issue"]
+        for flag in pre_check_flags
+        if flag.get("severity") == "critical"
+        and flag.get("agent") in ("model_selection", "forecasting")
+    ]
+    return bool(override_reasons), override_reasons
 
 
 def _deterministic_pre_check(
@@ -374,7 +508,8 @@ def _deterministic_pre_check(
         _check_outliers(stat_result),
         _check_trend_ewma_lag(stat_result, selected),
         _check_explanation_mismatch(model_selection, selected),
-        _check_suboptimal_rmse(selected, all_metrics),
+        _check_suboptimal_rmse(model_selection, all_metrics),
+        _check_deterministic_policy_violation(model_selection, all_metrics),
         _check_residual_autocorrelation(forecast_result),
         _check_residual_normality(forecast_result),
         _check_residual_mean(forecast_result),
@@ -420,7 +555,7 @@ def _build_model_selection_text(
 def _build_forecast_text(forecast_result: ForecastResult) -> str:
     """Build a text summary of the forecast for the LLM prompt."""
     forecast_sample = [round(v, 2) for v in forecast_result.forecast[:10]]
-    residual_text = "Not available."
+    residual_text = _NOT_AVAILABLE.capitalize() + "."
     if diag := forecast_result.residual_diagnostics:
         ljung_box = (
             f"{diag.ljung_box_p_value:.4f}"
@@ -439,11 +574,21 @@ def _build_forecast_text(forecast_result: ForecastResult) -> str:
             f"Disabled: {diag.disabled_tests}"
         )
 
+    candidate_text = (
+        "; ".join(
+            f"{candidate.model}={candidate.status.value}"
+            + (f" ({candidate.failure_reason})" if candidate.failure_reason else "")
+            for candidate in forecast_result.candidate_results
+        )
+        or _NOT_AVAILABLE
+    )
+
     return (
         f"- Model used: {forecast_result.model_used}\n"
-        f"- RMSE: {forecast_result.rmse:.4f}\n"
-        f"- MAE: {forecast_result.mae:.4f}\n"
-        f"- MAPE: {forecast_result.mape:.2f}%\n"
+        f"- RMSE: {_format_optional_metric(forecast_result.rmse, '.4f')}\n"
+        f"- MAE: {_format_optional_metric(forecast_result.mae, '.4f')}\n"
+        f"- MAPE: {_format_optional_metric(forecast_result.mape, '.2f')}%\n"
+        f"- Candidate fit statuses: {candidate_text}\n"
         f"- Forecast sample (first 10): {forecast_sample}\n"
         f"- Residual Diagnostics: {residual_text}\n"
         f"- Forecast dates: "
@@ -452,15 +597,15 @@ def _build_forecast_text(forecast_result: ForecastResult) -> str:
 
 
 def _build_all_metrics_text(
-    all_metrics: dict[str, dict[str, float]],
+    all_metrics: dict[str, dict[str, float | None]],
 ) -> str:
     """Build a text summary of all model metrics for the LLM prompt."""
     lines = []
     for name, metrics in all_metrics.items():
         lines.append(
-            f"- {name}: RMSE={metrics.get('RMSE', 0):.4f}, "
-            f"MAE={metrics.get('MAE', 0):.4f}, "
-            f"MAPE={metrics.get('MAPE', 0):.2f}%"
+            f"- {name}: RMSE={_format_optional_metric(metrics.get('RMSE'), '.4f')}, "
+            f"MAE={_format_optional_metric(metrics.get('MAE'), '.4f')}, "
+            f"MAPE={_format_optional_metric(metrics.get('MAPE'), '.2f')}%"
         )
     return "\n".join(lines) if lines else "No metrics available."
 
@@ -640,6 +785,7 @@ def run_statistical_review_agent(
     prompt = STATISTICAL_REVIEW_PROMPT
     token_usage: dict[str, int] = {}
     reasoning_steps: list[dict[str, Any]] = []
+    narrative_uncertainty = "deterministic_precheck"
 
     try:
         llm = get_llm(temperature=0)
@@ -659,16 +805,30 @@ def run_statistical_review_agent(
         logger.info("Statistical review LLM output: %s", output[:200])
 
         verdict = _parse_verdict(output)
+        narrative_uncertainty = "validated_llm_interpretation"
         llm_flags = _parse_flags(output)
         endorsements = _parse_endorsements(output)
         summary = _parse_summary(output)
 
-        # Merge deterministic flags with LLM flags (deduplicate by issue text)
-        all_flags = list(pre_check_flags)
-        existing_issues = {f["issue"] for f in all_flags}
-        for flag in llm_flags:
-            if flag["issue"] not in existing_issues:
-                all_flags.append(flag)
+        validation_warnings = validate_llm_output(
+            output,
+            list(all_metrics),
+            {
+                "all_metrics": all_metrics,
+                "selected_model": model_selection.selected_model,
+            },
+        )
+        for warning in validation_warnings:
+            llm_flags.append(
+                {
+                    "agent": "statistical",
+                    "severity": "warning",
+                    "issue": f"Unsupported LLM review claim: {warning}",
+                    "recommendation": "Use only the supplied deterministic evidence.",
+                }
+            )
+
+        all_flags = _merge_review_flags(pre_check_flags, llm_flags)
 
         verdict = _compute_verdict(verdict, pre_check_flags)
 
@@ -707,6 +867,10 @@ def run_statistical_review_agent(
         "Statistical review complete: verdict=%s flags=%d", verdict, len(all_flags)
     )
 
+    can_override, override_reasons = _compute_override_eligibility(
+        model_selection, pre_check_flags
+    )
+
     return StatisticalReviewResult(
         verdict=verdict,
         flags=all_flags,
@@ -714,4 +878,13 @@ def run_statistical_review_agent(
         summary=summary,
         reasoning_steps=reasoning_steps,
         token_usage=token_usage,
+        can_override_selection=can_override,
+        override_reasons=override_reasons,
+        narrative_claims=[
+            {
+                "claim": summary,
+                "evidence_references": ["deterministic_pre_check", "all_metrics"],
+                "uncertainty": narrative_uncertainty,
+            }
+        ],
     )

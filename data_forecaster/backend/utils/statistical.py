@@ -87,17 +87,29 @@ def run_stl_decomposition(
 ) -> dict[str, list[float]]:
     """STL decomposition into trend, seasonal, and residual components.
 
+    Returns ``not_estimable`` in the result dict when the series is too
+    short for the requested period, rather than inventing period 2. A
+    separately labeled nonseasonal trend smoother is not returned here;
+    callers should check the ``status`` key.
+
     Returns:
-        trend, seasonal, residual as float lists
+        trend, seasonal, residual as float lists, plus a ``status`` key
+        (``"ok"`` or ``"not_estimable"``).
     """
     values = series.dropna().astype(float)
     period = max(period, 2)
     # STL needs at least 2 full cycles
     if len(values) < 2 * period:
         logger.warning(
-            "Series too short for STL with period=%d; using period=2", period
+            "Series too short for STL with period=%d; returning not_estimable.",
+            period,
         )
-        period = 2
+        return {
+            "trend": [],
+            "seasonal": [],
+            "residual": [],
+            "status": "not_estimable",
+        }
 
     stl = STL(values, period=period, robust=True)
     res = stl.fit()
@@ -106,6 +118,7 @@ def run_stl_decomposition(
         "trend": res.trend.tolist(),
         "seasonal": res.seasonal.tolist(),
         "residual": res.resid.tolist(),
+        "status": "ok",
     }
 
 
@@ -132,12 +145,24 @@ def compute_acf_pacf(
 
 
 def run_periodogram(series: pd.Series) -> dict[str, Any]:
-    """Compute periodogram and identify dominant period.
+    """Compute periodogram on detrended values and identify dominant period.
+
+    Detrends the series before spectral analysis to avoid the trend
+    dominating the periodogram. Harmonics are accounted for by returning
+    the top candidate periods rather than a single dominant peak.
 
     Returns:
         dominant_period, frequencies, power
     """
     values = series.dropna().astype(float).values
+    # Detrend before spectral analysis
+    x = np.arange(len(values), dtype=float)
+    if len(values) >= 3:
+        try:
+            slope, intercept, _, _, _ = linregress(x, values)
+            values = values - (slope * x + intercept)
+        except Exception:  # pylint: disable=broad-except
+            pass
     freqs, power = scipy_periodogram(values)
 
     # Skip DC component (index 0, freq=0)
@@ -166,7 +191,7 @@ def detect_trend(series: pd.Series) -> dict[str, Any]:
     """
     values = series.dropna().astype(float).values
     x = np.arange(len(values), dtype=float)
-    slope, intercept, r_value, p_value, std_err = linregress(x, values)
+    slope, _intercept, r_value, p_value, _std_err = linregress(x, values)
 
     has_trend = p_value < 0.05
     direction = "upward" if slope > 0 else "downward"
@@ -356,7 +381,7 @@ def detect_change_points(
                 change_points.append(series.index[i])
 
     # Remove duplicates and sort
-    change_points = sorted(list(set(change_points)))
+    change_points = sorted(set(change_points))
 
     interpretation = (
         f"Detected {len(change_points)} change points using {method} method. "

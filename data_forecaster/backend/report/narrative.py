@@ -14,11 +14,13 @@ LLM.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from core.config import GEMINI_TEMPERATURE
 from core.llm_factory import get_llm
 from core.logging_config import get_logger
+from forecasting.selection_policy import validate_llm_output
 from prompts.report_generation_prompt import (
     DATA_QUALITY_NARRATIVE_PROMPT,
     EXECUTIVE_SUMMARY_NARRATIVE_PROMPT,
@@ -183,6 +185,53 @@ def _generate_section(
         for key in total_usage:
             total_usage[key] += usage.get(key, 0)
         narrative = str(response.content).strip()
+        section_data = section.model_dump()
+        valid_models = _models_in_evidence(section_data)
+        validation_warnings = validate_llm_output(narrative, valid_models, section_data)
+        if section_name == "data_quality":
+            validation_warnings.extend(
+                _unsupported_anomaly_significance_claim(narrative, section_data)
+            )
+            validation_warnings.extend(
+                _contradictory_data_quality_rating(narrative, section_data)
+            )
+        if section_name == "forecast_outlook":
+            expected_model = str(section_data.get("metrics", {}).get("model_used", ""))
+            validation_warnings.extend(
+                _unexpected_model_references(narrative, expected_model)
+            )
+            validation_warnings.extend(
+                _contradictory_forecast_pattern(
+                    narrative,
+                    str(section_data.get("metrics", {}).get("forecast_pattern", "")),
+                )
+            )
+            validation_warnings.extend(
+                _unsupported_interval_calibration_claim(narrative, section_data)
+            )
+        elif section_name == "executive_summary":
+            outlook = str(section_data.get("strategic_outlook", ""))
+            if "seasonal / variable" in outlook.lower():
+                validation_warnings.extend(
+                    _contradictory_forecast_pattern(narrative, "Seasonal / variable")
+                )
+        elif section_name == "model_comparison":
+            validation_warnings.extend(
+                _contradictory_model_selection(
+                    narrative, str(section_data.get("selected_model", ""))
+                )
+            )
+        elif section_name == "recommendation":
+            validation_warnings.extend(
+                _unsupported_recommendation_claims(narrative, section_data)
+            )
+        if validation_warnings:
+            logger.warning(
+                "Unsupported narrative for %s: %s — using fallback.",
+                section_name,
+                "; ".join(validation_warnings),
+            )
+            return _fallback_narrative(section, section_name)
         logger.debug("Narrative generated for %s", section_name)
         return narrative
     except Exception as exc:
@@ -192,6 +241,238 @@ def _generate_section(
             exc,
         )
         return _fallback_narrative(section, section_name)
+
+
+def _models_in_evidence(value: Any) -> list[str]:
+    """Collect recognized forecast model names from structured evidence."""
+    serialized = json.dumps(value, default=str).lower()
+    known = (
+        "ARIMA",
+        "SARIMA",
+        "Holt-Winters",
+        "EWMA",
+        "Naive",
+        "Seasonal Naive",
+        "Mean Forecast",
+        "Drift",
+    )
+    return [name for name in known if name.lower() in serialized]
+
+
+def _unexpected_model_references(text: str, expected_model: str) -> list[str]:
+    """Reject forecast prose that names a model other than the fitted model."""
+    normalized = re.sub(r"[‐‑‒–—−]", "-", text).lower()
+    known = (
+        "ARIMA",
+        "SARIMA",
+        "Holt-Winters",
+        "EWMA",
+        "Naive",
+        "Seasonal Naive",
+        "Mean Forecast",
+        "Drift",
+        "Constant",
+    )
+    return [
+        f"Narrative referenced {name}; fitted model is {expected_model}."
+        for name in known
+        if re.search(rf"(?<![a-z]){re.escape(name.lower())}(?![a-z])", normalized)
+        and name.lower() != expected_model.lower()
+    ]
+
+
+def _contradictory_model_selection(text: str, expected_model: str) -> list[str]:
+    """Reject prose that attributes selection to a different named model."""
+    normalized = re.sub(r"[‐‑‒–—−]", "-", text)
+    patterns = (
+        r"(?P<model>ARIMA|SARIMA|Holt-Winters|EWMA)\s+(?:was|is)\s+(?:selected|chosen)",
+        r"selected\s+(?:model\s+)?(?:was|is|:)\s*(?P<model>ARIMA|SARIMA|Holt-Winters|EWMA)",
+    )
+    warnings: list[str] = []
+    for pattern in patterns:
+        for match in re.finditer(pattern, normalized, flags=re.IGNORECASE):
+            model = match.group("model")
+            if model.lower() != expected_model.lower():
+                warnings.append(
+                    f"Narrative selected {model}; production model is {expected_model}."
+                )
+    return warnings
+
+
+def _contradictory_forecast_pattern(text: str, pattern: str) -> list[str]:
+    """Reject directional-trajectory claims for a variable forecast path."""
+    if pattern.lower() != "seasonal / variable":
+        return []
+    normalized = re.sub(r"[‐‑‒–—−]", "-", text).lower()
+    directional_claims = (
+        "downward trajectory",
+        "upward trajectory",
+        "downward trend",
+        "upward trend",
+        "trends downward",
+        "trends upward",
+    )
+    return [
+        f"Narrative described a {claim}; forecast pattern is {pattern}."
+        for claim in directional_claims
+        if claim in normalized
+    ]
+
+
+def _unsupported_anomaly_significance_claim(
+    text: str,
+    section_data: dict[str, Any],
+) -> list[str]:
+    """Reject unsupported claims that detected anomalies are insignificant."""
+    if not section_data.get("outlier_count"):
+        return []
+    normalized = re.sub(r"\s+", " ", text).lower()
+    unsupported_phrases = (
+        "insignificant",
+        "negligible",
+        "immaterial",
+        "not significant",
+        "not deemed significant",
+        "not significant enough",
+        "minimal impact",
+        "little impact",
+        "limited impact",
+        "harmless",
+        "not concerning",
+        "not consequential",
+        "no material impact",
+        "no impact on",
+        "does not affect",
+        "do not affect",
+        "did not warrant a downgrade",
+        "does not warrant a downgrade",
+        "do not warrant a downgrade",
+        "unlikely to affect",
+        "unlikely to influence",
+        "too small to affect",
+        "too small to influence",
+    )
+    if any(phrase in normalized for phrase in unsupported_phrases):
+        return [
+            "Narrative characterized detected anomalies as insignificant without "
+            "deterministic evidence."
+        ]
+    return []
+
+
+def _contradictory_data_quality_rating(
+    text: str,
+    section_data: dict[str, Any],
+) -> list[str]:
+    """Reject an explicit overall rating that conflicts with policy output."""
+    expected = str(section_data.get("rating", "")).lower()
+    if expected not in {"good", "fair", "poor"}:
+        return []
+    normalized = re.sub(r"\s+", " ", text).lower()
+    patterns = (
+        r"\b(?:overall\s+)?data quality(?:\s+rating)?\s*"
+        r"(?:is|was|remains|:)\s*(?:rated\s+)?(?P<rating>good|fair|poor)\b",
+        r"\boverall rating\s*(?:is|was|remains|:)\s*"
+        r"(?P<rating>good|fair|poor)\b",
+    )
+    for pattern in patterns:
+        for match in re.finditer(pattern, normalized):
+            prefix = normalized[max(0, match.start() - 11) : match.start()]
+            if prefix.endswith("collection "):
+                continue
+            stated = match.group("rating")
+            if stated != expected:
+                return [
+                    f"Narrative rated overall data quality {stated}; "
+                    f"deterministic policy rating is {expected}."
+                ]
+    return []
+
+
+def _unsupported_recommendation_claims(
+    text: str,
+    section_data: dict[str, Any],
+) -> list[str]:
+    """Reject recommendation prose that reverses deterministic safeguards."""
+    normalized = re.sub(r"[‐‑‒–—−]", "-", text).lower()
+    evidence = json.dumps(section_data, default=str).lower()
+    warnings: list[str] = []
+
+    if "candidate break dates" in evidence or "change points" in evidence:
+        option_positions = [
+            normalized.find(option)
+            for option in (
+                "intervention term",
+                "recency weighting",
+                "segment",
+                "regime-specific",
+            )
+            if option in normalized
+        ]
+        if option_positions:
+            validation_positions = [
+                normalized.find(term)
+                for term in ("validate", "validation", "confirm")
+                if term in normalized
+            ]
+            validation_first = bool(validation_positions) and min(
+                validation_positions
+            ) < min(option_positions)
+            conditional = bool(
+                re.search(
+                    r"\b(?:only if|if (?:the )?(?:break|shift).{0,30}"
+                    r"(?:confirmed|durable|persistent)|after validation|"
+                    r"once validated|then (?:compare|consider))\b",
+                    normalized,
+                )
+            )
+            if not validation_first or not conditional:
+                warnings.append(
+                    "Structural-break options were recommended without "
+                    "validation-first, conditional sequencing."
+                )
+
+    completed_validation = any(
+        marker in evidence
+        for marker in (
+            "out-of-sample validation has been completed",
+            "completed rolling-origin and untouched final-test validation",
+            "untouched final-test rmse",
+        )
+    )
+    if completed_validation:
+        forbidden = (
+            r"\bno out-of-sample validation\b",
+            r"\bnot (?:yet )?validated out-of-sample\b",
+            r"\bhas not been validated out-of-sample\b",
+            r"\bwithout out-of-sample validation\b",
+            r"\bfirst out-of-sample validation\b",
+            r"\bvalidate (?:the )?forecast out-of-sample\b",
+        )
+        if any(re.search(pattern, normalized) for pattern in forbidden):
+            warnings.append(
+                "Recommendation implied that completed out-of-sample validation "
+                "had not occurred."
+            )
+    return warnings
+
+
+def _unsupported_interval_calibration_claim(
+    text: str,
+    section_data: dict[str, Any],
+) -> list[str]:
+    """Reject calibrated-interval wording without visible coverage evidence."""
+    if "calibrat" not in text.lower():
+        return []
+    metrics = section_data.get("metrics", {})
+    has_coverage = metrics.get("empirical_interval_coverage") is not None
+    has_calibration_evidence = bool(metrics.get("interval_calibration_evidence"))
+    if has_coverage and has_calibration_evidence:
+        return []
+    return [
+        "Narrative called prediction intervals calibrated without empirical "
+        "coverage and calibration evidence."
+    ]
 
 
 def _fallback_forecast_outlook(data: dict[str, Any]) -> str:
@@ -210,20 +491,36 @@ def _fallback_forecast_outlook(data: dict[str, Any]) -> str:
     first_value = m.get("first_value", "N/A")
     last_value = m.get("last_value", "N/A")
     pct_change = m.get("pct_change", 0.0)
+    peak_value = m.get("peak_value")
+    peak_date = m.get("peak_date")
     horizon = m.get("horizon", 0)
     intervals = m.get("prediction_intervals") or []
-    if intervals and isinstance(intervals, list) and len(intervals) > 1:
-        conf_level = intervals[0].get("confidence_level", "95%")
+    if intervals and isinstance(intervals, list):
+        interval_label = intervals[0].get("interval_label", "prediction_interval")
+        range_description = (
+            "estimated 95% prediction range (coverage not evaluated)"
+            if interval_label == "experimental"
+            else "model-based 95% prediction range"
+        )
+        peak_text = (
+            f" A temporary seasonal peak of {peak_value} is projected"
+            f" for {peak_date}."
+            if peak_value is not None
+            else ""
+        )
         return (
             f"The forecast projects a change from {first_value} to "
-            f"{last_value} ({pct_change:+.1f}%) over "
-            f"{horizon} periods. Forecasts carry uncertainty — "
-            f"the {conf_level} "
-            f"prediction range should be used for planning."
+            f"{last_value} (a first-to-last change of {pct_change:+.1f}%) over "
+            f"{horizon} periods.{peak_text} Forecasts carry uncertainty — "
+            f"the {range_description} should be used for planning."
         )
-    return (
-        f"The forecast projects {pct_change:+.1f}% change " f"over {horizon} periods."
-    )
+    if m.get("interval_label") == "unavailable":
+        return (
+            f"The forecast projects {pct_change:+.1f}% change over {horizon} "
+            "periods. Prediction-interval bounds were unavailable, so no 95% "
+            "planning range is implied."
+        )
+    return f"The forecast projects {pct_change:+.1f}% change over {horizon} periods."
 
 
 def _fallback_narrative(section: Any, section_name: str) -> str:
@@ -243,15 +540,13 @@ def _fallback_narrative(section: Any, section_name: str) -> str:
     if section_name == "executive_summary":
         return (
             f"{data['strategic_outlook']} "
-            f"Expected growth is {data['expected_growth']}. "
+            f"The first-to-last endpoint change is {data['expected_growth']}. "
             f"Confidence is {data['confidence_level']}. "
             f"The primary risk is that {data['primary_risk'].lower()}. "
             f"Recommended action: {data['recommended_action']}"
         )
     if section_name == "data_quality":
-        return (
-            f"Data quality is rated {data['rating']}. " f"{data['rating_explanation']}"
-        )
+        return f"Data quality is rated {data['rating']}. {data['rating_explanation']}"
     if section_name == "historical_analysis":
         return (
             f"The data shows a {data['trend_direction'].lower()} trend "
@@ -276,8 +571,7 @@ def _fallback_narrative(section: Any, section_name: str) -> str:
             f"The independent statistical assessment verdict is "
             f"{data['verdict'].upper()}. "
             + (
-                "Key concerns were identified — see the recommended "
-                "follow-up actions."
+                "Key concerns were identified — see the recommended follow-up actions."
                 if data.get("key_concerns")
                 else "The analysis is well-supported by the evidence."
             )

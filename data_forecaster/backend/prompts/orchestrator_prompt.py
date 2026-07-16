@@ -13,7 +13,7 @@ ORCHESTRATOR_CHAT_PROMPT = ChatPromptTemplate.from_messages(
                 "STRICTLY LIMITED to time series forecasting and forecasting-related questions about the "
                 "provided dataset. This includes: 1. Time series forecasting methodology and concepts, "
                 "2. Statistical analysis of forecasting models (ARIMA, SARIMA, Holt-Winters, EWMA), "
-                "3. Interpretation of forecast results and metrics (RMSE, MAE, MAPE, confidence intervals), "
+                "3. Interpretation of forecast results and metrics (RMSE, MAE, MAPE, prediction intervals), "
                 "and 4. Business reporting based on forecast projections.\n\n"
                 "DOMAIN RESTRICTION & OUT-OF-BOUNDS POLICY:\n"
                 "- You are NOT a general-purpose AI. You can ONLY answer questions about time series "
