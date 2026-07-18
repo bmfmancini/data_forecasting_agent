@@ -31,6 +31,7 @@ from forecasting.contracts import (
     StationarityEvidence,
     TrendEvidence,
 )
+from utils.data_cleaning import frequency_to_seasonal_period
 
 logger = get_logger(__name__)
 
@@ -49,24 +50,6 @@ _HARMONIC_TOLERANCE = 0.15  # 15% tolerance for harmonic matching
 
 # ── Frequency → period mapping ──────────────────────────────────────────────
 
-_FREQ_PERIOD_MAP: dict[str, int] = {
-    "D": 7,
-    "B": 5,
-    "W": 52,
-    "M": 12,
-    "MS": 12,
-    "ME": 12,
-    "Q": 4,
-    "QS": 4,
-    "QE": 4,
-    "H": 24,
-    "A": 1,
-    "Y": 1,
-    "YS": 1,
-    "YE": 1,
-}
-
-
 def _freq_to_period(freq: str | None) -> int | None:
     """Map a pandas frequency string to an integer seasonal period.
 
@@ -76,11 +59,7 @@ def _freq_to_period(freq: str | None) -> int | None:
     Returns:
         The integer period, or ``None`` when the frequency is unknown.
     """
-    if freq is None:
-        return None
-    # Strip anchored suffixes (e.g. "W-SUN" → "W")
-    base = freq.split("-")[0].upper()
-    return _FREQ_PERIOD_MAP.get(base)
+    return frequency_to_seasonal_period(freq, default=None)
 
 
 # ── Seasonality ──────────────────────────────────────────────────────────────

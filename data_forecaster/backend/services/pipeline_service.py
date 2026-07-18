@@ -34,8 +34,12 @@ from schemas import (
     ValidationResult,
 )
 from services.rag_service import get_rag_kb
-from utils.data_cleaning import apply_iqr_clipping, apply_zscore_clipping
-from utils.data_cleaning import impute_missing
+from utils.data_cleaning import (
+    apply_iqr_clipping,
+    apply_zscore_clipping,
+    frequency_to_seasonal_period,
+    impute_missing,
+)
 from utils.preflight import prepare_series_frame
 from utils.statistical import apply_boxcox, compute_acf_pacf, run_stl_decomposition
 from utils.visualization import (
@@ -985,17 +989,4 @@ def _freq_to_period(freq: str) -> int:
     Returns:
         The number of periods in one seasonal cycle (default 12).
     """
-    f = (freq or "").upper().lstrip("-")
-    if f.startswith("MS") or f.startswith("M"):
-        return 12
-    if f.startswith("QS") or f.startswith("Q"):
-        return 4
-    if f.startswith("W"):
-        return 52
-    if f.startswith("D"):
-        return 7
-    if f.startswith("H"):
-        return 24
-    if f.startswith("Y") or f.startswith("A"):
-        return 1
-    return 12
+    return int(frequency_to_seasonal_period(freq, default=12) or 12)

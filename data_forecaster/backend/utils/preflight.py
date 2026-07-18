@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import pandas as pd
@@ -16,7 +17,7 @@ from utils.data_cleaning import (
 
 AGGREGATION_OPTIONS = ["Let AI Decide", "sum", "mean", "latest"]
 MISSING_OPTIONS = ["Let AI Decide", "interpolate", "forward-fill", "drop"]
-FREQUENCY_OPTIONS = ["Let AI Decide", "D", "W", "MS", "QS", "YS"]
+FREQUENCY_OPTIONS = ["Let AI Decide", "min", "h", "D", "W", "MS", "QS", "YS"]
 OUTLIER_OPTIONS = [
     "None",
     "Let AI Decide",
@@ -84,6 +85,7 @@ def run_preflight_checks(
         "data_domain": "Skip / Let AI Guess",
         "outlier_strategy": "Let AI Decide",
         "continue_short_series": "continue",
+        "continue_limited_history": "continue",
         "loss_metric": "auto",
         "units": "Unspecified",
         "interventions": "None known",
@@ -215,6 +217,23 @@ def run_preflight_checks(
             )
         )
 
+    coverage_warning = _history_coverage_warning(series.index, detected_frequency)
+    if coverage_warning:
+        warnings.append(coverage_warning)
+        if usable_observations >= 20:
+            decisions.append(
+                PreflightDecision(
+                    key="continue_limited_history",
+                    label="Limited history confirmation",
+                    message=(
+                        "Continue only if a lower-confidence, short-horizon forecast "
+                        "is still useful for your decision."
+                    ),
+                    options=["continue", "stop"],
+                    default="continue",
+                )
+            )
+
     if forecast_horizon > max(usable_observations, 1):
         warnings.append(
             "The forecast horizon is longer than the usable historical series; uncertainty may be high."
@@ -343,7 +362,13 @@ def _infer_frequency(df: pd.DataFrame) -> str:
 
     if len(df) >= 2:
         deltas = df.index.to_series().diff().dropna()
-        median_days = deltas.dt.days.median()
+        median_delta = deltas.median()
+        try:
+            offset = pd.tseries.frequencies.to_offset(median_delta)
+            return _normalize_frequency(offset.freqstr)
+        except (TypeError, ValueError):
+            pass
+        median_days = median_delta / pd.Timedelta(days=1)
         if median_days <= 1:
             return "D"
         if median_days <= 7:
@@ -357,7 +382,20 @@ def _infer_frequency(df: pd.DataFrame) -> str:
 
 
 def _normalize_frequency(freq: str) -> str:
-    f = (freq or "").upper().lstrip("-")
+    raw = (freq or "").strip().lstrip("-")
+    f = raw.upper()
+    minute_match = re.fullmatch(r"(\d*)\s*(?:MIN|T)", f)
+    if minute_match:
+        multiplier = minute_match.group(1)
+        return f"{multiplier}min" if multiplier else "min"
+    hour_match = re.fullmatch(r"(\d*)\s*H", f)
+    if hour_match:
+        multiplier = hour_match.group(1)
+        return f"{multiplier}h" if multiplier else "h"
+    second_match = re.fullmatch(r"(\d*)\s*S", f)
+    if second_match:
+        multiplier = second_match.group(1)
+        return f"{multiplier}s" if multiplier else "s"
     if f.startswith("MS") or f.startswith("M"):
         return "MS"
     if f.startswith("QS") or f.startswith("Q"):
@@ -369,3 +407,51 @@ def _normalize_frequency(freq: str) -> str:
     if f.startswith("YS") or f.startswith("Y") or f.startswith("A"):
         return "YS"
     return f
+
+
+def _history_coverage_warning(
+    index: pd.DatetimeIndex,
+    frequency: str | None,
+) -> str | None:
+    """Describe limited calendar coverage without blocking a forecast attempt."""
+    unique = pd.DatetimeIndex(index.dropna().unique()).sort_values()
+    if len(unique) < 2 or not frequency:
+        return None
+    try:
+        interval = pd.Timedelta(pd.tseries.frequencies.to_offset(frequency).nanos)
+    except (TypeError, ValueError):
+        return None
+    if interval >= pd.Timedelta(days=1):
+        return None
+
+    span = unique[-1] - unique[0]
+    if span < pd.Timedelta(days=2):
+        duration = _human_duration(span)
+        return (
+            f"The selected series spans only {duration} of history. It may support "
+            "a short-horizon forecast, but it is not enough to validate recurring "
+            "daily or weekly patterns. Forecast reliability may be low; you can "
+            "proceed with caution."
+        )
+    if span < pd.Timedelta(days=14):
+        duration = _human_duration(span)
+        return (
+            f"The selected series spans only {duration} of history. Daily patterns "
+            "may be estimable, but there is not enough history to validate a weekly "
+            "pattern. You can proceed, but forecast reliability may be limited."
+        )
+    return None
+
+
+def _human_duration(duration: pd.Timedelta) -> str:
+    """Return a concise duration for preflight warning text."""
+    total_minutes = max(1, int(round(duration.total_seconds() / 60)))
+    if total_minutes >= 24 * 60:
+        days = total_minutes / (24 * 60)
+        value = f"{days:.1f}".rstrip("0").rstrip(".")
+        return f"{value} day{'s' if days != 1 else ''}"
+    if total_minutes >= 60:
+        hours = total_minutes / 60
+        value = f"{hours:.1f}".rstrip("0").rstrip(".")
+        return f"{value} hour{'s' if hours != 1 else ''}"
+    return f"{total_minutes} minute{'s' if total_minutes != 1 else ''}"

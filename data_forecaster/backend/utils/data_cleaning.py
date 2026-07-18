@@ -35,6 +35,7 @@ __all__ = [
     "resolve_duplicates",
     "smooth_series",
     "validate_schema",
+    "frequency_to_seasonal_period",
 ]
 
 
@@ -443,8 +444,14 @@ def validate_schema(
         Dictionary with boolean flags and diagnostic messages.
     """
     report: dict[str, Any] = {}
-    inferred = pd.infer_freq(series.index)
-    report["freq_regular"] = bool(inferred == config.get("expected_freq"))
+    inferred = pd.infer_freq(series.index) if len(series.index) >= 3 else None
+    expected = config.get("expected_freq")
+    try:
+        inferred_offset = pd.tseries.frequencies.to_offset(inferred)
+        expected_offset = pd.tseries.frequencies.to_offset(expected)
+        report["freq_regular"] = bool(inferred_offset == expected_offset)
+    except (TypeError, ValueError):
+        report["freq_regular"] = bool(inferred == expected)
     missing_rate = series.isna().mean()
     report["missing_below_threshold"] = bool(
         missing_rate <= config.get("max_missing_rate", 0.05)
@@ -468,14 +475,27 @@ def validate_schema(
 # ---------------------------------------------------------------------------
 
 
-def _infer_seasonal_period(series: pd.Series) -> int:
-    """Infer seasonal period from the series frequency.
-
-    Returns an integer period; defaults to 12 (monthly).
-    """
-    freq = series.index.freq or pd.infer_freq(series.index)
+def frequency_to_seasonal_period(
+    freq: str | pd.DateOffset | None,
+    *,
+    default: int | None = 12,
+) -> int | None:
+    """Map a pandas frequency to observations in its natural seasonal cycle."""
     if not freq:
-        return 12
+        return default
+    try:
+        offset = pd.tseries.frequencies.to_offset(freq)
+    except (ValueError, TypeError):
+        return default
+
+    base = offset.name.split("-")[0]
+    multiplier = max(1, int(getattr(offset, "n", 1)))
+    if base in {"T", "min", "MIN"}:
+        return max(1, round(1440 / multiplier))
+    if base in {"H", "h"}:
+        return max(1, round(24 / multiplier))
+    if base in {"S", "s"}:
+        return max(1, round(86400 / multiplier))
     mapping = {
         "M": 12,
         "ME": 12,
@@ -486,14 +506,20 @@ def _infer_seasonal_period(series: pd.Series) -> int:
         "W": 52,
         "D": 7,
         "B": 5,
-        "H": 24,
-        "h": 24,
+        "A": 1,
+        "Y": 1,
+        "YS": 1,
+        "YE": 1,
     }
-    try:
-        offset = pd.tseries.frequencies.to_offset(freq)
-        base = offset.name
-    except (ValueError, TypeError):
-        base = str(freq)
-    # Strip anchored-suffix (e.g. "W-SUN" -> "W", "QS-JAN" -> "QS").
-    base = base.split("-")[0]
-    return mapping.get(base, 12)
+    return mapping.get(base, default)
+
+
+def _infer_seasonal_period(series: pd.Series) -> int:
+    """Infer seasonal period from the series frequency.
+
+    Returns an integer period; defaults to 12 (monthly).
+    """
+    freq = series.index.freq or (
+        pd.infer_freq(series.index) if len(series.index) >= 3 else None
+    )
+    return int(frequency_to_seasonal_period(freq, default=12) or 12)

@@ -92,8 +92,9 @@
     var decisions = document.getElementById("preflight-decisions");
     if (!status || !decisions) return;
     var messages = (result.issues || []).concat(result.warnings || [], result.errors || []);
-    var tone = result.status === "error" ? "danger" : result.status === "warning" ? "warning" : "success";
-    var title = result.status === "error" ? "Preflight issues found" : result.status === "warning" ? "Preflight cautions" : "Preflight ready";
+    var hasCautions = messages.length > 0;
+    var tone = result.status === "error" ? "danger" : hasCautions ? "warning" : "success";
+    var title = result.status === "error" ? "Preflight issues found" : hasCautions ? "Forecast quality warning" : "Preflight ready";
     status.innerHTML = '<div class="alert alert-' + tone + '"><strong>' + title + "</strong>" +
       (result.detected_frequency ? '<p class="mb-0 mt-2 small">Detected frequency: <strong>' + escapeHtml(result.detected_frequency) + "</strong></p>" : "") +
       (messages.length ? "<ul class=\"mb-0 mt-2\">" + messages.map(function (message) { return "<li>" + escapeHtml(message) + "</li>"; }).join("") + "</ul>" : "") + "</div>";
@@ -128,6 +129,9 @@
     var choices = currentPreflightChoices();
     var blocked = Object.keys(choices).some(function (key) { return choices[key] === "stop"; });
     button.disabled = !preflight || preflight.status === "error" || blocked;
+    button.textContent = preflight && ((preflight.issues || []).length || (preflight.warnings || []).length)
+      ? "Proceed to configuration"
+      : "Continue to configuration";
   }
 
   function triggerPreflight() {
