@@ -438,8 +438,10 @@ class HTMLRenderer:
             '<section class="report-metadata mt-4">'
             "<h6>Report Metadata</h6>"
             '<table class="table table-sm table-bordered small">'
+            f"<tr><td>Report Title</td><td>{escape(m.title)}</td></tr>"
+            f"<tr><td>Prepared By</td><td>{escape(m.prepared_by)}</td></tr>"
+            f"<tr><td>Forecast Created</td><td>{escape(m.generated_at)}</td></tr>"
             f"<tr><td>Engine Version</td><td>{escape(m.engine_version)}</td></tr>"
-            f"<tr><td>Generated At</td><td>{escape(m.generated_at)}</td></tr>"
             f"<tr><td>Forecast Horizon</td><td>{m.forecast_horizon} periods</td></tr>"
             f"<tr><td>Selected Model</td><td>{escape(m.selected_model)}</td></tr>"
             f"<tr><td>Dataset Frequency</td><td>{escape(m.dataset_frequency)}</td></tr>"

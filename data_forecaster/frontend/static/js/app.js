@@ -150,10 +150,12 @@
     var horizon = document.getElementById("inp-horizon");
     var model = document.getElementById("sel-model");
     var prompt = document.getElementById("inp-prompt");
+    var reportTitle = document.getElementById("inp-report-title");
     return postJSON("/api/setup-state", {
       forecast_horizon: horizon ? horizon.value : 12,
       model_choice: model ? model.value : "Auto (AI selects)",
-      user_prompt: prompt ? prompt.value : ""
+      user_prompt: prompt ? prompt.value : "",
+      report_title: reportTitle ? reportTitle.value : ""
     });
   }
 
@@ -197,6 +199,7 @@
     var horizon = document.getElementById("inp-horizon");
     var model = document.getElementById("sel-model");
     var prompt = document.getElementById("inp-prompt");
+    var reportTitle = document.getElementById("inp-report-title");
     var button = document.getElementById("btn-run");
     if (!date || !value) return;
     if (button) { button.disabled = true; button.textContent = "Starting forecast…"; }
@@ -204,11 +207,11 @@
       {}, preflightOptions, currentPreflightChoices(), collectCleaningOptions(),
       { statistical_tuning: collectStatisticalTuning() }
     );
-    postJSON("/api/analyze", { date_col: date.value, value_col: value.value, forecast_horizon: Number(horizon.value), model_choice: model.value, user_prompt: prompt.value, preflight_options: options })
+    postJSON("/api/analyze", { date_col: date.value, value_col: value.value, forecast_horizon: Number(horizon.value), model_choice: model.value, user_prompt: prompt.value, report_title: reportTitle ? reportTitle.value : "", preflight_options: options })
       .then(function (response) {
         if (response.status === 202) {
           return response.json().then(function (data) {
-            var target = data.redirect || "/jobs";
+            var target = data.redirect || "/forecast-progress";
             window.location.assign(target);
           });
         }
@@ -233,7 +236,7 @@
     document.addEventListener("change", function (event) { if (event.target.classList.contains("preflight-choice")) updatePreflightContinue(); });
     var horizon = document.getElementById("inp-horizon");
     if (horizon) horizon.addEventListener("input", function () { document.getElementById("horizon-val").textContent = horizon.value; });
-    ["inp-prompt", "inp-horizon", "sel-model"].forEach(function (id) { var field = document.getElementById(id); if (field) field.addEventListener(id === "inp-prompt" ? "blur" : "change", function () { saveSetupState(); }); });
+    ["inp-prompt", "inp-report-title", "inp-horizon", "sel-model"].forEach(function (id) { var field = document.getElementById(id); if (field) field.addEventListener(id === "inp-prompt" || id === "inp-report-title" ? "blur" : "change", function () { saveSetupState(); }); });
     document.getElementById("btn-run").addEventListener("click", runAnalysis);
     if (window.forecastUploadInfo) { populateColumnSelectors(window.forecastUploadInfo); setUploadStatus(window.forecastUploadInfo.rows + " rows ready.", false); }
   }

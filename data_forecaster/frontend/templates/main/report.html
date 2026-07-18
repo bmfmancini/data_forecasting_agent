@@ -8,6 +8,24 @@
 </div>
 {% endif %}
 
+<section class="report-panel mb-4" aria-labelledby="report-identity-title">
+    <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
+        <div>
+            <p class="report-kicker mb-1">Forecast Report</p>
+            <h2 class="mb-2" id="report-identity-title">{{ report_identity.title }}</h2>
+            <p class="mb-0 text-muted">
+                <span><strong>Prepared by:</strong> {{ report_identity.prepared_by }}</span>
+                <span class="mx-2" aria-hidden="true">•</span>
+                <span><strong>Forecast created:</strong> {{ report_identity.creation_date }}</span>
+            </p>
+        </div>
+        <form method="post" action="{{ export_url }}" class="report-export-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-outline-primary btn-sm">Download PDF</button>
+        </form>
+    </div>
+</section>
+
 {% if er %}
 {# ── Unified Executive Overview ───────────────────────────────────────── #}
 <section class="report-hero mb-4">
@@ -16,10 +34,6 @@
             <p class="report-kicker mb-1">Executive Dashboard</p>
             <h2 class="report-title mb-0">Forecast decision brief</h2>
         </div>
-        <form method="post" action="{{ export_url }}" class="report-export-form">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button type="submit" class="btn btn-outline-light btn-sm report-export-btn">Download PDF</button>
-        </form>
     </div>
 
     <div class="report-tile-grid">

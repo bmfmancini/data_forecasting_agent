@@ -90,8 +90,7 @@ def _has_usable_interval_bounds(forecast: ForecastResult) -> bool:
         return all(
             np.isfinite(float(value))
             for value in (
-                forecast.lower_ci[:horizon_dates]
-                + forecast.upper_ci[:horizon_dates]
+                forecast.lower_ci[:horizon_dates] + forecast.upper_ci[:horizon_dates]
             )
         )
     except (TypeError, ValueError):
@@ -144,6 +143,8 @@ class ExecutiveReportBuilder:
         forecast: ForecastResult,
         statistical_review: StatisticalReviewResult | None,
         all_metrics: dict[str, dict[str, float]],
+        report_title: str = "",
+        prepared_by: str = "",
     ) -> ExecutiveReport:
         """Construct the full :class:`ExecutiveReport` model.
 
@@ -154,6 +155,8 @@ class ExecutiveReportBuilder:
             forecast:            Forecasting agent output.
             statistical_review:  Statistical review (QA) agent output (optional).
             all_metrics:         All model comparison metrics dict.
+            report_title:        Resolved report display title.
+            prepared_by:         Authenticated application username.
 
         Returns:
             A populated :class:`ExecutiveReport` with empty narrative fields.
@@ -225,6 +228,8 @@ class ExecutiveReportBuilder:
             model_selection,
             all_metrics,
             data_quality,
+            report_title,
+            prepared_by,
         )
         appendix = self._build_appendix(forecast, all_metrics)
 
@@ -981,13 +986,16 @@ class ExecutiveReportBuilder:
             )
 
         # Recommendation 3: Data quality improvement
-        has_collection_issue = any(
-            (
-                data_quality.missing_values,
-                data_quality.duplicate_timestamps,
-                data_quality.missing_timestamps,
+        has_collection_issue = (
+            any(
+                (
+                    data_quality.missing_values,
+                    data_quality.duplicate_timestamps,
+                    data_quality.missing_timestamps,
+                )
             )
-        ) or not data_quality.is_regular
+            or not data_quality.is_regular
+        )
         if has_collection_issue:
             recs.append(
                 Recommendation(
@@ -1669,6 +1677,8 @@ class ExecutiveReportBuilder:
         model_selection: ModelSelectionResult,
         all_metrics: dict[str, dict[str, float]],
         data_quality: DataQualitySection,
+        report_title: str = "",
+        prepared_by: str = "",
     ) -> ReportMetadata:
         """Build report metadata.
 
@@ -1678,12 +1688,16 @@ class ExecutiveReportBuilder:
             model_selection: Model selection result.
             all_metrics:     All model metrics.
             data_quality:    Data quality section.
+            report_title:    Resolved report display title.
+            prepared_by:     Authenticated application username.
 
         Returns:
             :class:`ReportMetadata`.
         """
         del model_selection  # ForecastResult is authoritative after final selection.
         return ReportMetadata(
+            title=report_title.strip() or "Forecast Report",
+            prepared_by=prepared_by.strip() or "Unknown",
             engine_version=_ENGINE_VERSION,
             generated_at=datetime.now(timezone.utc).isoformat(),
             forecast_horizon=len(forecast.forecast),

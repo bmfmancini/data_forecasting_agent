@@ -12,12 +12,6 @@ sys.path.insert(
 
 import pytest
 
-from auth.application_identity import (
-    application_user_signature,
-    verify_application_user_signature,
-)
-
-
 @pytest.fixture()
 def temp_db(monkeypatch):
     """Use a temporary SQLite database for each test."""
@@ -47,8 +41,8 @@ def job_service(temp_db):
 def _insert_job(
     job_service,
     job_id: str,
-    application_user_id: int,
-    application_username: str = "user",
+    application_user_id: int | None,
+    application_username: str | None = "user",
     status: str = "pending",
     backend_owner_id: int = 1,
 ) -> None:
@@ -125,6 +119,15 @@ class TestListJobsForUser:
         jobs = job_service.list_jobs_for_user(99, backend_owner_id=1)
         assert jobs == []
 
+    def test_direct_api_jobs_are_listed_without_application_user(self, job_service):
+        """Direct API jobs are scoped by backend owner without frontend metadata."""
+        _insert_job(job_service, "job-direct", application_user_id=None)
+        _insert_job(job_service, "job-frontend", application_user_id=1)
+
+        jobs = job_service.list_jobs_for_user(None, backend_owner_id=1)
+
+        assert [job["job_id"] for job in jobs] == ["job-direct"]
+
     def test_includes_report_name(self, job_service):
         """The returned jobs include the report_name field."""
         _insert_job(job_service, "job-1", application_user_id=1)
@@ -149,6 +152,36 @@ class TestListJobsForUser:
         jobs = job_service.list_jobs_for_user(1, backend_owner_id=1)
 
         assert [job["job_id"] for job in jobs] == ["job-owner-1"]
+
+
+def test_clear_terminal_jobs_for_user_preserves_other_and_active_jobs(
+    job_service,
+) -> None:
+    """User cleanup deletes only their terminal queue records."""
+    _insert_job(job_service, "mine-done", application_user_id=1, status="done")
+    _insert_job(job_service, "mine-error", application_user_id=1, status="error")
+    _insert_job(
+        job_service, "mine-cancelled", application_user_id=1, status="cancelled"
+    )
+    _insert_job(job_service, "mine-active", application_user_id=1, status="running")
+    _insert_job(job_service, "other-done", application_user_id=2, status="done")
+    _insert_job(
+        job_service,
+        "other-owner-done",
+        application_user_id=1,
+        status="done",
+        backend_owner_id=2,
+    )
+
+    deleted = job_service.clear_terminal_jobs_for_user(1, backend_owner_id=1)
+
+    assert deleted == 3
+    assert job_service.get_job("mine-done", application_user_id=1) is None
+    assert job_service.get_job("mine-error", application_user_id=1) is None
+    assert job_service.get_job("mine-cancelled", application_user_id=1) is None
+    assert job_service.get_job("mine-active", application_user_id=1) is not None
+    assert job_service.get_job("other-done", application_user_id=2) is not None
+    assert job_service.get_job("other-owner-done", application_user_id=1) is not None
 
 
 class TestOwnerScopedGetJob:
@@ -188,24 +221,14 @@ class TestOwnerScopedGetJob:
         assert job is None
 
 
-def test_application_identity_signature_round_trip() -> None:
-    """Delegated application-user identities are authenticated with HMAC."""
-    signature = application_user_signature(42, "test-secret")
-
-    assert verify_application_user_signature(42, signature, "test-secret")
-    assert not verify_application_user_signature(41, signature, "test-secret")
-    assert not verify_application_user_signature(42, signature, "other-secret")
-
-
 def test_application_user_id_is_declared_as_header() -> None:
-    """FastAPI must bind signed application-user identity headers."""
+    """FastAPI binds the optional delegated application-user header."""
     from main import app
 
     parameters = app.openapi()["paths"]["/jobs/mine"]["get"]["parameters"]
     parameter_locations = {(item["name"], item["in"]) for item in parameters}
 
     assert ("X-Application-User-ID", "header") in parameter_locations
-    assert ("X-Application-User-Signature", "header") in parameter_locations
 
 
 def test_full_job_response_includes_finalization_metadata(

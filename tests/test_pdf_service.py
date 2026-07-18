@@ -71,3 +71,29 @@ def test_pdf_font_directory_is_resolved_at_generation_time(
 
     monkeypatch.setenv("PDF_FONT_DIR", str(font_dir))
     assert report_to_pdf("second attempt — ✓").startswith(b"%PDF")
+
+
+def test_pdf_title_block_contains_report_identity(tmp_path: Any) -> None:
+    """The exported first page carries the same identity shown on the web."""
+    pdftotext = shutil.which("pdftotext")
+    if not pdftotext:
+        pytest.skip("pdftotext is unavailable")
+
+    pdf_bytes = report_to_pdf(
+        "## Report body",
+        title="Q4 Montréal report",
+        prepared_by="alice",
+        creation_date="July 18, 2026 at 01:02 UTC",
+    )
+    pdf_path = tmp_path / "identity-report.pdf"
+    pdf_path.write_bytes(pdf_bytes)
+    extracted = subprocess.run(
+        [pdftotext, str(pdf_path), "-"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+
+    assert "Q4 Montréal report" in extracted
+    assert "Prepared by: alice" in extracted
+    assert "Forecast created: July 18, 2026 at 01:02 UTC" in extracted

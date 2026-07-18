@@ -7,7 +7,10 @@
         <h4 class="mb-1">Forecast Job Queue</h4>
         <p class="text-secondary mb-0">Your recent forecasts and their progress.</p>
     </div>
-    <a href="{{ url_for('main.forecast_setup') }}" class="btn btn-primary btn-sm">Start New Forecast</a>
+    <div class="d-flex gap-2">
+        <button id="clear-terminal-jobs" class="btn btn-outline-danger btn-sm" type="button" disabled>Clear completed/failed</button>
+        <a href="{{ url_for('main.forecast_setup') }}" class="btn btn-primary btn-sm">Start New Forecast</a>
+    </div>
 </div>
 
 <div id="jobs-empty" class="card d-none">

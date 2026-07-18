@@ -128,19 +128,25 @@
         var tbody = document.getElementById("jobs-tbody");
         var empty = document.getElementById("jobs-empty");
         var wrapper = document.getElementById("jobs-table-wrapper");
+        var clearButton = document.getElementById("clear-terminal-jobs");
         if (!tbody || !empty || !wrapper) return;
 
         if (!jobs || jobs.length === 0) {
             empty.classList.remove("d-none");
             wrapper.classList.add("d-none");
+            if (clearButton) clearButton.disabled = true;
             return;
         }
         empty.classList.add("d-none");
         wrapper.classList.remove("d-none");
 
         var html = "";
+        var hasTerminalJobs = false;
         for (var i = 0; i < jobs.length; i++) {
             var job = jobs[i];
+            if (job.status === "done" || job.status === "error" || job.status === "cancelled") {
+                hasTerminalJobs = true;
+            }
             var name = escapeHtml(job.report_name || "Untitled forecast");
             var status = escapeHtml(job.status);
             var badgeClass = statusBadgeClass(job.status);
@@ -181,6 +187,7 @@
                 "</tr>";
         }
         tbody.innerHTML = html;
+        if (clearButton) clearButton.disabled = !hasTerminalJobs;
         attachActionHandlers();
     }
 
@@ -257,6 +264,39 @@
             });
     }
 
+    function handleClearTerminal() {
+        var btn = document.getElementById("clear-terminal-jobs");
+        if (!btn || btn.disabled) return;
+        if (!window.confirm("Clear all of your completed, failed, and cancelled jobs? Saved reports will not be deleted.")) return;
+        btn.disabled = true;
+        btn.textContent = "Clearing…";
+        fetch("/api/jobs/mine/terminal", {
+            method: "POST",
+            headers: { "X-CSRFToken": getCsrfToken() },
+            credentials: "same-origin",
+        })
+            .then(function (resp) {
+                return resp.json().then(function (body) {
+                    return { status: resp.status, body: body };
+                });
+            })
+            .then(function (result) {
+                if (result.status === 200) {
+                    btn.textContent = "Clear completed/failed";
+                    refreshAfterAction();
+                } else {
+                    btn.disabled = false;
+                    btn.textContent = "Clear completed/failed";
+                    alert(result.body.error || "Failed to clear completed jobs.");
+                }
+            })
+            .catch(function () {
+                btn.disabled = false;
+                btn.textContent = "Clear completed/failed";
+                alert("Network error while clearing completed jobs.");
+            });
+    }
+
     // Pause polling when the page is hidden; resume on visibility.
     document.addEventListener("visibilitychange", function () {
         if (document.hidden) {
@@ -274,6 +314,9 @@
     if (document.body && document.body.getAttribute("data-page") === "jobs") {
         start();
     }
+
+    var clearTerminalButton = document.getElementById("clear-terminal-jobs");
+    if (clearTerminalButton) clearTerminalButton.addEventListener("click", handleClearTerminal);
 
     window.JobQueue = { start: start, stop: stop };
 })();

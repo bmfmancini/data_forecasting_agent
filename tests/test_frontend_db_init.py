@@ -130,11 +130,11 @@ def test_init_db_preserves_existing_api_credentials(
     assert decrypt(row["encrypted_password"]) == "admin-key"
 
 
-def test_init_db_adds_job_link_before_creating_unique_index(
+def test_init_db_adds_report_payload_and_job_link_migrations(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    """Legacy report databases gain the job column before its index."""
+    """Legacy report databases gain payload and job-link columns."""
     monkeypatch.setenv("FLASK_ENCRYPTION_KEY", Fernet.generate_key().decode())
     app = _app(tmp_path)
 
@@ -168,4 +168,5 @@ def test_init_db_adds_job_link_before_creating_unique_index(
         }
 
     assert "job_id" in columns
+    assert "analysis_result_json" in columns
     assert "forecast_reports_job_id_uq" in indexes

@@ -65,7 +65,7 @@ class AnalyzeRequest(BaseModel):
     forced_model: str | None = None  # "Holt-Winters" | "ARIMA" | "SARIMA" | None (auto)
     user_prompt: str | None = None  # Extra instructions appended to the report prompt
     preflight_options: dict[str, Any] | None = Field(default_factory=dict)
-    report_name: str = ""
+    report_name: str = Field(default="", max_length=200)
     source_filename: str = ""
     custom_settings: list[dict[str, str]] | None = None
     application_user_id: int | None = None

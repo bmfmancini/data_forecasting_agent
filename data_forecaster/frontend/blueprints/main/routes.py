@@ -37,6 +37,12 @@ from blueprints.decorators import password_change_required
 from blueprints.main import main_bp
 from services.api_client import BackendAPIClient, get_api_client
 from services.pdf_service import report_to_pdf
+from services.report_identity import (
+    ReportTitleValidationError,
+    normalize_report_title,
+    report_download_filename,
+    resolve_report_identity,
+)
 from services.report_rendering import render_analysis_report
 from services.report_service import (
     ReportLimitError,
@@ -197,6 +203,7 @@ def forecast_setup() -> str:
         "forecast_horizon": int(session.get("forecast_horizon") or 12),
         "model_choice": str(session.get("model_choice") or "Auto (AI selects)"),
         "user_prompt": str(session.get("user_prompt") or ""),
+        "report_title": str(session.get("report_title") or ""),
     }
     return render_template(
         "main/forecast_setup.html",
@@ -423,11 +430,15 @@ def report() -> str:
     """
     result: dict[str, Any] = session.get("analysis_result") or {}
     upload_info: dict[str, Any] = session.get("upload_info") or {}
+    custom_settings = session.get("active_report_custom_settings")
+    if custom_settings is None:
+        custom_settings = _custom_settings_from_session()
     return render_analysis_report(
         result,
         str(upload_info.get("filename", "data")),
         url_for("main.report_export"),
-        _custom_settings_from_session(),
+        custom_settings,
+        str(current_user.username),
     )
 
 
@@ -448,12 +459,14 @@ def report_export() -> Response:
 def _send_report_pdf(result: dict[str, Any], filename: str) -> Response:
     """Generate a PDF response from a current or persisted final report."""
     report_text: str = result.get("report", "Report not available.")
-    base_name = filename.rsplit(".", 1)[0] if "." in filename else filename
-    pdf_filename = f"forecast_report_{base_name or 'data'}.pdf"
+    identity = resolve_report_identity(result, filename, str(current_user.username))
+    pdf_filename = report_download_filename(identity["title"])
     pdf_bytes = report_to_pdf(
         report_text,
-        title=pdf_filename.replace("_", " ").replace(".pdf", ""),
+        title=identity["title"],
         result=result,
+        prepared_by=identity["prepared_by"],
+        creation_date=identity["creation_date"],
     )
     return send_file(
         io.BytesIO(pdf_bytes),
@@ -479,15 +492,28 @@ def reports() -> str:
 @main_bp.route("/reports/<int:report_id>")
 @_login_required
 def saved_report(report_id: int) -> str:
-    """Render one owner-scoped saved report."""
+    """Activate and render one owner-scoped saved report.
+
+    Making the selected report the active analysis keeps all analysis tabs
+    available and ensures they render data from this report rather than a
+    previously viewed forecast.
+    """
     stored = get_report_for_user(report_id, int(current_user.id))
     if stored is None:
         abort(404)
+    session["analysis_result"] = stored
+    session["upload_info"] = {
+        **(session.get("upload_info") or {}),
+        "filename": str(stored["source_filename"]),
+    }
+    session["forecast_horizon"] = int(stored.get("forecast_horizon") or 12)
+    session["active_report_custom_settings"] = stored.get("custom_settings") or []
     return render_analysis_report(
         stored,
         str(stored["source_filename"]),
         url_for("main.saved_report_export", report_id=report_id),
         stored.get("custom_settings") or [],
+        str(current_user.username),
     )
 
 
@@ -709,6 +735,18 @@ def api_setup_state() -> Response:
         session["model_choice"] = str(data["model_choice"])
     if "user_prompt" in data:
         session["user_prompt"] = str(data["user_prompt"]).strip()
+    if "report_title" in data:
+        raw_title = str(data["report_title"] or "").strip()
+        try:
+            normalize_report_title(
+                raw_title,
+                str((session.get("upload_info") or {}).get("filename") or "data"),
+            )
+        except ReportTitleValidationError as exc:
+            return make_response(
+                jsonify({"error": str(exc), "field": "report_title"}), 400
+            )
+        session["report_title"] = raw_title
     return jsonify({"ok": True})
 
 
@@ -724,26 +762,26 @@ def _build_analyze_payload(data: dict[str, Any]) -> dict[str, Any]:
     )
     model_choice: str = str(data.get("model_choice") or "Auto (AI selects)")
     user_prompt: str = str(data.get("user_prompt") or "").strip()
+    raw_report_title: str = str(
+        data.get("report_title")
+        if "report_title" in data
+        else session.get("report_title") or ""
+    )
     preflight_options: dict[str, Any] = (
         data.get("preflight_options") or session.get("preflight_options") or {}
     )
+    source_filename: str = str(upload_info.get("filename", "data"))
+    report_name = normalize_report_title(raw_report_title, source_filename)
 
     session["forecast_horizon"] = horizon
     session["model_choice"] = model_choice
     session["user_prompt"] = user_prompt
+    session["report_title"] = raw_report_title.strip()
     session["preflight_options"] = preflight_options
 
     forced_model: str | None = (
         None if model_choice == "Auto (AI selects)" else model_choice
     )
-
-    source_filename: str = str(upload_info.get("filename", "data"))
-    source_stem = (
-        source_filename.rsplit(".", 1)[0]
-        if "." in source_filename
-        else source_filename
-    )
-    report_name = f"Forecast — {source_stem}"
 
     return {
         "file_id": file_id,
@@ -771,7 +809,10 @@ def api_analyze() -> Response:
         JSON with ``job_id`` on success (HTTP 202) or an error object.
     """
     data: dict[str, Any] = request.get_json(silent=True) or {}
-    payload = _build_analyze_payload(data)
+    try:
+        payload = _build_analyze_payload(data)
+    except ReportTitleValidationError as exc:
+        return make_response(jsonify({"error": str(exc), "field": "report_title"}), 400)
 
     if not payload["file_id"]:
         return make_response(jsonify({"error": "No file uploaded"}), 400)
@@ -790,11 +831,12 @@ def api_analyze() -> Response:
             session["job_progress"] = 0
             session["job_step"] = "Queued - waiting for an available slot..."
             session["analysis_error"] = None
+            session.pop("active_report_custom_settings", None)
             return make_response(
                 jsonify(
                     {
                         "job_id": job_id,
-                        "redirect": url_for("main.jobs"),
+                        "redirect": url_for("main.forecast_progress"),
                     }
                 ),
                 202,
@@ -827,11 +869,13 @@ def _handle_done_job(
     session["job_running"] = False
     session["job_id"] = None
     session["analysis_error"] = None
+    session.pop("active_report_custom_settings", None)
 
     # Read per-job metadata from the backend job record (not the session,
     # which may have been overwritten by later submissions).
     job_record = results_resp.json()
     source_filename = str(job_record.get("source_filename") or "data")
+    report_title = str(job_record.get("report_name") or "").strip() or None
     forecast_horizon = int(job_record.get("forecast_horizon") or 12)
     custom_settings_raw = job_record.get("custom_settings_json")
     if isinstance(custom_settings_raw, str):
@@ -850,6 +894,7 @@ def _handle_done_job(
             forecast_horizon=forecast_horizon,
             custom_settings=custom_settings,
             job_id=job_id,
+            report_title=report_title,
         )
     except ReportLimitError:
         flash(
@@ -1039,7 +1084,40 @@ def api_jobs_mine() -> Response:
                 "finalization_error": finalization_error,
             }
         )
+    active_session_job_id = str(session.get("job_id") or "")
+    if active_session_job_id and any(
+        job["job_id"] == active_session_job_id
+        and job["status"] in ("done", "error", "cancelled")
+        for job in enriched
+    ):
+        session["job_running"] = False
+        session["job_id"] = None
     return jsonify(enriched)
+
+
+@main_bp.route("/api/jobs/mine/terminal", methods=["POST"])
+@_login_required
+def api_my_terminal_jobs_clear() -> Response:
+    """Delete only the current frontend user's terminal forecast jobs."""
+    try:
+        response = get_api_client().clear_my_terminal_jobs(
+            application_user_id=int(current_user.id)
+        )
+        if response.status_code != 200:
+            return make_response(
+                jsonify(
+                    {
+                        "error": _safe_error_detail(
+                            response, "Failed to clear completed jobs."
+                        )
+                    }
+                ),
+                response.status_code,
+            )
+        return jsonify({"deleted_count": int(response.json().get("deleted_count", 0))})
+    except (requests.RequestException, TypeError, ValueError):
+        logger.exception("Backend connection error during terminal job cleanup")
+        return make_response(jsonify({"error": _BACKEND_CONN_ERROR}), 503)
 
 
 def _finalize_job_report(client: BackendAPIClient, job_id: str) -> dict[str, Any]:
@@ -1070,6 +1148,7 @@ def _finalize_job_report(client: BackendAPIClient, job_id: str) -> dict[str, Any
         if not result_data:
             return {"finalization_error": "no_result"}
         source_filename = str(job_record.get("source_filename") or "data")
+        report_title = str(job_record.get("report_name") or "").strip() or None
         forecast_horizon = int(job_record.get("forecast_horizon") or 12)
         custom_settings_raw = job_record.get("custom_settings_json")
         if isinstance(custom_settings_raw, str):
@@ -1086,6 +1165,7 @@ def _finalize_job_report(client: BackendAPIClient, job_id: str) -> dict[str, Any
             forecast_horizon=forecast_horizon,
             custom_settings=custom_settings,
             job_id=job_id,
+            report_title=report_title,
         )
         return {"report_id": report_id}
     except ReportLimitError:
@@ -1267,6 +1347,8 @@ def _clear_analysis_state() -> None:
         "job_progress",
         "job_step",
         "analysis_error",
+        "active_report_custom_settings",
+        "report_title",
         "preflight_result",
         "preflight_options",
         "preview_data",

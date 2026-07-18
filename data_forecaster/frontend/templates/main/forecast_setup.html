@@ -60,6 +60,11 @@
         <h1 id="config-step-title" class="h3">Configure the forecast</h1>
         <p class="text-muted">Choose how far ahead to predict and optionally select a model.</p>
         <div class="card"><div class="card-body">
+            <div class="mb-3">
+                <label class="form-label" for="inp-report-title">Report title <span class="text-muted fw-normal">(optional)</span></label>
+                <input type="text" id="inp-report-title" class="form-control" maxlength="200" value="{{ setup_state.report_title }}" placeholder="For example: Q4 report" aria-describedby="report-title-help">
+                <p class="small text-muted mb-0 mt-2" id="report-title-help">If left blank, the report will use a name based on the uploaded dataset.</p>
+            </div>
             <div class="mb-3"><label class="form-label" for="sel-model">Forecast model</label><select id="sel-model" class="form-select"><option value="Auto (AI selects)" {{ 'selected' if setup_state.model_choice == 'Auto (AI selects)' }}>Auto (AI selects)</option><option value="ARIMA" {{ 'selected' if setup_state.model_choice == 'ARIMA' }}>ARIMA</option><option value="SARIMA" {{ 'selected' if setup_state.model_choice == 'SARIMA' }}>SARIMA</option><option value="Holt-Winters" {{ 'selected' if setup_state.model_choice == 'Holt-Winters' }}>Holt-Winters</option></select></div>
             <div class="mb-3"><label class="form-label" for="inp-horizon">Forecast horizon: <span id="horizon-val">{{ setup_state.forecast_horizon }}</span> periods</label><input type="range" id="inp-horizon" class="form-range" min="1" max="100" value="{{ setup_state.forecast_horizon }}"></div>
             <section class="advanced-options-box" aria-labelledby="advanced-options-title">

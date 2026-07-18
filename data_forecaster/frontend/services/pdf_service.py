@@ -216,6 +216,8 @@ def report_to_pdf(
     report_md: str,
     title: str = "Forecast Report",
     result: dict[str, Any] | None = None,
+    prepared_by: str | None = None,
+    creation_date: str | None = None,
 ) -> bytes:
     """Convert a markdown forecast report to PDF bytes with embedded charts.
 
@@ -228,6 +230,8 @@ def report_to_pdf(
         report_md:  Full markdown report text, possibly containing visual tags.
         title:      Title printed at the top of the first PDF page.
         result:     Analysis result dict containing chart PNG data.
+        prepared_by: Authenticated username displayed in the title block.
+        creation_date: Human-readable UTC report creation date.
 
     Returns:
         PDF document as raw bytes suitable for sending as a file download.
@@ -243,6 +247,14 @@ def report_to_pdf(
     pdf.set_font(_PDF_FONT_FAMILY, "B", 20)
     pdf.set_x(pdf.l_margin)
     pdf.multi_cell(0, 12, _sanitize(title), align="C")
+    if prepared_by:
+        pdf.set_font(_PDF_FONT_FAMILY, "", 10)
+        pdf.set_x(pdf.l_margin)
+        pdf.multi_cell(0, 6, _sanitize(f"Prepared by: {prepared_by}"), align="C")
+    if creation_date:
+        pdf.set_font(_PDF_FONT_FAMILY, "", 10)
+        pdf.set_x(pdf.l_margin)
+        pdf.multi_cell(0, 6, _sanitize(f"Forecast created: {creation_date}"), align="C")
     pdf.ln(6)
 
     for raw_line in report_md.splitlines():

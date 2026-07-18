@@ -108,6 +108,8 @@ def init_db() -> None:
         db.execute("ALTER TABLE forecast_reports ADD COLUMN custom_settings_json TEXT")
     if "job_id" not in report_columns:
         db.execute("ALTER TABLE forecast_reports ADD COLUMN job_id TEXT")
+    if "analysis_result_json" not in report_columns:
+        db.execute("ALTER TABLE forecast_reports ADD COLUMN analysis_result_json TEXT")
     db.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS forecast_reports_job_id_uq "
         "ON forecast_reports(job_id) WHERE job_id IS NOT NULL"

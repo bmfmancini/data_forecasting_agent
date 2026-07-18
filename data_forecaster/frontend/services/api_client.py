@@ -10,8 +10,6 @@ variable fallback) so all callers remain decoupled from configuration details.
 from __future__ import annotations
 
 import base64
-import hashlib
-import hmac
 from typing import Any
 
 import requests
@@ -38,8 +36,6 @@ class BackendAPIClient:
         verify:        Whether to verify the backend's TLS certificate.
                        Set to ``False`` when the backend uses a self-signed
                        certificate.  Defaults to ``True``.
-        application_identity_secret: Secret used to sign delegated frontend
-                       application-user IDs.
     """
 
     def __init__(
@@ -48,13 +44,11 @@ class BackendAPIClient:
         api_username: str | None = None,
         api_key: str | None = None,
         verify: bool = True,
-        application_identity_secret: str | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._api_username = api_username
         self._api_key = api_key
         self._verify = verify
-        self._application_identity_secret = application_identity_secret
 
     def _auth_headers(self) -> dict[str, str]:
         """Return authentication headers when credentials are configured.
@@ -85,29 +79,15 @@ class BackendAPIClient:
         return headers
 
     def _application_user_headers(self, application_user_id: int) -> dict[str, str]:
-        """Return signed headers delegating one frontend application user.
+        """Return the optional delegated frontend application-user header.
 
         Args:
             application_user_id: Authenticated frontend application user ID.
 
         Returns:
-            The application-user ID and its SHA-256 HMAC signature.
-
-        Raises:
-            ValueError: When the application identity secret is not configured.
+            The application-user ID header.
         """
-        if not self._application_identity_secret:
-            raise ValueError("Application identity signing is not configured.")
-        user_id = str(application_user_id)
-        signature = hmac.new(
-            self._application_identity_secret.encode("utf-8"),
-            user_id.encode("ascii"),
-            hashlib.sha256,
-        ).hexdigest()
-        return {
-            "X-Application-User-ID": user_id,
-            "X-Application-User-Signature": signature,
-        }
+        return {"X-Application-User-ID": str(application_user_id)}
 
     def upload_file(
         self,
@@ -351,6 +331,20 @@ class BackendAPIClient:
         return requests.delete(
             f"{self._base_url}/jobs/terminal",
             headers=self._headers(),
+            timeout=ANALYSIS_TIMEOUT,
+            verify=self._verify,
+        )
+
+    def clear_my_terminal_jobs(
+        self, application_user_id: int | None = None
+    ) -> requests.Response:
+        """Delete terminal jobs owned by the current API/application user."""
+        extra: dict[str, str] = {}
+        if application_user_id is not None:
+            extra = self._application_user_headers(application_user_id)
+        return requests.delete(
+            f"{self._base_url}/jobs/mine/terminal",
+            headers=self._headers(extra),
             timeout=ANALYSIS_TIMEOUT,
             verify=self._verify,
         )
@@ -651,7 +645,4 @@ def get_api_client() -> BackendAPIClient:
         api_username=api_username,
         api_key=api_key,
         verify=verify_ssl,
-        application_identity_secret=current_app.config.get(
-            "APPLICATION_IDENTITY_SECRET"
-        ),
     )

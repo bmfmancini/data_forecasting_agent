@@ -31,7 +31,6 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 
 import core.config as settings
-from auth.application_identity import verify_application_user_signature
 from auth.api_key_db import (
     create_api_user,
     create_first_user,
@@ -83,6 +82,7 @@ from services.job_service import (
     QueuedJobLimitError,
     create_job,
     clear_terminal_jobs,
+    clear_terminal_jobs_for_user,
     cleanup_terminal_jobs,
     get_job,
     get_job_settings,
@@ -109,36 +109,24 @@ def _application_user_id_header(
         str | None,
         Header(alias="X-Application-User-ID"),
     ] = None,
-    x_application_user_signature: Annotated[
-        str | None,
-        Header(alias="X-Application-User-Signature"),
-    ] = None,
 ) -> int | None:
-    """Extract and authenticate the delegated application-user identity.
+    """Extract the optional delegated application-user identity.
 
-    This header is set by the Flask proxy from ``current_user.id`` (server-side)
-    and is never controlled by the browser.  It scopes job operations to the
-    authenticated frontend user, since multiple app users may share the same
-    backend API credential.
+    The Flask proxy sets this from ``current_user.id`` to scope jobs when
+    multiple frontend users share one backend API credential. Direct backend
+    API clients omit it and are scoped by their normal API credentials.
 
     Args:
         x_application_user_id: The raw application-user header value.
-        x_application_user_signature: HMAC signature supplied by the frontend.
 
     Returns:
         The parsed integer user ID, or ``None`` if the header is absent.
 
     Raises:
-        HTTPException: If the identity headers are incomplete, malformed, or
-            fail signature verification.
+        HTTPException: If the optional identity header is malformed.
     """
-    if not x_application_user_id and not x_application_user_signature:
+    if not x_application_user_id:
         return None
-    if not x_application_user_id or not x_application_user_signature:
-        raise HTTPException(
-            status_code=400,
-            detail="Both application-user identity headers are required.",
-        )
     try:
         application_user_id = int(x_application_user_id)
     except ValueError as exc:
@@ -150,15 +138,6 @@ def _application_user_id_header(
         raise HTTPException(
             status_code=400,
             detail="X-Application-User-ID must be a positive integer.",
-        )
-    if not verify_application_user_signature(
-        application_user_id,
-        x_application_user_signature,
-        settings.APPLICATION_IDENTITY_SECRET,
-    ):
-        raise HTTPException(
-            status_code=403,
-            detail="Invalid application-user identity signature.",
         )
     return application_user_id
 
@@ -281,7 +260,6 @@ app.add_middleware(
         "X-API-Username",
         "X-API-Key",
         "X-Application-User-ID",
-        "X-Application-User-Signature",
         "Content-Type",
         "X-Admin-Key",
     ],
@@ -887,17 +865,12 @@ def my_jobs(
     _user: Annotated[dict, Depends(require_api_key)],
     app_user_id: Annotated[int | None, Depends(_application_user_id_header)] = None,
 ) -> list[dict[str, Any]]:
-    """Return the most recent jobs for the authenticated application user.
+    """Return the caller's most recent jobs.
 
-    The ``X-Application-User-ID`` header is set by the Flask proxy from
-    ``current_user.id`` and scopes the result to the frontend user's own
-    jobs.  When the header is absent, a 400 error is raised.
+    Frontend calls include ``X-Application-User-ID`` and are scoped to that
+    delegated frontend user. Direct API clients omit the header and receive
+    jobs submitted directly under their backend API credential.
     """
-    if app_user_id is None:
-        raise HTTPException(
-            status_code=400,
-            detail="X-Application-User-ID header is required.",
-        )
     jobs = list_jobs_for_user(
         app_user_id,
         backend_owner_id=_user.get("id"),
@@ -923,6 +896,23 @@ def my_jobs(
             }
         )
     return result
+
+
+@app.delete(
+    "/jobs/mine/terminal",
+    response_model=DeletedJobsResponse,
+)
+def my_terminal_jobs_clear(
+    _user: Annotated[dict, Depends(require_api_key)],
+    app_user_id: Annotated[int | None, Depends(_application_user_id_header)] = None,
+) -> dict[str, int]:
+    """Delete terminal jobs belonging only to the authenticated caller."""
+    return {
+        "deleted_count": clear_terminal_jobs_for_user(
+            app_user_id,
+            backend_owner_id=_user.get("id"),
+        )
+    }
 
 
 @app.delete(

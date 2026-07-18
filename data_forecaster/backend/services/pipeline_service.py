@@ -148,6 +148,8 @@ def run_pipeline(
     forced_model: str | None = None,
     user_prompt: str | None = None,
     preflight_options: dict[str, Any] | None = None,
+    report_title: str = "",
+    prepared_by: str = "",
     chroma_persist_dir: str = "./chroma_db",
     progress_callback: Callable[[int, str], None] | None = None,
     cancel_check: Callable[[], bool] | None = None,
@@ -165,6 +167,8 @@ def run_pipeline(
                            ``"Holt-Winters"``).
         user_prompt:       Optional extra instructions for the report agent.
         preflight_options: Optional preflight configuration dict.
+        report_title:      Resolved report display title.
+        prepared_by:       Authenticated application username.
         chroma_persist_dir: Path to the ChromaDB persistence directory.
         progress_callback: Optional callback ``(pct, step)`` for progress updates.
         cancel_check:      Optional callback returning ``True`` when the job
@@ -234,6 +238,8 @@ def run_pipeline(
         chroma_persist_dir,
         user_prompt,
         preflight_options,
+        report_title,
+        prepared_by,
         _progress,
     )
     _check_cancelled()
@@ -786,6 +792,8 @@ def _run_report_stage(
     chroma_persist_dir: str,
     user_prompt: str | None,
     preflight_options: dict[str, Any] | None,
+    report_title: str,
+    prepared_by: str,
     progress: ProgressCallback,
 ) -> ReportStageOutput:
     """Generate and render the executive report."""
@@ -803,6 +811,8 @@ def _run_report_stage(
             preflight_options=preflight_options,
             statistical_review=forecast_stage.statistical_review,
             all_metrics=forecast_stage.all_metrics,
+            report_title=report_title,
+            prepared_by=prepared_by,
         )
     )
     report_md, report_html = _render_report_outputs(executive_report)

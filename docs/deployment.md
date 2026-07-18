@@ -117,15 +117,11 @@ when the backend uses a CA-signed certificate.
 | `CORS_ALLOWED_ORIGINS` | backend | `http://localhost:5000,...` | Comma-separated allowed origins |
 | `FRONTEND_API_USERNAME` | backend | `frontend` | Optional backend bootstrap service-account username |
 | `FRONTEND_API_KEY` | backend | `frontend` | Optional backend bootstrap service-account key |
-| `APPLICATION_IDENTITY_SECRET` | frontend + backend | development default | Shared HMAC secret for delegated application-user identity |
 | `SECRET_KEY` | frontend | (random) | Flask session secret |
 | `FLASK_ENCRYPTION_KEY` | frontend | (random) | Fernet key for encrypting stored API credentials |
 
 The frontend stores the active backend URL, SSL verification setting,
 username, and encrypted key in its SQLite database via **Admin → API Config**.
-Set the same `APPLICATION_IDENTITY_SECRET` for both services. Generate it with
-`python -c "import secrets; print(secrets.token_urlsafe(32))"` and place it in
-both service `.env` files for production deployments.
 
 ## The build script
 

@@ -30,9 +30,6 @@ class BaseConfig:
     DEFAULT_ADMIN_PASSWORD: str = os.environ.get(
         "FRONTEND_DEFAULT_ADMIN_PASSWORD", "admin"
     )
-    APPLICATION_IDENTITY_SECRET: str = os.environ.get(
-        "APPLICATION_IDENTITY_SECRET", "development-only-change-me"
-    )
     DATABASE: str = os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "instance", "forecaster.db"
     )

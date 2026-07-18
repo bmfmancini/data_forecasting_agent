@@ -93,6 +93,8 @@ def sample_report() -> "object":
         forecast=forecast,
         statistical_review=review,
         all_metrics=all_metrics,
+        report_title="Q4 | <script>alert(1)</script>",
+        prepared_by="Alice & Bob",
     )
 
 
@@ -142,9 +144,7 @@ class TestMarkdownRenderer:
         assert "empirical coverage was not evaluated" in section
         assert "model-based 95% planning range" not in section.lower()
 
-    def test_unavailable_intervals_are_explicit(
-        self, sample_report: "object"
-    ) -> None:
+    def test_unavailable_intervals_are_explicit(self, sample_report: "object") -> None:
         report = sample_report.model_copy(deep=True)
         report.forecast_outlook.metrics.prediction_intervals = []
         report.forecast_outlook.metrics.interval_label = "unavailable"
@@ -195,8 +195,10 @@ class TestMarkdownRenderer:
         renderer = MarkdownRenderer()
         md = renderer.render(sample_report)
         assert "Engine Version" in md
-        assert "Generated At" in md
+        assert "Forecast Created" in md
         assert "Forecast Horizon" in md
+        assert "Q4 \\| <script>alert(1)</script>" in md
+        assert "Alice & Bob" in md
 
     def test_no_fabricated_financials(self, sample_report: "object") -> None:
         """Fallback narratives should not contain fabricated financials."""
@@ -265,9 +267,7 @@ class TestHTMLRenderer:
         assert "Estimated Prediction Intervals (95%; coverage not evaluated)" in section
         assert "95% (experimental);" not in section
 
-    def test_unavailable_intervals_are_explicit(
-        self, sample_report: "object"
-    ) -> None:
+    def test_unavailable_intervals_are_explicit(self, sample_report: "object") -> None:
         report = sample_report.model_copy(deep=True)
         report.forecast_outlook.metrics.prediction_intervals = []
         report.forecast_outlook.metrics.interval_label = "unavailable"
@@ -296,6 +296,11 @@ class TestHTMLRenderer:
             url_for=lambda *_args, **_kwargs: "#",
         )
         template = environment.get_template("main/report.html")
+        report_identity = {
+            "title": "Q4 report",
+            "prepared_by": "alice",
+            "creation_date": "July 18, 2026 at 01:02 UTC",
+        }
 
         experimental = sample_report.model_copy(deep=True)
         experimental.forecast_outlook.metrics.interval_label = "experimental"
@@ -307,6 +312,7 @@ class TestHTMLRenderer:
             llm_fallback=False,
             export_url="#",
             custom_settings=[],
+            report_identity=report_identity,
         )
 
         unavailable = sample_report.model_copy(deep=True)
@@ -318,9 +324,12 @@ class TestHTMLRenderer:
             llm_fallback=False,
             export_url="#",
             custom_settings=[],
+            report_identity=report_identity,
         )
 
-        assert "Estimated 95% Forecast Range (coverage not evaluated)" in experimental_html
+        assert (
+            "Estimated 95% Forecast Range (coverage not evaluated)" in experimental_html
+        )
         assert "Model-Based 95% Forecast Range" not in experimental_html
         assert "Prediction Intervals Unavailable" in unavailable_html
         assert "Model-Based 95% Forecast Range" not in unavailable_html
@@ -370,3 +379,7 @@ class TestHTMLRenderer:
         html = renderer.render(sample_report)
         assert "Report Metadata" in html
         assert "Engine Version" in html
+        assert "Forecast Created" in html
+        assert "<script>alert(1)</script>" not in html
+        assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+        assert "Alice &amp; Bob" in html

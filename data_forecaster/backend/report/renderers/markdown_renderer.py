@@ -391,8 +391,10 @@ class MarkdownRenderer:
         lines = ["## Appendix — Report Metadata", ""]
         lines.append("| Field | Value |")
         lines.append("|-------|-------|")
+        lines.append(f"| Report Title | {_sanitize_cell(meta.title)} |")
+        lines.append(f"| Prepared By | {_sanitize_cell(meta.prepared_by)} |")
+        lines.append(f"| Forecast Created | {_sanitize_cell(meta.generated_at)} |")
         lines.append(f"| Engine Version | {meta.engine_version} |")
-        lines.append(f"| Generated At | {meta.generated_at} |")
         lines.append(f"| Forecast Horizon | {meta.forecast_horizon} periods |")
         lines.append(f"| Models Evaluated | {', '.join(meta.models_evaluated)} |")
         lines.append(f"| Selected Model | {meta.selected_model} |")

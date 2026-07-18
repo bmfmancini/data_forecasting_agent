@@ -12,6 +12,7 @@ from report.models import (
     ExecutiveReport,
     PredictionInterval,
     Recommendation,
+    ReportMetadata,
 )
 from schemas import (
     ForecastResult,
@@ -186,6 +187,8 @@ def built_report(
         forecast=sample_forecast,
         statistical_review=sample_review,
         all_metrics=sample_all_metrics,
+        report_title="Q4 report",
+        prepared_by="alice",
     )
 
 
@@ -325,10 +328,30 @@ class TestExecutiveReportBuilder:
         meta = built_report.metadata
         assert meta.engine_version
         assert meta.generated_at
+        assert meta.generated_at.endswith("+00:00")
+        assert meta.title == "Q4 report"
+        assert meta.prepared_by == "alice"
         assert meta.forecast_horizon == 12
         assert meta.selected_model == "SARIMA"
         assert meta.dataset_frequency == "MS"
         assert meta.row_count == 144
+
+    def test_metadata_defaults_support_legacy_serialized_reports(self) -> None:
+        metadata = ReportMetadata.model_validate(
+            {
+                "engine_version": "1.0",
+                "generated_at": "2026-07-18T01:00:00+00:00",
+                "forecast_horizon": 3,
+                "models_evaluated": ["ARIMA"],
+                "selected_model": "ARIMA",
+                "dataset_frequency": "MS",
+                "data_quality_rating": "Good",
+                "row_count": 24,
+            }
+        )
+
+        assert metadata.title == "Forecast Report"
+        assert metadata.prepared_by == "Unknown"
 
     def test_assumptions_count(self, built_report: ExecutiveReport) -> None:
         assert len(built_report.assumptions) >= 4

@@ -31,6 +31,8 @@ def run_report_agent(
     preflight_options: dict[str, Any] | None = None,
     statistical_review: StatisticalReviewResult | None = None,
     all_metrics: dict[str, dict[str, float]] | None = None,
+    report_title: str = "",
+    prepared_by: str = "",
 ) -> tuple[
     ExecutiveReport,
     list[dict[str, Any]],
@@ -54,6 +56,8 @@ def run_report_agent(
         preflight_options:   Optional preflight configuration dict.
         statistical_review:  Statistical review (QA) agent output.
         all_metrics:         All model comparison metrics dict.
+        report_title:        Resolved report display title.
+        prepared_by:         Authenticated application username.
 
     Returns:
         A tuple of (ExecutiveReport, reasoning_steps, visual_strategy,
@@ -78,6 +82,8 @@ def run_report_agent(
         forecast=forecast,
         statistical_review=statistical_review,
         all_metrics=all_metrics or {},
+        report_title=report_title,
+        prepared_by=prepared_by,
     )
     reasoning_steps.append(
         {

@@ -450,6 +450,8 @@ class ReportMetadata(BaseModel):
     """Structured metadata about the report generation run.
 
     Attributes:
+        title:               Report display title at creation time.
+        prepared_by:         Authenticated application username of the author.
         engine_version:      Forecast engine version string.
         generated_at:        ISO-8601 timestamp.
         forecast_horizon:    Number of periods forecast.
@@ -460,6 +462,8 @@ class ReportMetadata(BaseModel):
         row_count:           Number of rows in the input dataset.
     """
 
+    title: str = "Forecast Report"
+    prepared_by: str = "Unknown"
     engine_version: str
     generated_at: str
     forecast_horizon: int

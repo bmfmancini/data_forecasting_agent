@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS forecast_reports (
     report_markdown       TEXT    NOT NULL,
     executive_report_json TEXT,
     visual_assets_json    TEXT    NOT NULL,
+    analysis_result_json  TEXT,
     custom_settings_json  TEXT,
     llm_fallback          INTEGER NOT NULL DEFAULT 0,
     created_at            TEXT    NOT NULL DEFAULT (datetime('now')),

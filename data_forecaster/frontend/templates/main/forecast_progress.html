@@ -8,11 +8,15 @@
         <div class="forecast-progress-orb" aria-hidden="true"></div>
         <p class="text-uppercase small text-muted mb-2">Analysis underway</p>
         <h1 id="forecast-progress-title" class="h3">Building your forecast</h1>
-        <p class="text-muted mb-4">Your data is being validated, analysed, and modelled. This page updates automatically.</p>
+        <p class="text-muted mb-4">Your data is being validated, analysed, and modelled. Stay here to open the report as soon as it is ready, or continue it in the background.</p>
         <div class="progress" style="height: 12px;">
             <div id="progress-bar-main" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%;" aria-label="Forecast progress" aria-valuemin="0" aria-valuenow="0" aria-valuemax="100">0%</div>
         </div>
         <p id="progress-step" class="small text-muted mt-3 mb-0" aria-live="polite">Preparing your forecast…</p>
+        <div class="mt-4">
+            <a class="btn btn-outline-primary" href="{{ url_for('main.jobs') }}">Continue in background</a>
+        </div>
+        <p class="small text-muted mt-2 mb-0">You can follow its progress from the Job Queue.</p>
     </div>
 </section>
 {% endblock %}

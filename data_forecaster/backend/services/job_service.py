@@ -188,6 +188,53 @@ def clear_terminal_jobs() -> int:
     return cursor.rowcount
 
 
+def clear_terminal_jobs_for_user(
+    application_user_id: int | None,
+    backend_owner_id: int | None,
+) -> int:
+    """Delete only terminal jobs owned by one authenticated caller.
+
+    Frontend calls include an application user ID. Direct API calls omit it
+    and clear only jobs without frontend delegation metadata. Active jobs and
+    jobs owned by other backend or application users are preserved.
+
+    Args:
+        application_user_id: Delegated frontend user ID, or ``None`` for a
+            direct backend API caller.
+        backend_owner_id: Authenticated backend API user ID.
+
+    Returns:
+        Number of deleted terminal jobs.
+    """
+    connection = get_connection()
+    try:
+        terminal_rows = connection.execute(
+            """
+            SELECT job_id FROM forecast_jobs
+            WHERE backend_owner_id IS ? AND application_user_id IS ?
+              AND status IN ('done', 'error', 'cancelled')
+            """,
+            (backend_owner_id, application_user_id),
+        ).fetchall()
+        cursor = connection.execute(
+            """
+            DELETE FROM forecast_jobs
+            WHERE backend_owner_id IS ? AND application_user_id IS ?
+              AND status IN ('done', 'error', 'cancelled')
+            """,
+            (backend_owner_id, application_user_id),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+    with _job_store_lock:
+        for row in terminal_rows:
+            _job_store.pop(str(row["job_id"]), None)
+    for row in terminal_rows:
+        _delete_result_file(str(row["job_id"]))
+    return cursor.rowcount
+
+
 class QueuedJobLimitError(ValueError):
     """Raised when a non-admin user exceeds the per-user queued-job cap."""
 
@@ -547,14 +594,15 @@ def get_job_status_only(
 
 
 def list_jobs_for_user(
-    application_user_id: int,
+    application_user_id: int | None,
     backend_owner_id: int | None,
     limit: int = 25,
 ) -> list[dict[str, Any]]:
-    """Return the most recent jobs belonging to a specific application user.
+    """Return recent jobs for an API owner and optional application user.
 
     Args:
-        application_user_id: Frontend application user ID to scope by.
+        application_user_id: Frontend user ID, or ``None`` for jobs submitted
+            directly through the backend API.
         backend_owner_id: Backend API user ID that owns the jobs.
         limit: Maximum number of jobs to return.
 
@@ -569,7 +617,7 @@ def list_jobs_for_user(
                    forecast_horizon, forced_model, queued_at, started_at,
                    completed_at, error
             FROM forecast_jobs
-            WHERE backend_owner_id IS ? AND application_user_id = ?
+            WHERE backend_owner_id IS ? AND application_user_id IS ?
             ORDER BY queued_at DESC, rowid DESC LIMIT ?
             """,
             (backend_owner_id, application_user_id, limit),
@@ -878,20 +926,7 @@ async def _run_job(job_id: str, job: dict[str, Any]) -> None:
         return
 
     def run_pipeline_sync() -> AnalysisResponse:
-        return _run_pipeline(
-            df=stored["df"],
-            file_id=str(job["file_id"]),
-            date_col=str(job["date_col"]),
-            value_col=str(job["value_col"]),
-            freq=stored["freq"],
-            forecast_horizon=int(job["forecast_horizon"]),
-            forced_model=job["forced_model"],
-            user_prompt=job["user_prompt"],
-            preflight_options=json.loads(str(job["preflight_options"])),
-            chroma_persist_dir=settings.CHROMA_PERSIST_DIR,
-            progress_callback=lambda pct, step: _update_job_progress(job_id, pct, step),
-            cancel_check=lambda: _is_cancel_requested(job_id),
-        )
+        return _run_pipeline(**_pipeline_kwargs_from_job(job_id, job, stored))
 
     try:
         result = await asyncio.to_thread(run_pipeline_sync)
@@ -925,6 +960,30 @@ async def _run_job(job_id: str, job: dict[str, Any]) -> None:
         _set_job_error(job_id, str(exc))
     finally:
         release_file(str(job["file_id"]))
+
+
+def _pipeline_kwargs_from_job(
+    job_id: str,
+    job: dict[str, Any],
+    stored: dict[str, Any],
+) -> dict[str, Any]:
+    """Build pipeline arguments from one durable job and its stored dataset."""
+    return {
+        "df": stored["df"],
+        "file_id": str(job["file_id"]),
+        "date_col": str(job["date_col"]),
+        "value_col": str(job["value_col"]),
+        "freq": stored["freq"],
+        "forecast_horizon": int(job["forecast_horizon"]),
+        "forced_model": job["forced_model"],
+        "user_prompt": job["user_prompt"],
+        "preflight_options": json.loads(str(job["preflight_options"])),
+        "report_title": str(job.get("report_name") or ""),
+        "prepared_by": str(job.get("application_username") or ""),
+        "chroma_persist_dir": settings.CHROMA_PERSIST_DIR,
+        "progress_callback": lambda pct, step: _update_job_progress(job_id, pct, step),
+        "cancel_check": lambda: _is_cancel_requested(job_id),
+    }
 
 
 def _complete_job(job_id: str) -> None:

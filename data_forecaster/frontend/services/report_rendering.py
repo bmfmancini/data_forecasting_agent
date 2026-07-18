@@ -8,6 +8,7 @@ from typing import Any
 from flask import render_template
 
 from services.markdown_service import markdown_to_safe_html
+from services.report_identity import report_download_filename, resolve_report_identity
 
 _VISUAL_TAG_RE: re.Pattern[str] = re.compile(r"\[VISUAL:([A-Z_]+)\]")
 
@@ -25,15 +26,16 @@ def render_analysis_report(
     source_filename: str,
     export_url: str,
     custom_settings: list[dict[str, str]] | None = None,
+    prepared_by_fallback: str | None = None,
 ) -> str:
     """Render a current or persisted final report using shared presentation."""
     executive_report: dict[str, Any] | None = result.get("executive_report")
     report_md: str = result.get("report", "Report not available.")
     web_report_md = _remove_web_dashboard_section(report_md)
-    base_name = (
-        source_filename.rsplit(".", 1)[0] if "." in source_filename else source_filename
+    report_identity = resolve_report_identity(
+        result, source_filename, prepared_by_fallback
     )
-    pdf_filename = f"forecast_report_{base_name or 'data'}.pdf"
+    pdf_filename = report_download_filename(report_identity["title"])
     return render_template(
         "main/report.html",
         segments=_parse_report_segments(web_report_md, result),
@@ -42,6 +44,7 @@ def render_analysis_report(
         llm_fallback=bool(result.get("llm_fallback", False)),
         export_url=export_url,
         custom_settings=custom_settings or [],
+        report_identity=report_identity,
     )
 
 

@@ -41,7 +41,9 @@ def _report_limit(connection: sqlite3.Connection) -> int:
 def _report_title(filename: str) -> str:
     """Build a stable display title from a source filename."""
     base_name = filename.rsplit(".", 1)[0] if "." in filename else filename
-    return f"Forecast Report — {base_name or 'data'}"
+    prefix = "Forecast Report — "
+    usable_name = base_name.strip() or "data"
+    return f"{prefix}{usable_name[: 200 - len(prefix)].rstrip()}"
 
 
 def save_report(
@@ -51,6 +53,7 @@ def save_report(
     forecast_horizon: int | None,
     custom_settings: list[dict[str, str]] | None = None,
     job_id: str | None = None,
+    report_title: str | None = None,
 ) -> int:
     """Atomically save a final report if its owner remains below the cap.
 
@@ -66,6 +69,7 @@ def save_report(
         forecast_horizon: Requested number of forecast periods.
         custom_settings: Optional user-selected report settings to persist as JSON.
         job_id: Optional backend job ID for idempotent linking.
+        report_title: Resolved job title; falls back to the dataset-based title.
 
     Returns:
         The newly created or existing report ID.
@@ -75,8 +79,17 @@ def save_report(
             no report for this ``job_id`` exists yet.
     """
     visual_assets = {field: result.get(field) for field in _VISUAL_FIELDS}
+    analysis_result = {
+        key: value
+        for key, value in result.items()
+        if key not in _VISUAL_FIELDS
+        and key not in {"report", "executive_report", "llm_fallback"}
+    }
     executive_report = result.get("executive_report")
     model_used = (result.get("forecast") or {}).get("model_used")
+    resolved_title = str(report_title or "").strip() or _report_title(source_filename)
+    if len(resolved_title) > 200:
+        raise ValueError("Report title must be 200 characters or fewer.")
     connection = get_db()
     transaction_started = False
     try:
@@ -107,19 +120,21 @@ def save_report(
             INSERT INTO forecast_reports (
                 user_id, job_id, title, source_filename, model_used,
                 forecast_horizon, report_markdown, executive_report_json,
-                visual_assets_json, custom_settings_json, llm_fallback
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                visual_assets_json, analysis_result_json, custom_settings_json,
+                llm_fallback
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 user_id,
                 job_id,
-                _report_title(source_filename),
+                resolved_title,
                 source_filename,
                 str(model_used) if model_used else None,
                 forecast_horizon,
                 str(result.get("report") or "Report not available."),
                 json.dumps(executive_report) if executive_report is not None else None,
                 json.dumps(visual_assets),
+                json.dumps(analysis_result),
                 json.dumps(custom_settings or []),
                 int(bool(result.get("llm_fallback", False))),
             ),
@@ -181,9 +196,9 @@ def get_report_for_user(report_id: int, user_id: int) -> dict[str, Any] | None:
     """Return one report only when it belongs to the requesting user."""
     row = query_db(
         """
-        SELECT id, title, source_filename, model_used, forecast_horizon,
+        SELECT id, job_id, title, source_filename, model_used, forecast_horizon,
                report_markdown, executive_report_json, visual_assets_json,
-               custom_settings_json, llm_fallback, created_at
+               analysis_result_json, custom_settings_json, llm_fallback, created_at
         FROM forecast_reports WHERE id = ? AND user_id = ?
         """,
         (report_id, user_id),
@@ -195,19 +210,28 @@ def get_report_for_user(report_id: int, user_id: int) -> dict[str, Any] | None:
 def _decode_report(row: dict[str, Any]) -> dict[str, Any]:
     """Decode stored JSON fields into the rendering result shape."""
     report = dict(row)
+    full_result = (
+        json.loads(report.pop("analysis_result_json"))
+        if report.get("analysis_result_json")
+        else {}
+    )
     report["executive_report"] = (
         json.loads(report.pop("executive_report_json"))
         if report.get("executive_report_json")
         else None
     )
-    report.update(json.loads(report.pop("visual_assets_json")))
+    visual_assets = json.loads(report.pop("visual_assets_json"))
     report["custom_settings"] = (
         json.loads(report.pop("custom_settings_json"))
         if report.get("custom_settings_json")
         else []
     )
     report["report"] = report.pop("report_markdown")
-    return report
+    # Saved metadata remains authoritative, while the complete result supplies
+    # the validation, statistics, model, forecast, and reasoning tab payloads.
+    full_result.update(visual_assets)
+    full_result.update(report)
+    return full_result
 
 
 def list_reports_for_user(user_id: int) -> list[dict[str, Any]]:
