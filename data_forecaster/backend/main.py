@@ -5,6 +5,8 @@ Route handlers are kept thin — business logic lives in the
 orchestration, chat, and RAG).
 """
 
+from __future__ import annotations
+
 import asyncio
 import os
 import tempfile
@@ -20,6 +22,7 @@ from fastapi import (
     Depends,
     FastAPI,
     File,
+    Header,
     HTTPException,
     Request,
     Response,
@@ -28,6 +31,7 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 
 import core.config as settings
+from auth.application_identity import verify_application_user_signature
 from auth.api_key_db import (
     create_api_user,
     create_first_user,
@@ -71,10 +75,12 @@ from schemas import (
     JobSubmitResponse,
     PreflightResponse,
     UploadResponse,
+    UserJobQueueItem,
 )
 from services.chat_service import chat_general, chat_with_data
 from services.file_service import get_file, init_storage, store_file
 from services.job_service import (
+    QueuedJobLimitError,
     create_job,
     clear_terminal_jobs,
     cleanup_terminal_jobs,
@@ -84,7 +90,9 @@ from services.job_service import (
     init_job_queue,
     is_queue_ready,
     job_worker,
+    list_jobs_for_user,
     list_recent_jobs,
+    request_cancel,
     update_job_settings,
 )
 from utils.data_parser import parse_upload, parse_upload_from_path
@@ -94,6 +102,65 @@ logger = get_logger(__name__)
 
 _JSON_MEDIA_TYPE: str = "application/json"
 _JOB_CLEANUP_INTERVAL_SECONDS: int = 24 * 60 * 60
+
+
+def _application_user_id_header(
+    x_application_user_id: Annotated[
+        str | None,
+        Header(alias="X-Application-User-ID"),
+    ] = None,
+    x_application_user_signature: Annotated[
+        str | None,
+        Header(alias="X-Application-User-Signature"),
+    ] = None,
+) -> int | None:
+    """Extract and authenticate the delegated application-user identity.
+
+    This header is set by the Flask proxy from ``current_user.id`` (server-side)
+    and is never controlled by the browser.  It scopes job operations to the
+    authenticated frontend user, since multiple app users may share the same
+    backend API credential.
+
+    Args:
+        x_application_user_id: The raw application-user header value.
+        x_application_user_signature: HMAC signature supplied by the frontend.
+
+    Returns:
+        The parsed integer user ID, or ``None`` if the header is absent.
+
+    Raises:
+        HTTPException: If the identity headers are incomplete, malformed, or
+            fail signature verification.
+    """
+    if not x_application_user_id and not x_application_user_signature:
+        return None
+    if not x_application_user_id or not x_application_user_signature:
+        raise HTTPException(
+            status_code=400,
+            detail="Both application-user identity headers are required.",
+        )
+    try:
+        application_user_id = int(x_application_user_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="X-Application-User-ID must be an integer.",
+        ) from exc
+    if application_user_id < 1:
+        raise HTTPException(
+            status_code=400,
+            detail="X-Application-User-ID must be a positive integer.",
+        )
+    if not verify_application_user_signature(
+        application_user_id,
+        x_application_user_signature,
+        settings.APPLICATION_IDENTITY_SECRET,
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Invalid application-user identity signature.",
+        )
+    return application_user_id
 
 
 async def _cleanup_job_history() -> None:
@@ -213,6 +280,8 @@ app.add_middleware(
     allow_headers=[
         "X-API-Username",
         "X-API-Key",
+        "X-Application-User-ID",
+        "X-Application-User-Signature",
         "Content-Type",
         "X-Admin-Key",
     ],
@@ -690,12 +759,14 @@ async def preflight_check(
     status_code=202,
     responses={
         404: {"description": "Session data not found"},
+        429: {"description": "Per-user queued-job limit exceeded"},
         503: {"description": "Background worker service not ready"},
     },
 )
 def analyze(
     body: Annotated[AnalyzeRequest, Body()],
     _user: Annotated[dict, Depends(require_api_key)],
+    app_user_id: Annotated[int | None, Depends(_application_user_id_header)] = None,
 ) -> JobSubmitResponse:
     """Enqueue a forecasting analysis job."""
     logger.info(
@@ -706,6 +777,12 @@ def analyze(
 
     if not is_queue_ready():
         raise HTTPException(status_code=503, detail="Service not ready.")
+
+    if body.application_user_id != app_user_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Application-user identity does not match the request body.",
+        )
 
     stored = get_file(body.file_id, requester=_user)
     if stored is None:
@@ -731,7 +808,12 @@ def analyze(
             application_user_is_admin=(
                 body.application_user_is_admin and bool(_user.get("is_admin"))
             ),
+            report_name=body.report_name,
+            source_filename=body.source_filename,
+            custom_settings=body.custom_settings,
         )
+    except QueuedJobLimitError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return JobSubmitResponse(job_id=job_id, status="pending")
@@ -788,6 +870,7 @@ def job_settings_update(
     """Update scheduler and retention settings, then clean expired history."""
     updated = update_job_settings(
         job_settings.max_running_jobs_per_user,
+        job_settings.max_queued_jobs_per_user,
         job_settings.retention_days,
         job_settings.cleanup_enabled,
     )
@@ -795,10 +878,85 @@ def job_settings_update(
     return updated
 
 
+@app.get(
+    "/jobs/mine",
+    response_model=list[UserJobQueueItem],
+    responses={403: {"description": "Authenticated user is not an admin"}},
+)
+def my_jobs(
+    _user: Annotated[dict, Depends(require_api_key)],
+    app_user_id: Annotated[int | None, Depends(_application_user_id_header)] = None,
+) -> list[dict[str, Any]]:
+    """Return the most recent jobs for the authenticated application user.
+
+    The ``X-Application-User-ID`` header is set by the Flask proxy from
+    ``current_user.id`` and scopes the result to the frontend user's own
+    jobs.  When the header is absent, a 400 error is raised.
+    """
+    if app_user_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="X-Application-User-ID header is required.",
+        )
+    jobs = list_jobs_for_user(
+        app_user_id,
+        backend_owner_id=_user.get("id"),
+    )
+    result: list[dict[str, Any]] = []
+    for job in jobs:
+        status = job.get("status", "")
+        can_cancel = status in ("pending", "running", "cancelling")
+        result.append(
+            {
+                "job_id": job["job_id"],
+                "report_name": job.get("report_name") or "",
+                "status": status,
+                "progress": int(job.get("progress", 0)),
+                "step": job.get("step", ""),
+                "queued_at": job.get("queued_at", ""),
+                "started_at": job.get("started_at"),
+                "completed_at": job.get("completed_at"),
+                "error": job.get("error"),
+                "can_cancel": can_cancel,
+                "forecast_horizon": int(job.get("forecast_horizon", 0)),
+                "forced_model": job.get("forced_model"),
+            }
+        )
+    return result
+
+
+@app.delete(
+    "/jobs/{job_id}",
+    responses={
+        404: {"description": "Job ID not found or not owned by the user"},
+        409: {"description": "Job is already terminal"},
+    },
+)
+def cancel_job(
+    job_id: str,
+    _user: Annotated[dict, Depends(require_api_key)],
+    app_user_id: Annotated[int | None, Depends(_application_user_id_header)] = None,
+) -> dict[str, str]:
+    """Request cooperative cancellation of a forecast job.
+
+    Pending jobs are cancelled immediately.  Running jobs transition to
+    ``cancelling`` and are cancelled at the next pipeline stage boundary.
+    Cancellation is idempotent for ``cancelling`` jobs.  Terminal jobs
+    return 409.
+    """
+    result = request_cancel(job_id, requester=_user, application_user_id=app_user_id)
+    if result == "not_found":
+        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
+    if result == "conflict":
+        raise HTTPException(status_code=409, detail="Job is already complete.")
+    return {"job_id": job_id, "cancel_status": result}
+
+
 @app.get("/jobs/{job_id}/status", responses={404: {"description": "Job ID not found"}})
 def get_job_status_lightweight(
     job_id: str,
     _user: Annotated[dict, Depends(require_api_key)],
+    app_user_id: Annotated[int | None, Depends(_application_user_id_header)] = None,
 ) -> dict[str, Any]:
     """Return only status/progress/step for lightweight polling.
 
@@ -807,7 +965,9 @@ def get_job_status_lightweight(
     ``GET /jobs/{job_id}`` to retrieve the complete results once the
     job is done.
     """
-    status = get_job_status_only(job_id, requester=_user)
+    status = get_job_status_only(
+        job_id, requester=_user, application_user_id=app_user_id
+    )
     if status is None:
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
     return {"job_id": job_id, **status}
@@ -817,9 +977,10 @@ def get_job_status_lightweight(
 def get_job_status(
     job_id: str,
     _user: Annotated[dict, Depends(require_api_key)],
+    app_user_id: Annotated[int | None, Depends(_application_user_id_header)] = None,
 ) -> JobStatusResponse:
     """Retrieve the full status and results of a specific background job."""
-    job = get_job(job_id, requester=_user)
+    job = get_job(job_id, requester=_user, application_user_id=app_user_id)
     if job is None:
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
     return JobStatusResponse(
@@ -829,6 +990,10 @@ def get_job_status(
         step=job["step"],
         result=job.get("result"),
         error=job.get("error"),
+        report_name=str(job.get("report_name") or ""),
+        source_filename=str(job.get("source_filename") or ""),
+        forecast_horizon=int(job.get("forecast_horizon") or 0),
+        custom_settings_json=str(job.get("custom_settings_json") or "[]"),
     )
 
 

@@ -206,7 +206,12 @@
     );
     postJSON("/api/analyze", { date_col: date.value, value_col: value.value, forecast_horizon: Number(horizon.value), model_choice: model.value, user_prompt: prompt.value, preflight_options: options })
       .then(function (response) {
-        if (response.status === 202) { window.location.assign("/forecast-progress"); return; }
+        if (response.status === 202) {
+          return response.json().then(function (data) {
+            var target = data.redirect || "/jobs";
+            window.location.assign(target);
+          });
+        }
         return response.json().then(function (data) { throw new Error(data.error || "Failed to submit forecast."); });
       })
       .catch(function (error) { showRunError(error.message || String(error)); });

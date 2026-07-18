@@ -84,12 +84,14 @@ def init_db() -> None:
     """Initialise the database schema and seed default data.
 
     Reads ``db/schema.sql`` relative to the application root, executes the
-    DDL, then inserts seed rows (roles, default admin user, default API
-    credential entry) only when they do not already exist.
+    DDL and static seed data (roles, api_credentials, app_config defaults),
+    then applies additive column migrations for older installations and
+    seeds the bootstrap admin user when no users exist.
 
     On first initialisation, the database seeds a single ``admin`` user with
-    password ``admin`` and ``must_change_password = 1`` so the operator is
-    forced to rotate the password on first login.
+    the password from ``FRONTEND_DEFAULT_ADMIN_PASSWORD`` (default ``admin``)
+    and ``must_change_password = 1`` so the operator is forced to rotate the
+    password on first login.
     """
     db = get_db()
 
@@ -104,6 +106,12 @@ def init_db() -> None:
     }
     if "custom_settings_json" not in report_columns:
         db.execute("ALTER TABLE forecast_reports ADD COLUMN custom_settings_json TEXT")
+    if "job_id" not in report_columns:
+        db.execute("ALTER TABLE forecast_reports ADD COLUMN job_id TEXT")
+    db.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS forecast_reports_job_id_uq "
+        "ON forecast_reports(job_id) WHERE job_id IS NOT NULL"
+    )
 
     user_columns = {row["name"] for row in db.execute("PRAGMA table_info(users)")}
     if "session_version" not in user_columns:
@@ -111,13 +119,15 @@ def init_db() -> None:
             "ALTER TABLE users ADD COLUMN session_version INTEGER NOT NULL DEFAULT 0"
         )
 
-    db.execute("INSERT OR IGNORE INTO roles (id, name) VALUES (1, 'admin')")
-    db.execute("INSERT OR IGNORE INTO roles (id, name) VALUES (2, 'user')")
-
+    # Seed the bootstrap admin user only when no users exist.  Roles,
+    # api_credentials, and app_config defaults are seeded in schema.sql.
     user_count_row = db.execute("SELECT COUNT(*) AS count FROM users").fetchone()
     user_count = int(user_count_row["count"]) if user_count_row else 0
     if user_count == 0:
-        default_admin_password = "admin"  # NOSONAR: forced reset bootstrap password.
+        # Bootstrap-only: used for the initial admin login and invalidated
+        # immediately by ``must_change_password = 1``. Override via the
+        # ``FRONTEND_DEFAULT_ADMIN_PASSWORD`` env var in production.
+        default_admin_password = current_app.config["DEFAULT_ADMIN_PASSWORD"]
         admin_hash = generate_password_hash(default_admin_password)
         db.execute(
             """
@@ -127,33 +137,6 @@ def init_db() -> None:
             """,
             ("admin", admin_hash),
         )
-
-    db.execute(
-        """
-        INSERT INTO api_credentials (label, base_url, timeout, verify_ssl)
-        VALUES ('default', '', 30, 0)
-        ON CONFLICT(label) DO NOTHING
-        """
-    )
-
-    db.execute(
-        """
-        INSERT OR IGNORE INTO app_config (key, value)
-        VALUES ('app_name', 'Time Series Data Forecaster Agent')
-        """
-    )
-    db.execute(
-        """
-        INSERT OR IGNORE INTO app_config (key, value)
-        VALUES ('max_reports_per_user', '10')
-        """
-    )
-    db.execute(
-        """
-        INSERT OR IGNORE INTO app_config (key, value)
-        VALUES ('max_upload_mb', '100')
-        """
-    )
 
     db.commit()
 

@@ -23,7 +23,7 @@ from agents.report_generation_agent import run_report_agent
 from agents.statistical_analysis_agent import run_statistical_agent
 from agents.statistical_review_agent import run_statistical_review_agent
 from core.logging_config import get_logger
-from exceptions import DataValidationError
+from exceptions import DataValidationError, JobCancelledError
 from report.renderers import HTMLRenderer, MarkdownRenderer
 from schemas import (
     AnalysisResponse,
@@ -150,6 +150,7 @@ def run_pipeline(
     preflight_options: dict[str, Any] | None = None,
     chroma_persist_dir: str = "./chroma_db",
     progress_callback: Callable[[int, str], None] | None = None,
+    cancel_check: Callable[[], bool] | None = None,
 ) -> AnalysisResponse:
     """Execute the full 6-agent pipeline and return the complete AnalysisResponse.
 
@@ -166,14 +167,29 @@ def run_pipeline(
         preflight_options: Optional preflight configuration dict.
         chroma_persist_dir: Path to the ChromaDB persistence directory.
         progress_callback: Optional callback ``(pct, step)`` for progress updates.
+        cancel_check:      Optional callback returning ``True`` when the job
+                           has been cancelled.  When provided, the pipeline
+                           checks for cancellation before and after each major
+                           stage and raises :class:`JobCancelledError` at the
+                           next stage boundary.  Cancellation is cooperative,
+                           not immediate.
 
     Returns:
         The complete :class:`AnalysisResponse`.
+
+    Raises:
+        JobCancelledError: When ``cancel_check`` returns ``True`` at a stage
+            boundary.
     """
 
     def _progress(pct: int, step: str) -> None:
         if progress_callback:
             progress_callback(pct, step)
+
+    def _check_cancelled() -> None:
+        """Raise ``JobCancelledError`` if the job has been cancelled."""
+        if cancel_check and cancel_check():
+            raise JobCancelledError("Job cancelled by user request.")
 
     logger.info(
         "Pipeline start: file_id=%s date_col=%s value_col=%s freq=%s horizon=%d",
@@ -189,10 +205,13 @@ def run_pipeline(
             "Analysis stopped because the selected series is too short."
         )
 
+    _check_cancelled()
     prepared = _prepare_pipeline_input(df, date_col, value_col, freq, preflight_options)
+    _check_cancelled()
     statistical_stage = _run_statistical_stages(
         prepared, date_col, value_col, preflight_options, _progress
     )
+    _check_cancelled()
     forecast_options = dict(preflight_options or {})
     if user_prompt:
         forecast_options["user_context"] = user_prompt
@@ -207,6 +226,7 @@ def run_pipeline(
         forecast_options,
         _progress,
     )
+    _check_cancelled()
     report_stage = _run_report_stage(
         statistical_stage.validation,
         statistical_stage.statistical,
@@ -216,6 +236,7 @@ def run_pipeline(
         preflight_options,
         _progress,
     )
+    _check_cancelled()
     visualization_stage = _build_visualizations(
         statistical_stage.series,
         statistical_stage.statistical,
@@ -224,6 +245,7 @@ def run_pipeline(
         prepared.disabled_statistical_tests,
         _progress,
     )
+    _check_cancelled()
     pipeline_token_usage = _build_pipeline_token_usage(
         statistical_stage, forecast_stage, report_stage.token_usage
     )

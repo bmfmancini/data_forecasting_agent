@@ -30,3 +30,12 @@ class PipelineExecutionError(ForecastingAgentError):
 
 class StorageAccessError(ForecastingAgentError):
     """Raised when persisted forecast artifacts cannot be read or written safely."""
+
+
+class JobCancelledError(ForecastingAgentError):
+    """Raised when a pipeline stage detects a cooperative cancellation request.
+
+    This is raised inside :func:`run_pipeline` when the ``cancel_check``
+    callback returns ``True`` at a stage boundary.  The job worker catches it
+    and transitions the job to the ``cancelled`` terminal status.
+    """

@@ -32,10 +32,16 @@
                     <hr class="my-4">
                     <section aria-labelledby="forecast-job-settings-heading">
                         <h5 id="forecast-job-settings-heading">Forecast Job Settings</h5>
-                        <p class="text-secondary small">Administrators bypass the per-user running-job limit.</p>
+                        <p class="text-secondary small">Administrators bypass both per-user job limits.</p>
                         <div class="mb-3">
                             <label class="form-label" for="max_running_jobs_per_user">Maximum running jobs per user</label>
                             <input class="form-control" id="max_running_jobs_per_user" min="1" name="max_running_jobs_per_user" required step="1" type="number" value="{{ job_settings.max_running_jobs_per_user }}">
+                            <small class="text-secondary">Concurrent forecasts actively processing. Excess submissions stay queued.</small>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label" for="max_queued_jobs_per_user">Maximum queued jobs per user</label>
+                            <input class="form-control" id="max_queued_jobs_per_user" min="1" name="max_queued_jobs_per_user" required step="1" type="number" value="{{ job_settings.max_queued_jobs_per_user or 5 }}">
+                            <small class="text-secondary">Backlog limit for pending forecasts. Submissions beyond this are rejected.</small>
                         </div>
                         <div class="mb-3">
                             <label class="form-label" for="job_retention">Job history retention</label>

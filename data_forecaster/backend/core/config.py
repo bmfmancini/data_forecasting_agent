@@ -89,6 +89,14 @@ ADMIN_API_KEY: str | None = os.getenv("ADMIN_API_KEY")
 FRONTEND_API_USERNAME: str = os.getenv("FRONTEND_API_USERNAME", "frontend")
 FRONTEND_API_KEY: str = os.getenv("FRONTEND_API_KEY", "frontend")
 
+# Separate pre-shared secret used to sign the frontend application user ID.
+# With a strong deployment-specific value, this prevents callers authenticated
+# only with the shared backend service credential from selecting another
+# frontend user's identity. The value must match the frontend environment.
+APPLICATION_IDENTITY_SECRET: str = os.getenv(
+    "APPLICATION_IDENTITY_SECRET", "development-only-change-me"
+)
+
 # Comma-separated list of origins allowed by CORS.  Defaults cover the
 # local development and single-machine Docker deployments.  Add the
 # frontend's public HTTPS URL here for distributed deployments.

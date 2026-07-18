@@ -409,13 +409,16 @@ def settings() -> str | Response:
         }
         try:
             max_running_jobs = int(request.form.get("max_running_jobs_per_user", ""))
+            max_queued_jobs = int(request.form.get("max_queued_jobs_per_user", ""))
             retention_option = str(request.form.get("job_retention", "30"))
             retention_days, cleanup_enabled = _RETENTION_OPTIONS[retention_option]
             if max_running_jobs < 1:
                 raise ValueError
+            if max_queued_jobs < 1:
+                raise ValueError
         except (KeyError, ValueError):
             flash(
-                "Enter a job limit of at least 1 and select a valid retention option.",
+                "Enter job limits of at least 1 and select a valid retention option.",
                 "danger",
             )
             return redirect(url_for("admin.settings"))
@@ -423,6 +426,7 @@ def settings() -> str | Response:
             response = get_api_client().update_job_settings(
                 {
                     "max_running_jobs_per_user": max_running_jobs,
+                    "max_queued_jobs_per_user": max_queued_jobs,
                     "retention_days": retention_days,
                     "cleanup_enabled": cleanup_enabled,
                 }

@@ -50,21 +50,17 @@ def test_init_db_seeds_forced_reset_admin_and_blank_api_config(
     with app.app_context():
         init_db()
         db = get_db()
-        user = db.execute(
-            """
+        user = db.execute("""
             SELECT username, password_hash, must_change_password
             FROM users
             WHERE username = 'admin'
-            """
-        ).fetchone()
-        api_config = db.execute(
-            """
+            """).fetchone()
+        api_config = db.execute("""
             SELECT base_url, timeout, verify_ssl, encrypted_username,
                    encrypted_password
             FROM api_credentials
             WHERE label = 'default'
-            """
-        ).fetchone()
+            """).fetchone()
         upload_config = db.execute(
             "SELECT value FROM app_config WHERE key = 'max_upload_mb'"
         ).fetchone()
@@ -88,13 +84,11 @@ def test_sync_app_config_applies_upload_limit(tmp_path: Path, monkeypatch) -> No
     with app.app_context():
         init_db()
         db = get_db()
-        db.execute(
-            """
+        db.execute("""
             UPDATE app_config
             SET value = '42'
             WHERE key = 'max_upload_mb'
-            """
-        )
+            """)
         db.commit()
 
         _sync_app_config_from_db(app)
@@ -126,13 +120,52 @@ def test_init_db_preserves_existing_api_credentials(
 
         init_db()
 
-        row = db.execute(
-            """
+        row = db.execute("""
             SELECT encrypted_username, encrypted_password
             FROM api_credentials
             WHERE label = 'default'
-            """
-        ).fetchone()
+            """).fetchone()
 
     assert decrypt(row["encrypted_username"]) == "admin-user"
     assert decrypt(row["encrypted_password"]) == "admin-key"
+
+
+def test_init_db_adds_job_link_before_creating_unique_index(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Legacy report databases gain the job column before its index."""
+    monkeypatch.setenv("FLASK_ENCRYPTION_KEY", Fernet.generate_key().decode())
+    app = _app(tmp_path)
+
+    with app.app_context():
+        db = get_db()
+        db.execute("""
+            CREATE TABLE forecast_reports (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                source_filename TEXT NOT NULL,
+                model_used TEXT,
+                forecast_horizon INTEGER,
+                report_markdown TEXT NOT NULL,
+                executive_report_json TEXT,
+                visual_assets_json TEXT NOT NULL,
+                custom_settings_json TEXT,
+                llm_fallback INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+            """)
+        db.commit()
+
+        init_db()
+
+        columns = {
+            row["name"] for row in db.execute("PRAGMA table_info(forecast_reports)")
+        }
+        indexes = {
+            row["name"] for row in db.execute("PRAGMA index_list(forecast_reports)")
+        }
+
+    assert "job_id" in columns
+    assert "forecast_reports_job_id_uq" in indexes

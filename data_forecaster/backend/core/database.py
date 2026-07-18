@@ -57,6 +57,10 @@ CREATE TABLE IF NOT EXISTS forecast_jobs (
     forced_model              TEXT,
     user_prompt               TEXT,
     preflight_options         TEXT NOT NULL DEFAULT '{}',
+    report_name               TEXT NOT NULL DEFAULT '',
+    source_filename           TEXT NOT NULL DEFAULT '',
+    custom_settings_json      TEXT NOT NULL DEFAULT '[]',
+    cancel_requested          INTEGER NOT NULL DEFAULT 0,
     status                    TEXT NOT NULL,
     progress                  INTEGER NOT NULL DEFAULT 0,
     step                      TEXT NOT NULL,
@@ -73,9 +77,13 @@ ON forecast_jobs(status, queued_at);
 CREATE INDEX IF NOT EXISTS forecast_jobs_application_status_idx
 ON forecast_jobs(application_user_id, status);
 
+CREATE INDEX IF NOT EXISTS forecast_jobs_app_user_queued_idx
+ON forecast_jobs(application_user_id, status, queued_at);
+
 CREATE TABLE IF NOT EXISTS forecast_job_settings (
     singleton                 INTEGER PRIMARY KEY CHECK (singleton = 1),
     max_running_jobs_per_user INTEGER NOT NULL DEFAULT 1,
+    max_queued_jobs_per_user  INTEGER NOT NULL DEFAULT 5,
     retention_days            INTEGER,
     cleanup_enabled           INTEGER NOT NULL DEFAULT 1,
     updated_at                TEXT NOT NULL DEFAULT (datetime('now'))
@@ -85,6 +93,22 @@ INSERT OR IGNORE INTO forecast_job_settings
     (singleton, max_running_jobs_per_user, retention_days, cleanup_enabled)
 VALUES (1, 1, 30, 1);
 """
+
+# Columns added to ``forecast_jobs`` after the initial release.  Each is added
+# via ``ALTER TABLE`` so existing databases pick them up without a full
+# re-creation.  SQLite raises ``sqlite3.OperationalError`` if the column
+# already exists, so each attempt is guarded.
+_FORECAST_JOBS_MIGRATION_COLUMNS = (
+    ("report_name", "TEXT NOT NULL DEFAULT ''"),
+    ("source_filename", "TEXT NOT NULL DEFAULT ''"),
+    ("custom_settings_json", "TEXT NOT NULL DEFAULT '[]'"),
+    ("cancel_requested", "INTEGER NOT NULL DEFAULT 0"),
+)
+
+# Columns added to ``forecast_job_settings`` after the initial release.
+_FORECAST_JOB_SETTINGS_MIGRATION_COLUMNS = (
+    ("max_queued_jobs_per_user", "INTEGER NOT NULL DEFAULT 5"),
+)
 
 
 def _database_path(db_path: str | None = None) -> str:
@@ -136,7 +160,42 @@ def transaction(db_path: str | None = None) -> Iterator[sqlite3.Connection]:
         connection.close()
 
 
+def _apply_column_migrations(connection: sqlite3.Connection) -> None:
+    """Add columns introduced after the initial schema release.
+
+    Existing columns are detected with ``PRAGMA table_info`` before each
+    ``ALTER TABLE``. This avoids hiding unrelated operational errors while
+    keeping repeated startup initialization idempotent.
+
+    Args:
+        connection: An open SQLite connection with an active transaction.
+    """
+    jobs_columns = {
+        str(row["name"])
+        for row in connection.execute("PRAGMA table_info(forecast_jobs)")
+    }
+    for column_name, column_type in _FORECAST_JOBS_MIGRATION_COLUMNS:
+        if column_name not in jobs_columns:
+            connection.execute(
+                f"ALTER TABLE forecast_jobs ADD COLUMN {column_name} {column_type}"
+            )
+            jobs_columns.add(column_name)
+
+    settings_columns = {
+        str(row["name"])
+        for row in connection.execute("PRAGMA table_info(forecast_job_settings)")
+    }
+    for column_name, column_type in _FORECAST_JOB_SETTINGS_MIGRATION_COLUMNS:
+        if column_name not in settings_columns:
+            connection.execute(
+                f"ALTER TABLE forecast_job_settings ADD COLUMN {column_name} "
+                f"{column_type}"
+            )
+            settings_columns.add(column_name)
+
+
 def init_database() -> None:
     """Create all backend persistence tables and indexes."""
     with transaction() as connection:
         connection.executescript(_SCHEMA)
+        _apply_column_migrations(connection)

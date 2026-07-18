@@ -65,6 +65,9 @@ class AnalyzeRequest(BaseModel):
     forced_model: str | None = None  # "Holt-Winters" | "ARIMA" | "SARIMA" | None (auto)
     user_prompt: str | None = None  # Extra instructions appended to the report prompt
     preflight_options: dict[str, Any] | None = Field(default_factory=dict)
+    report_name: str = ""
+    source_filename: str = ""
+    custom_settings: list[dict[str, str]] | None = None
     application_user_id: int | None = None
     application_username: str | None = Field(default=None, max_length=64)
     application_user_is_admin: bool = False
@@ -327,11 +330,16 @@ class JobStatusResponse(BaseModel):
     """Current status of an asynchronous analysis job."""
 
     job_id: str
-    status: str  # "pending" | "running" | "done" | "error"
+    # "pending" | "running" | "cancelling" | "done" | "error" | "cancelled"
+    status: str
     progress: int  # 0–100
     step: str
     result: dict | None = None
     error: str | None = None
+    report_name: str = ""
+    source_filename: str = ""
+    forecast_horizon: int = 0
+    custom_settings_json: str = "[]"
 
 
 class ForecastJobQueueItem(BaseModel):
@@ -354,8 +362,39 @@ class ForecastJobSettings(BaseModel):
     """Scheduler and history-retention configuration."""
 
     max_running_jobs_per_user: int = Field(ge=1, le=100)
+    max_queued_jobs_per_user: int = Field(default=5, ge=1, le=100)
     retention_days: int | None = Field(default=30, ge=1)
     cleanup_enabled: bool = True
+
+
+class UserJobQueueItem(BaseModel):
+    """User-facing summary of a forecast job for the per-user queue page.
+
+    This DTO is returned by the ``GET /jobs/mine`` endpoint.  It excludes
+    ``application_user_id`` (not needed by the browser) and includes
+    cancellation availability and report-linkage fields that the frontend
+    proxy enriches after looking up the frontend ``forecast_reports`` table.
+    """
+
+    job_id: str
+    report_name: str
+    # "pending" | "running" | "cancelling" | "done" | "error" | "cancelled"
+    status: str
+    progress: int
+    step: str
+    queued_at: str
+    started_at: str | None = None
+    completed_at: str | None = None
+    error: str | None = None
+    can_cancel: bool
+    forecast_horizon: int = 0
+    forced_model: str | None = None
+    # The following fields are populated by the frontend proxy after
+    # looking up the frontend report database.  The backend always
+    # returns them as ``None``/``False``.
+    report_id: int | None = None
+    report_ready: bool = False
+    finalization_error: str | None = None
 
 
 class DeletedJobsResponse(BaseModel):

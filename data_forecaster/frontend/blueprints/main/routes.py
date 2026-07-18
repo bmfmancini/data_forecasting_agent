@@ -35,12 +35,13 @@ from werkzeug.wrappers import Response
 
 from blueprints.decorators import password_change_required
 from blueprints.main import main_bp
-from services.api_client import get_api_client
+from services.api_client import BackendAPIClient, get_api_client
 from services.pdf_service import report_to_pdf
 from services.report_rendering import render_analysis_report
 from services.report_service import (
     ReportLimitError,
     delete_report_for_user,
+    get_report_ids_by_job_ids,
     get_report_for_user,
     list_reports_for_user,
     rename_report_for_user,
@@ -224,6 +225,18 @@ def started() -> str:
         Rendered HTML for the get started page.
     """
     return render_template("main/started.html")
+
+
+@main_bp.route("/jobs")
+@_login_required
+def jobs() -> str:
+    """Render the per-user forecast job queue page.
+
+    Shows the user's most recent jobs with live-updating progress bars,
+    cancel buttons for active jobs, and view/finalize actions for completed
+    jobs.  The page polls ``/api/jobs/mine`` via ``jobs.js``.
+    """
+    return render_template("main/jobs.html")
 
 
 @main_bp.route("/overview")
@@ -724,6 +737,14 @@ def _build_analyze_payload(data: dict[str, Any]) -> dict[str, Any]:
         None if model_choice == "Auto (AI selects)" else model_choice
     )
 
+    source_filename: str = str(upload_info.get("filename", "data"))
+    source_stem = (
+        source_filename.rsplit(".", 1)[0]
+        if "." in source_filename
+        else source_filename
+    )
+    report_name = f"Forecast — {source_stem}"
+
     return {
         "file_id": file_id,
         "forecast_horizon": horizon,
@@ -732,6 +753,9 @@ def _build_analyze_payload(data: dict[str, Any]) -> dict[str, Any]:
         "forced_model": forced_model,
         "user_prompt": user_prompt or None,
         "preflight_options": preflight_options,
+        "report_name": report_name,
+        "source_filename": source_filename,
+        "custom_settings": _custom_settings_from_session(),
     }
 
 
@@ -766,7 +790,15 @@ def api_analyze() -> Response:
             session["job_progress"] = 0
             session["job_step"] = "Queued - waiting for an available slot..."
             session["analysis_error"] = None
-            return make_response(jsonify({"job_id": job_id}), 202)
+            return make_response(
+                jsonify(
+                    {
+                        "job_id": job_id,
+                        "redirect": url_for("main.jobs"),
+                    }
+                ),
+                202,
+            )
         return make_response(
             jsonify({"error": _safe_error_detail(resp, "Failed to submit job.")}),
             resp.status_code,
@@ -779,8 +811,14 @@ def api_analyze() -> Response:
 def _handle_done_job(
     client: BackendAPIClient, job_id: str, status_data: dict[str, Any]
 ) -> Response:
-    """Fetch full results for a completed job and update session state."""
-    results_resp = client.get_job_results(job_id)
+    """Fetch full results for a completed job and update session state.
+
+    Report metadata (source filename, horizon, custom settings) is read from
+    the backend job record via :meth:`get_job_results` so that it is correct
+    even when multiple forecasts have been submitted (the Flask session would
+    be stale for earlier jobs).
+    """
+    results_resp = client.get_job_results(job_id, application_user_id=current_user.id)
     if results_resp.status_code != 200:
         return _handle_error_job(client, job_id, status_data)
     result_data = results_resp.json().get("result", {})
@@ -789,14 +827,29 @@ def _handle_done_job(
     session["job_running"] = False
     session["job_id"] = None
     session["analysis_error"] = None
-    upload_info: dict[str, Any] = session.get("upload_info") or {}
+
+    # Read per-job metadata from the backend job record (not the session,
+    # which may have been overwritten by later submissions).
+    job_record = results_resp.json()
+    source_filename = str(job_record.get("source_filename") or "data")
+    forecast_horizon = int(job_record.get("forecast_horizon") or 12)
+    custom_settings_raw = job_record.get("custom_settings_json")
+    if isinstance(custom_settings_raw, str):
+        try:
+            custom_settings = json.loads(custom_settings_raw)
+        except ValueError:
+            custom_settings = _custom_settings_from_session()
+    else:
+        custom_settings = _custom_settings_from_session()
+
     try:
         save_report(
             user_id=int(current_user.id),
             result=result_data,
-            source_filename=str(upload_info.get("filename", "data")),
-            forecast_horizon=int(session.get("forecast_horizon") or 12),
-            custom_settings=_custom_settings_from_session(),
+            source_filename=source_filename,
+            forecast_horizon=forecast_horizon,
+            custom_settings=custom_settings,
+            job_id=job_id,
         )
     except ReportLimitError:
         flash(
@@ -823,11 +876,15 @@ def _handle_done_job(
 def _handle_error_job(
     client: BackendAPIClient, job_id: str, status_data: dict[str, Any]
 ) -> Response:
-    """Fetch the error message for a failed job and update session state."""
-    results_resp = client.get_job_results(job_id)
-    error_msg: str = "Analysis failed."
+    """Fetch a terminal error/cancellation message and clear session state."""
+    results_resp = client.get_job_results(job_id, application_user_id=current_user.id)
+    status = str(status_data.get("status", ""))
+    default_message = (
+        "Forecast cancelled." if status == "cancelled" else "Analysis failed."
+    )
+    error_msg = default_message
     if results_resp.status_code == 200:
-        error_msg = str(results_resp.json().get("error", "Analysis failed."))
+        error_msg = str(results_resp.json().get("error") or default_message)
     session["job_running"] = False
     session["job_id"] = None
     session["analysis_error"] = error_msg
@@ -861,7 +918,9 @@ def api_job_status() -> Response:
     try:
         client = get_api_client()
 
-        status_resp = client.get_job_status_lightweight(job_id)
+        status_resp = client.get_job_status_lightweight(
+            job_id, application_user_id=current_user.id
+        )
         if status_resp.status_code != 200:
             return make_response(jsonify({"error": "Failed to poll job status."}), 502)
 
@@ -875,7 +934,7 @@ def api_job_status() -> Response:
 
         if status == "done":
             return _handle_done_job(client, job_id, status_data)
-        if status == "error":
+        if status in ("error", "cancelled"):
             return _handle_error_job(client, job_id, status_data)
 
         return jsonify(
@@ -902,6 +961,220 @@ def api_job_status() -> Response:
     except (KeyError, ValueError):
         logger.exception("Status poll error")
         return make_response(jsonify({"error": "Status poll error."}), 503)
+
+
+# ── Per-user job queue AJAX endpoints ─────────────────────────────────────────
+
+
+@main_bp.route("/api/jobs/mine")
+@_login_required
+def api_jobs_mine() -> Response:
+    """Return the current user's recent jobs with report-linkage enrichment.
+
+    Fetches the job list from the backend (scoped by
+    ``X-Application-User-ID`` derived from ``current_user.id``), then
+    enriches each item with ``report_id``, ``report_ready``, and
+    ``finalization_error`` by looking up the frontend ``forecast_reports``
+    table.  For ``done`` jobs without a report, finalization is attempted
+    automatically so that closing the browser mid-forecast does not
+    prevent report creation.
+
+    Returns:
+        JSON list of user-queue DTOs.
+    """
+    try:
+        client = get_api_client()
+        resp = client.list_my_jobs(int(current_user.id))
+        if resp.status_code != 200:
+            return make_response(
+                jsonify({"error": _safe_error_detail(resp, "Failed to list jobs.")}),
+                resp.status_code,
+            )
+        jobs_list: list[dict[str, Any]] = resp.json()
+    except (requests.RequestException, ValueError):
+        logger.exception("Backend connection error during job list")
+        return make_response(jsonify({"error": _BACKEND_CONN_ERROR}), 503)
+
+    job_ids = [str(job.get("job_id", "")) for job in jobs_list]
+    report_ids = get_report_ids_by_job_ids(job_ids, int(current_user.id))
+    enriched: list[dict[str, Any]] = []
+    for job in jobs_list:
+        job_id = str(job.get("job_id", ""))
+        status = str(job.get("status", ""))
+        report_id: int | None = None
+        report_ready = False
+        finalization_error: str | None = None
+
+        if job_id:
+            existing_report_id = report_ids.get(job_id)
+            if existing_report_id is not None:
+                report_id = existing_report_id
+                report_ready = True
+            elif status == "done":
+                # Auto-finalize: the pipeline completed but the report has
+                # not been saved yet (e.g. browser was closed).
+                finalize_result = _finalize_job_report(client, job_id)
+                if finalize_result.get("report_id") is not None:
+                    report_id = int(finalize_result["report_id"])
+                    report_ready = True
+                elif finalize_result.get("finalization_error"):
+                    finalization_error = str(finalize_result["finalization_error"])
+
+        enriched.append(
+            {
+                "job_id": job_id,
+                "report_name": job.get("report_name", ""),
+                "status": status,
+                "progress": int(job.get("progress", 0)),
+                "step": job.get("step", ""),
+                "queued_at": job.get("queued_at", ""),
+                "started_at": job.get("started_at"),
+                "completed_at": job.get("completed_at"),
+                "error": job.get("error"),
+                "can_cancel": bool(job.get("can_cancel", False)),
+                "forecast_horizon": int(job.get("forecast_horizon", 0)),
+                "forced_model": job.get("forced_model"),
+                "report_id": report_id,
+                "report_ready": report_ready,
+                "finalization_error": finalization_error,
+            }
+        )
+    return jsonify(enriched)
+
+
+def _finalize_job_report(client: BackendAPIClient, job_id: str) -> dict[str, Any]:
+    """Finalize a completed job into a saved report.
+
+    Fetches durable results from the backend, reads per-job metadata from
+    the job record, and calls :func:`save_report` with ``job_id`` for
+    idempotency.  This is used both by the auto-finalization in
+    :func:`api_jobs_mine` and by the explicit ``/api/jobs/<job_id>/finalize``
+    endpoint.
+
+    Args:
+        client: The backend API client.
+        job_id: The job identifier to finalize.
+
+    Returns:
+        A dict with ``report_id`` on success, or ``finalization_error`` on
+        failure.
+    """
+    try:
+        results_resp = client.get_job_results(
+            job_id, application_user_id=current_user.id
+        )
+        if results_resp.status_code != 200:
+            return {"finalization_error": "backend_error"}
+        job_record = results_resp.json()
+        result_data = job_record.get("result")
+        if not result_data:
+            return {"finalization_error": "no_result"}
+        source_filename = str(job_record.get("source_filename") or "data")
+        forecast_horizon = int(job_record.get("forecast_horizon") or 12)
+        custom_settings_raw = job_record.get("custom_settings_json")
+        if isinstance(custom_settings_raw, str):
+            try:
+                custom_settings = json.loads(custom_settings_raw)
+            except ValueError:
+                custom_settings = []
+        else:
+            custom_settings = []
+        report_id = save_report(
+            user_id=int(current_user.id),
+            result=result_data,
+            source_filename=source_filename,
+            forecast_horizon=forecast_horizon,
+            custom_settings=custom_settings,
+            job_id=job_id,
+        )
+        return {"report_id": report_id}
+    except ReportLimitError:
+        return {"finalization_error": "report_limit"}
+    except (sqlite3.Error, TypeError, ValueError, requests.RequestException):
+        logger.exception(
+            "Failed to finalize report for job_id=%s user_id=%s",
+            job_id,
+            current_user.id,
+        )
+        return {"finalization_error": "save_failed"}
+
+
+@main_bp.route("/api/jobs/<job_id>/finalize", methods=["POST"])
+@_login_required
+def api_job_finalize(job_id: str) -> Response:
+    """Finalize a completed job into a saved report.
+
+    This endpoint is called explicitly by the user (via the "Finalize"
+    button) when auto-finalization failed due to the report limit.  After
+    the user deletes an old report, they can retry finalization here.
+
+    Returns:
+        JSON with ``report_id`` on success, or ``error`` and
+        ``finalization_error`` on failure.
+    """
+    try:
+        client = get_api_client()
+        result = _finalize_job_report(client, job_id)
+    except (requests.RequestException, ValueError):
+        return make_response(jsonify({"error": _BACKEND_CONN_ERROR}), 503)
+    if result.get("report_id") is not None:
+        return jsonify({"report_id": result["report_id"]})
+    error_type = str(result.get("finalization_error", "unknown"))
+    if error_type == "report_limit":
+        return make_response(
+            jsonify(
+                {
+                    "error": (
+                        "Report limit reached. Delete a saved report and try again."
+                    ),
+                    "finalization_error": "report_limit",
+                }
+            ),
+            409,
+        )
+    return make_response(
+        jsonify(
+            {
+                "error": "Could not finalize this report.",
+                "finalization_error": error_type,
+            }
+        ),
+        502,
+    )
+
+
+@main_bp.route("/api/jobs/<job_id>/cancel", methods=["POST"])
+@_login_required
+def api_job_cancel(job_id: str) -> Response:
+    """Request cooperative cancellation of a forecast job.
+
+    The ``application_user_id`` is derived from ``current_user.id`` and sent
+    as the ``X-Application-User-ID`` header to the backend.  The backend
+    scopes the cancellation by both the backend credential and the
+    application user ID.
+
+    Returns:
+        JSON with ``cancel_status`` on success, or ``error`` on failure.
+    """
+    try:
+        client = get_api_client()
+        resp = client.cancel_job(job_id, application_user_id=current_user.id)
+        if resp.status_code == 200:
+            return jsonify(
+                {"job_id": job_id, "cancel_status": resp.json().get("cancel_status")}
+            )
+        if resp.status_code == 404:
+            return make_response(
+                jsonify({"error": "Job not found or not owned by you."}), 404
+            )
+        if resp.status_code == 409:
+            return make_response(jsonify({"error": "Job is already complete."}), 409)
+        return make_response(
+            jsonify({"error": _safe_error_detail(resp, "Failed to cancel job.")}),
+            resp.status_code,
+        )
+    except (requests.RequestException, ValueError):
+        return make_response(jsonify({"error": _BACKEND_CONN_ERROR}), 503)
 
 
 @main_bp.route("/api/llm-health")

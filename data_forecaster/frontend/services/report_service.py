@@ -50,8 +50,14 @@ def save_report(
     source_filename: str,
     forecast_horizon: int | None,
     custom_settings: list[dict[str, str]] | None = None,
+    job_id: str | None = None,
 ) -> int:
     """Atomically save a final report if its owner remains below the cap.
+
+    When ``job_id`` is provided, the save is **idempotent**: if a report
+    with the same ``job_id`` already exists, its ID is returned without
+    creating a duplicate or re-checking the report limit.  This makes the
+    operation safe for repeated polling or multi-tab finalization attempts.
 
     Args:
         user_id: Authenticated application user who owns the report.
@@ -59,12 +65,14 @@ def save_report(
         source_filename: Original dataset filename retained as display metadata.
         forecast_horizon: Requested number of forecast periods.
         custom_settings: Optional user-selected report settings to persist as JSON.
+        job_id: Optional backend job ID for idempotent linking.
 
     Returns:
-        The newly created report ID.
+        The newly created or existing report ID.
 
     Raises:
-        ReportLimitError: When the owner has reached the configured limit.
+        ReportLimitError: When the owner has reached the configured limit and
+            no report for this ``job_id`` exists yet.
     """
     visual_assets = {field: result.get(field) for field in _VISUAL_FIELDS}
     executive_report = result.get("executive_report")
@@ -74,23 +82,37 @@ def save_report(
     try:
         connection.execute("BEGIN IMMEDIATE")
         transaction_started = True
+
+        # Idempotency: if a report for this job_id already exists, return it.
+        if job_id is not None:
+            existing = connection.execute(
+                "SELECT id FROM forecast_reports WHERE job_id = ? AND user_id = ?",
+                (job_id, user_id),
+            ).fetchone()
+            if existing is not None:
+                connection.rollback()
+                transaction_started = False
+                return int(existing["id"])
+
         stored_count = connection.execute(
             "SELECT COUNT(*) AS count FROM forecast_reports WHERE user_id = ?",
             (user_id,),
         ).fetchone()["count"]
         if int(stored_count) >= _report_limit(connection):
             connection.rollback()
+            transaction_started = False
             raise ReportLimitError("Report limit reached.")
         cursor = connection.execute(
             """
             INSERT INTO forecast_reports (
-                user_id, title, source_filename, model_used, forecast_horizon,
-                report_markdown, executive_report_json, visual_assets_json,
-                custom_settings_json, llm_fallback
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                user_id, job_id, title, source_filename, model_used,
+                forecast_horizon, report_markdown, executive_report_json,
+                visual_assets_json, custom_settings_json, llm_fallback
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 user_id,
+                job_id,
                 _report_title(source_filename),
                 source_filename,
                 str(model_used) if model_used else None,
@@ -109,6 +131,50 @@ def save_report(
         if transaction_started:
             connection.rollback()
         raise
+
+
+def get_report_by_job_id(job_id: str, user_id: int) -> dict[str, Any] | None:
+    """Return lightweight report linkage for an owner-scoped job ID.
+
+    Args:
+        job_id: The backend job ID to look up.
+        user_id: The authenticated application user ID (owner scope).
+
+    Returns:
+        A dict containing the report ID, or ``None`` if not found or not owned.
+    """
+    row = query_db(
+        "SELECT id FROM forecast_reports WHERE job_id = ? AND user_id = ?",
+        (job_id, user_id),
+        one=True,
+    )
+    return row if isinstance(row, dict) else None
+
+
+def get_report_ids_by_job_ids(job_ids: list[str], user_id: int) -> dict[str, int]:
+    """Return report IDs for multiple owner-scoped jobs in one query.
+
+    Args:
+        job_ids: Backend job IDs whose report linkage should be checked.
+        user_id: Authenticated application user ID that owns the reports.
+
+    Returns:
+        A mapping from backend job ID to frontend report ID.
+    """
+    unique_job_ids = list(dict.fromkeys(job_id for job_id in job_ids if job_id))
+    if not unique_job_ids:
+        return {}
+    placeholders = ",".join("?" for _ in unique_job_ids)
+    rows = query_db(
+        f"""
+        SELECT job_id, id FROM forecast_reports
+        WHERE user_id = ? AND job_id IN ({placeholders})
+        """,
+        (user_id, *unique_job_ids),
+    )
+    if not isinstance(rows, list):
+        return {}
+    return {str(row["job_id"]): int(row["id"]) for row in rows}
 
 
 def get_report_for_user(report_id: int, user_id: int) -> dict[str, Any] | None:
@@ -189,13 +255,11 @@ def rename_report_for_user(report_id: int, user_id: int, title: str) -> bool:
 
 def list_report_owners() -> list[dict[str, Any]]:
     """List application users who currently own at least one report."""
-    rows = query_db(
-        """
+    rows = query_db("""
         SELECT u.id, u.username, COUNT(fr.id) AS report_count
         FROM users u JOIN forecast_reports fr ON fr.user_id = u.id
         GROUP BY u.id, u.username ORDER BY u.username COLLATE NOCASE
-        """
-    )
+        """)
     return rows if isinstance(rows, list) else []
 
 

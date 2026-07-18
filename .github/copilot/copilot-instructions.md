@@ -28,6 +28,12 @@ Before generating code, scan the codebase to identify:
    - Generate code compatible with these specific versions
    - Never use APIs or features not available in the detected versions
 
+4  ***Tools to always use while implementing code:**
+   - `context7` use the context7 mcp server to get the latest documentation and examples for any library or framework in use
+   - `black` for Python code formatting
+   - `pytest` for testing
+   - `mypy` for static type checking
+
 ## Context Files
 
 Prioritize the following files in the `.github/copilot` directory (if they exist):

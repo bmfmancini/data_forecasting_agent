@@ -43,8 +43,8 @@ def _frontend_db(path: Path) -> None:
     conn = sqlite3.connect(path)
     try:
         conn.executescript(schema.read_text(encoding="utf-8"))
-        conn.execute("INSERT INTO roles (id, name) VALUES (1, 'admin')")
-        conn.execute("INSERT INTO roles (id, name) VALUES (2, 'user')")
+        conn.execute("INSERT OR IGNORE INTO roles (id, name) VALUES (1, 'admin')")
+        conn.execute("INSERT OR IGNORE INTO roles (id, name) VALUES (2, 'user')")
         conn.commit()
     finally:
         conn.close()

@@ -10,6 +10,8 @@ variable fallback) so all callers remain decoupled from configuration details.
 from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
 from typing import Any
 
 import requests
@@ -36,6 +38,8 @@ class BackendAPIClient:
         verify:        Whether to verify the backend's TLS certificate.
                        Set to ``False`` when the backend uses a self-signed
                        certificate.  Defaults to ``True``.
+        application_identity_secret: Secret used to sign delegated frontend
+                       application-user IDs.
     """
 
     def __init__(
@@ -44,11 +48,13 @@ class BackendAPIClient:
         api_username: str | None = None,
         api_key: str | None = None,
         verify: bool = True,
+        application_identity_secret: str | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._api_username = api_username
         self._api_key = api_key
         self._verify = verify
+        self._application_identity_secret = application_identity_secret
 
     def _auth_headers(self) -> dict[str, str]:
         """Return authentication headers when credentials are configured.
@@ -77,6 +83,31 @@ class BackendAPIClient:
         if extra:
             headers.update(extra)
         return headers
+
+    def _application_user_headers(self, application_user_id: int) -> dict[str, str]:
+        """Return signed headers delegating one frontend application user.
+
+        Args:
+            application_user_id: Authenticated frontend application user ID.
+
+        Returns:
+            The application-user ID and its SHA-256 HMAC signature.
+
+        Raises:
+            ValueError: When the application identity secret is not configured.
+        """
+        if not self._application_identity_secret:
+            raise ValueError("Application identity signing is not configured.")
+        user_id = str(application_user_id)
+        signature = hmac.new(
+            self._application_identity_secret.encode("utf-8"),
+            user_id.encode("ascii"),
+            hashlib.sha256,
+        ).hexdigest()
+        return {
+            "X-Application-User-ID": user_id,
+            "X-Application-User-Signature": signature,
+        }
 
     def upload_file(
         self,
@@ -172,15 +203,21 @@ class BackendAPIClient:
         Returns:
             The :class:`requests.Response` from ``POST /analyze`` (HTTP 202).
         """
+        extra: dict[str, str] = {}
+        application_user_id = payload.get("application_user_id")
+        if application_user_id is not None:
+            extra = self._application_user_headers(int(application_user_id))
         return requests.post(
             f"{self._base_url}/analyze",
             json=payload,
-            headers=self._headers(),
+            headers=self._headers(extra),
             timeout=ANALYSIS_TIMEOUT,
             verify=self._verify,
         )
 
-    def get_job_status(self, job_id: str) -> requests.Response:
+    def get_job_status(
+        self, job_id: str, application_user_id: int | None = None
+    ) -> requests.Response:
         """Poll the full status and results of a previously submitted job.
 
         Use :meth:`get_job_status_lightweight` for frequent polling and
@@ -188,18 +225,25 @@ class BackendAPIClient:
 
         Args:
             job_id: Identifier returned by :meth:`submit_analysis`.
+            application_user_id: Optional frontend user ID for owner-scoped
+                access (sent as ``X-Application-User-ID`` header).
 
         Returns:
             The :class:`requests.Response` from ``GET /jobs/{job_id}``.
         """
+        extra: dict[str, str] = {}
+        if application_user_id is not None:
+            extra = self._application_user_headers(application_user_id)
         return requests.get(
             f"{self._base_url}/jobs/{job_id}",
-            headers=self._headers(),
+            headers=self._headers(extra),
             timeout=JOB_STATUS_TIMEOUT,
             verify=self._verify,
         )
 
-    def get_job_status_lightweight(self, job_id: str) -> requests.Response:
+    def get_job_status_lightweight(
+        self, job_id: str, application_user_id: int | None = None
+    ) -> requests.Response:
         """Poll only status/progress/step without the full result payload.
 
         This is the preferred endpoint for frequent polling — it avoids
@@ -209,19 +253,26 @@ class BackendAPIClient:
 
         Args:
             job_id: Identifier returned by :meth:`submit_analysis`.
+            application_user_id: Optional frontend user ID for owner-scoped
+                access (sent as ``X-Application-User-ID`` header).
 
         Returns:
             The :class:`requests.Response` from
             ``GET /jobs/{job_id}/status``.
         """
+        extra: dict[str, str] = {}
+        if application_user_id is not None:
+            extra = self._application_user_headers(application_user_id)
         return requests.get(
             f"{self._base_url}/jobs/{job_id}/status",
-            headers=self._headers(),
+            headers=self._headers(extra),
             timeout=JOB_STATUS_TIMEOUT,
             verify=self._verify,
         )
 
-    def get_job_results(self, job_id: str) -> requests.Response:
+    def get_job_results(
+        self, job_id: str, application_user_id: int | None = None
+    ) -> requests.Response:
         """Retrieve the full results of a completed job.
 
         Call this only after :meth:`get_job_status_lightweight` reports
@@ -229,13 +280,59 @@ class BackendAPIClient:
 
         Args:
             job_id: Identifier returned by :meth:`submit_analysis`.
+            application_user_id: Optional frontend user ID for owner-scoped
+                access (sent as ``X-Application-User-ID`` header).
 
         Returns:
             The :class:`requests.Response` from ``GET /jobs/{job_id}``.
         """
+        extra: dict[str, str] = {}
+        if application_user_id is not None:
+            extra = self._application_user_headers(application_user_id)
         return requests.get(
             f"{self._base_url}/jobs/{job_id}",
-            headers=self._headers(),
+            headers=self._headers(extra),
+            timeout=JOB_STATUS_TIMEOUT,
+            verify=self._verify,
+        )
+
+    def list_my_jobs(self, application_user_id: int) -> requests.Response:
+        """Return the most recent jobs for the authenticated application user.
+
+        Args:
+            application_user_id: Frontend user ID (sent as
+                ``X-Application-User-ID`` header, derived from
+                ``current_user.id`` by the Flask proxy).
+
+        Returns:
+            The :class:`requests.Response` from ``GET /jobs/mine``.
+        """
+        return requests.get(
+            f"{self._base_url}/jobs/mine",
+            headers=self._headers(self._application_user_headers(application_user_id)),
+            timeout=JOB_STATUS_TIMEOUT,
+            verify=self._verify,
+        )
+
+    def cancel_job(
+        self, job_id: str, application_user_id: int | None = None
+    ) -> requests.Response:
+        """Request cooperative cancellation of a forecast job.
+
+        Args:
+            job_id: Identifier returned by :meth:`submit_analysis`.
+            application_user_id: Optional frontend user ID for owner-scoped
+                access (sent as ``X-Application-User-ID`` header).
+
+        Returns:
+            The :class:`requests.Response` from ``DELETE /jobs/{job_id}``.
+        """
+        extra: dict[str, str] = {}
+        if application_user_id is not None:
+            extra = self._application_user_headers(application_user_id)
+        return requests.delete(
+            f"{self._base_url}/jobs/{job_id}",
+            headers=self._headers(extra),
             timeout=JOB_STATUS_TIMEOUT,
             verify=self._verify,
         )
@@ -554,4 +651,7 @@ def get_api_client() -> BackendAPIClient:
         api_username=api_username,
         api_key=api_key,
         verify=verify_ssl,
+        application_identity_secret=current_app.config.get(
+            "APPLICATION_IDENTITY_SECRET"
+        ),
     )
