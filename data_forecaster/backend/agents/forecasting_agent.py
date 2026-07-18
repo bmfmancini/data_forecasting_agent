@@ -24,6 +24,7 @@ from forecasting.residual_diagnostics import (
     analyze_backtest_errors,
     analyze_innovations,
     calibrate_interval_width,
+    interval_nonconformity_scores,
 )
 from forecasting.selection_policy import CandidateEvidence, select_model_deterministic
 from forecasting.sarima_model import fit_sarima
@@ -362,9 +363,7 @@ def run_forecasting_agent(
                 backtest_evals.get(selected),
             )
         except Exception as exc:  # pylint: disable=broad-except
-            logger.warning(
-                "Baseline production refit failed for %s: %s", selected, exc
-            )
+            logger.warning("Baseline production refit failed for %s: %s", selected, exc)
             results_store[selected] = ForecastAdapterResult(
                 status=ForecastFitStatus.FAILED,
                 failure_reason=str(exc),
@@ -487,18 +486,34 @@ def run_forecasting_agent(
     lower_ci = res.lower_ci
     upper_ci = res.upper_ci
     interval_label = res.interval_label
-    if (
-        residual_diagnostics is not None
-        and residual_diagnostics.coverage_estimable
-        and lower_ci
-        and upper_ci
-    ):
+    calibration_scores: list[float] = []
+    selected_backtest = backtest_evals.get(selected)
+    if selected_backtest is not None:
+        for fold_result in selected_backtest.folds:
+            if fold_result.status != ForecastFitStatus.OK:
+                continue
+            fold = fold_result.fold
+            actual = series.iloc[fold.test_start_index : fold.test_end_index]
+            calibration_scores.extend(
+                interval_nonconformity_scores(
+                    actual.to_numpy(dtype=float),
+                    fold_result.lower_ci,
+                    fold_result.upper_ci,
+                )
+            )
+    if len(calibration_scores) >= 10 and lower_ci and upper_ci:
         lower_ci, upper_ci = calibrate_interval_width(
             lower_ci,
             upper_ci,
-            empirical_coverage=residual_diagnostics.interval_coverage,
-            nominal_coverage=residual_diagnostics.nominal_coverage,
+            calibration_scores=calibration_scores,
+            nominal_coverage=(
+                residual_diagnostics.nominal_coverage
+                if residual_diagnostics is not None
+                else 0.95
+            ),
         )
+        # Preserve the public label while using finite-sample conformal
+        # calibration rather than the former aggregate-coverage heuristic.
         interval_label = "calibrated_prediction_interval"
 
     logger.info("Forecasting complete. Selected: %s", selected)

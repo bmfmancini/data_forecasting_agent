@@ -71,9 +71,14 @@ class ForecastAdapterResult(BaseModel):
     @property
     def is_rankable(self) -> bool:
         """Return whether this result has valid point-error evidence."""
-        return self.status == ForecastFitStatus.OK and all(
-            value is not None and math.isfinite(value)
-            for value in (self.metrics.rmse, self.metrics.mae)
+        complete_evaluation = self.metrics.n_missing == 0
+        return (
+            self.status == ForecastFitStatus.OK
+            and complete_evaluation
+            and all(
+                value is not None and math.isfinite(value)
+                for value in (self.metrics.rmse, self.metrics.mae)
+            )
         )
 
 
@@ -154,7 +159,12 @@ class BacktestEvaluation(BaseModel):
     def is_rankable(self) -> bool:
         """Return whether pooled evidence supports ranking."""
         rmse = self.pooled_metrics.rmse
-        return self.n_origins > 0 and rmse is not None and math.isfinite(rmse)
+        return (
+            self.n_origins > 0
+            and self.pooled_metrics.n_missing == 0
+            and rmse is not None
+            and math.isfinite(rmse)
+        )
 
 
 # ── Residual diagnostics contracts ───────────────────────────────────────────

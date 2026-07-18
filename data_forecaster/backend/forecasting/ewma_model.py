@@ -19,40 +19,31 @@ from forecasting.contracts import (
     ForecastMetrics,
 )
 from forecasting.evaluation import evaluate_predictions, make_terminal_holdout
+from forecasting.intervals import ets_prediction_interval
 
 logger = get_logger(__name__)
 
-# Grid of candidate alpha values for SSE-based estimation.
-_ALPHA_GRID = np.linspace(0.01, 0.99, 99)
-
 
 def _estimate_alpha(train: pd.Series) -> float:
-    """Estimate the SES smoothing parameter by minimizing one-step SSE.
+    """Estimate the SES smoothing parameter by continuous SSE optimization.
 
     Args:
         train: Training observations.
 
     Returns:
-        The alpha value from a fixed grid that minimizes in-sample SSE.
-        Falls back to ``0.3`` when estimation is not possible.
+        The optimized smoothing level. Falls back to ``0.3`` when estimation
+        is not possible.
     """
     if len(train) < 3:
         return 0.3
 
-    best_alpha = 0.3
-    best_sse = float("inf")
-    for alpha in _ALPHA_GRID:
-        # Compare y[t] with the level available at t-1. Comparing with the
-        # contemporaneous smoothed value leaks y[t] into its own prediction
-        # and degenerately favors alpha values near one.
-        levels = train.ewm(alpha=float(alpha), adjust=False).mean()
-        one_step_forecast = levels.shift(1)
-        errors = train.iloc[1:] - one_step_forecast.iloc[1:]
-        sse = float(np.sum(errors**2))
-        if sse < best_sse:
-            best_sse = sse
-            best_alpha = float(alpha)
-    return best_alpha
+    try:
+        fitted = SimpleExpSmoothing(train, initialization_method="estimated").fit(
+            optimized=True
+        )
+        return float(fitted.params["smoothing_level"])
+    except Exception:  # pylint: disable=broad-except
+        return 0.3
 
 
 def fit_ewma(
@@ -78,6 +69,13 @@ def fit_ewma(
         nullable metrics, and fitted configuration provenance.
     """
     series = series.dropna().astype(float)
+
+    if alpha is not None and not 0.0 < float(alpha) <= 1.0:
+        return ForecastAdapterResult(
+            status=ForecastFitStatus.NOT_ESTIMABLE,
+            failure_reason="EWMA alpha must be in the interval (0, 1].",
+            fitted_configuration={"model": "EWMA", "alpha": alpha},
+        )
 
     if len(series) < 3:
         logger.warning(
@@ -108,9 +106,9 @@ def fit_ewma(
 
     # ── Evaluate holdout metrics on the training split ──────────────────────
     try:
-        train_fit = SimpleExpSmoothing(
-            train, initialization_method="estimated"
-        ).fit(smoothing_level=alpha, optimized=alpha is None)
+        train_fit = SimpleExpSmoothing(train, initialization_method="estimated").fit(
+            smoothing_level=alpha, optimized=alpha is None
+        )
         estimated_alpha = float(train_fit.params["smoothing_level"])
         test_fc = np.asarray(train_fit.forecast(len(test)), dtype=float)
         metrics = evaluate_predictions(
@@ -123,20 +121,17 @@ def fit_ewma(
         metrics = ForecastMetrics(unavailable_reasons={"all": str(exc)})
 
     # ── Full-series fit for forecast ─────────────────────────────────────────
-    full_fit = SimpleExpSmoothing(
-        series, initialization_method="estimated"
-    ).fit(smoothing_level=estimated_alpha, optimized=False)
+    full_fit = SimpleExpSmoothing(series, initialization_method="estimated").fit(
+        smoothing_level=estimated_alpha, optimized=False
+    )
     forecast_values = np.asarray(full_fit.forecast(forecast_horizon), dtype=float)
     residuals = pd.Series(np.asarray(full_fit.resid, dtype=float)).dropna()
-    rng = np.random.default_rng(42)
-    sampled = rng.choice(
-        residuals.to_numpy(dtype=float),
-        size=(1000, forecast_horizon),
-        replace=True,
+    lower_ci, upper_ci = ets_prediction_interval(
+        full_fit,
+        forecast_horizon,
+        repetitions=1000,
+        seed=42,
     )
-    simulated = forecast_values[None, :] + sampled
-    lower_ci = np.quantile(simulated, 0.025, axis=0).tolist()
-    upper_ci = np.quantile(simulated, 0.975, axis=0).tolist()
 
     # Expose fitted innovations (one-step smoothing errors).
     innovations: list[float] = []

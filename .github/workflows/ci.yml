@@ -49,6 +49,11 @@ jobs:
       run: |
         mypy .
 
+    - name: Run statistical soundness gate
+      working-directory: .
+      run: |
+        pytest tests/test_statistical_soundness.py -v
+
     - name: Run Pytest
       working-directory: .
       run: |

@@ -417,41 +417,73 @@ def analyze_backtest_errors(
     )
 
 
+def interval_nonconformity_scores(
+    actual: np.ndarray | list[float],
+    lower: np.ndarray | list[float],
+    upper: np.ndarray | list[float],
+) -> list[float]:
+    """Calculate two-sided conformal nonconformity scores.
+
+    A score is zero for an observation inside its interval and otherwise is
+    the distance to the nearest violated bound. Non-finite or misaligned
+    inputs return no calibration evidence.
+
+    Args:
+        actual: Observed validation values.
+        lower: Validation lower interval bounds.
+        upper: Validation upper interval bounds.
+
+    Returns:
+        Non-negative scores aligned to the validation observations.
+    """
+    observed = np.asarray(actual, dtype=float)
+    lo = np.asarray(lower, dtype=float)
+    hi = np.asarray(upper, dtype=float)
+    if observed.shape != lo.shape or observed.shape != hi.shape:
+        return []
+    finite = np.isfinite(observed) & np.isfinite(lo) & np.isfinite(hi)
+    if not np.all(finite) or np.any(lo > hi):
+        return []
+    scores = np.maximum.reduce((lo - observed, observed - hi, np.zeros_like(observed)))
+    return scores.astype(float).tolist()
+
+
 def calibrate_interval_width(
     lower: np.ndarray | list[float],
     upper: np.ndarray | list[float],
     *,
-    empirical_coverage: float | None,
+    calibration_scores: np.ndarray | list[float],
     nominal_coverage: float = _NOMINAL_COVERAGE,
 ) -> tuple[list[float], list[float]]:
-    """Scale an interval so its nominal coverage matches empirical evidence.
+    """Conformalize future intervals using held-out nonconformity scores.
 
-    When empirical coverage is below the nominal level, widen the interval
-    multiplicatively; when above, narrow it. When coverage is not estimable,
-    return the interval unchanged and let the caller label it as
-    model-based/experimental.
+    This uses the finite-sample split-conformal ``higher`` quantile. Aggregate
+    empirical coverage alone is deliberately insufficient: calibration needs
+    the actual distances by which validation observations missed their bounds.
 
     Args:
-        lower:               Lower prediction-interval bounds.
-        upper:               Upper prediction-interval bounds.
-        empirical_coverage:  Empirical coverage fraction (or ``None``).
-        nominal_coverage:    Target coverage level.
+        lower: Future lower prediction-interval bounds.
+        upper: Future upper prediction-interval bounds.
+        calibration_scores: Held-out nonconformity scores.
+        nominal_coverage: Target marginal coverage in ``(0, 1)``.
 
     Returns:
-        Calibrated (lower, upper) lists.
+        Conformalized lower and upper bounds. With fewer than ten usable
+        scores, returns the original bounds rather than claiming calibration.
     """
     lo = np.asarray(lower, dtype=float)
     hi = np.asarray(upper, dtype=float)
-    if empirical_coverage is None or not math.isfinite(empirical_coverage):
+    scores = np.asarray(calibration_scores, dtype=float)
+    scores = scores[np.isfinite(scores) & (scores >= 0.0)]
+    if (
+        lo.shape != hi.shape
+        or np.any(~np.isfinite(lo))
+        or np.any(~np.isfinite(hi))
+        or np.any(lo > hi)
+        or not 0.0 < nominal_coverage < 1.0
+        or scores.size < 10
+    ):
         return lo.tolist(), hi.tolist()
-    if empirical_coverage <= 0.0 or empirical_coverage >= 1.0:
-        return lo.tolist(), hi.tolist()
-    # Multiplicative scaling based on the coverage shortfall.
-    z_nominal = float(t.ppf(0.5 + nominal_coverage / 2.0, df=10_000))
-    z_empirical = float(t.ppf(0.5 + empirical_coverage / 2.0, df=10_000))
-    if not math.isfinite(z_empirical) or z_empirical <= 0:
-        return lo.tolist(), hi.tolist()
-    scale = z_nominal / z_empirical
-    centre = (lo + hi) / 2.0
-    half_width = (hi - lo) / 2.0 * scale
-    return (centre - half_width).tolist(), (centre + half_width).tolist()
+    rank = min(scores.size, math.ceil((scores.size + 1) * nominal_coverage))
+    adjustment = float(np.sort(scores)[rank - 1])
+    return (lo - adjustment).tolist(), (hi + adjustment).tolist()

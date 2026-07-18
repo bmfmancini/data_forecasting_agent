@@ -130,15 +130,15 @@ def calculate_forecast_metrics(
                 if squared_scale > 0:
                     rmsse = float(np.sqrt(np.mean(errors**2) / squared_scale))
     smape_denominator = np.abs(y_true) + np.abs(y_pred)
-    smape = None
-    valid_smape = smape_denominator > 0
-    if np.any(valid_smape):
-        smape = float(
-            200.0
-            * np.mean(absolute_errors[valid_smape] / smape_denominator[valid_smape])
-        )
-    else:
-        reasons["smape"] = "sMAPE is undefined when actual and forecast are both zero."
+    # The standard competition convention assigns a zero contribution when
+    # actual and forecast are both zero, retaining the original sample size.
+    smape_terms = np.divide(
+        absolute_errors,
+        smape_denominator,
+        out=np.zeros_like(absolute_errors),
+        where=smape_denominator > 0,
+    )
+    smape = float(200.0 * np.mean(smape_terms))
 
     return ForecastMetrics(
         rmse=float(np.sqrt(np.mean(errors**2))),
