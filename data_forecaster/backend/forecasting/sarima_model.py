@@ -12,7 +12,10 @@ from forecasting.contracts import (
     ForecastMetrics,
 )
 from forecasting.evaluation import evaluate_predictions, make_terminal_holdout
-from forecasting.pmdarima_compat import import_pmdarima
+from forecasting.pmdarima_compat import (
+    fit_auto_arima_memory_aware,
+    import_pmdarima,
+)
 
 logger = get_logger(__name__)
 pm = import_pmdarima()
@@ -49,6 +52,8 @@ def fit_sarima(
     forecast_horizon: int,
     seasonal_period: int = 12,
     mase_period: int = 1,
+    fitted_configuration: dict[str, object] | None = None,
+    evaluation_metrics: ForecastMetrics | None = None,
 ) -> ForecastAdapterResult:
     """Fit SARIMA via pmdarima auto_arima and return a typed adapter result.
 
@@ -104,74 +109,81 @@ def fit_sarima(
             },
         )
 
-    # Seasonal estimability must be decided from the model-selection training
-    # window, not from observations reserved for evaluation.
-    holdout = make_terminal_holdout(series, forecast_horizon)
-    train = holdout.train
+    reusable = _reusable_sarima_parameters(fitted_configuration)
+    if reusable is not None:
+        order, seasonal_order, with_intercept = reusable
+        seasonal_period = int(seasonal_order[3]) or 1
+        use_seasonal = seasonal_period > 1
+        train = series
+        train_model: object | None = True
+        metrics = evaluation_metrics or ForecastMetrics()
+    else:
+        # Seasonal estimability must be decided from the model-selection training
+        # window, not from observations reserved for evaluation.
+        holdout = make_terminal_holdout(series, forecast_horizon)
+        train = holdout.train
 
-    # Check if we have enough data for seasonal modeling
-    if len(train) < 2 * seasonal_period:
-        logger.warning(
-            "Training series too short (%d obs) for seasonal period %d. "
-            "Fitting non-seasonal ARIMA.",
-            len(train),
-            seasonal_period,
-        )
-        seasonal_period = 1
+        if len(train) < 2 * seasonal_period:
+            logger.warning(
+                "Training series too short (%d obs) for seasonal period %d. "
+                "Fitting non-seasonal ARIMA.",
+                len(train),
+                seasonal_period,
+            )
+            seasonal_period = 1
 
-    use_seasonal = seasonal_period > 1
-
-    train_model = None
-    metrics = ForecastMetrics(
-        unavailable_reasons={"all": "Training model unavailable."}
-    )
-
-    try:
-        train_model = pm.auto_arima(
-            train,
-            seasonal=use_seasonal,
-            m=seasonal_period,
-            stepwise=True,
-            max_p=3,
-            max_q=3,
-            max_P=2,
-            max_Q=2,
-            max_order=10,
-            error_action="ignore",
-            suppress_warnings=True,
-            information_criterion="aicc",
-            test="kpss",
-            seasonal_test="ocsb",
-            max_d=2,
-            max_D=1,
-        )
-        metrics = _calculate_metrics(holdout, train_model, mase_period)
-    except Exception as exc:  # pylint: disable=broad-except
-        logger.warning("SARIMA training failed: %s", exc)
-
-    if train_model is None:
-        last_value = float(series.iloc[-1])
-        reason = "SARIMA order selection failed on the training window."
-        return ForecastAdapterResult(
-            status=ForecastFitStatus.NOT_ESTIMABLE,
-            failure_reason=reason,
-            is_fallback=True,
-            forecast=[last_value] * forecast_horizon,
-            lower_ci=[last_value] * forecast_horizon,
-            upper_ci=[last_value] * forecast_horizon,
-            metrics=metrics,
-            fitted_configuration={
-                "model": "SARIMA",
-                "requested_seasonal_period": requested_seasonal_period,
-                "seasonal_period": seasonal_period,
-                "fallback": "persistence",
-            },
+        use_seasonal = seasonal_period > 1
+        train_model = None
+        metrics = ForecastMetrics(
+            unavailable_reasons={"all": "Training model unavailable."}
         )
 
-    # Determine the order and trend configuration from the training fit.
-    order = train_model.order
-    seasonal_order = train_model.seasonal_order
-    with_intercept = getattr(train_model, "with_intercept", None)
+        try:
+            train_model = fit_auto_arima_memory_aware(
+                train,
+                seasonal_period=seasonal_period,
+                seasonal=use_seasonal,
+                m=seasonal_period,
+                stepwise=True,
+                max_p=3,
+                max_q=3,
+                max_P=2,
+                max_Q=2,
+                max_order=10,
+                error_action="ignore",
+                suppress_warnings=True,
+                information_criterion="aicc",
+                test="kpss",
+                seasonal_test="ocsb",
+                max_d=2,
+                max_D=1,
+            )
+            metrics = _calculate_metrics(holdout, train_model, mase_period)
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.warning("SARIMA training failed: %s", exc)
+
+        if train_model is None:
+            last_value = float(series.iloc[-1])
+            reason = "SARIMA order selection failed on the training window."
+            return ForecastAdapterResult(
+                status=ForecastFitStatus.NOT_ESTIMABLE,
+                failure_reason=reason,
+                is_fallback=True,
+                forecast=[last_value] * forecast_horizon,
+                lower_ci=[last_value] * forecast_horizon,
+                upper_ci=[last_value] * forecast_horizon,
+                metrics=metrics,
+                fitted_configuration={
+                    "model": "SARIMA",
+                    "requested_seasonal_period": requested_seasonal_period,
+                    "seasonal_period": seasonal_period,
+                    "fallback": "persistence",
+                },
+            )
+
+        order = train_model.order
+        seasonal_order = train_model.seasonal_order
+        with_intercept = getattr(train_model, "with_intercept", None)
 
     # Refit on the full series using the exact selected orders and intercept
     # configuration so the production forecast reflects the chosen model.
@@ -301,4 +313,49 @@ def fit_sarima(
         warnings=fit_warnings,
         innovations=innovations,
         interval_label="prediction_interval",
+    )
+
+
+def _reusable_sarima_parameters(
+    fitted_configuration: dict[str, object] | None,
+) -> tuple[tuple[int, int, int], tuple[int, int, int, int], bool | None] | None:
+    """Validate reusable SARIMA parameters from one leak-safe backtest fit."""
+    if not fitted_configuration:
+        return None
+    raw_order = fitted_configuration.get("order")
+    raw_seasonal = fitted_configuration.get("seasonal_order")
+    if not isinstance(raw_order, (list, tuple)) or len(raw_order) != 3:
+        return None
+    if not isinstance(raw_seasonal, (list, tuple)) or len(raw_seasonal) != 4:
+        return None
+    try:
+        order = tuple(int(value) for value in raw_order)
+        seasonal_order = tuple(int(value) for value in raw_seasonal)
+    except (TypeError, ValueError):
+        return None
+    return order, seasonal_order, fitted_configuration.get("with_intercept")
+
+
+def refit_sarima_from_configuration(
+    series: pd.Series,
+    forecast_horizon: int,
+    seasonal_period: int,
+    fitted_configuration: dict[str, object],
+    metrics: ForecastMetrics,
+) -> ForecastAdapterResult:
+    """Refit a backtest-selected SARIMA configuration on full history."""
+    if _reusable_sarima_parameters(fitted_configuration) is None:
+        return ForecastAdapterResult(
+            status=ForecastFitStatus.NOT_ESTIMABLE,
+            failure_reason="Reusable SARIMA configuration is unavailable.",
+            metrics=metrics,
+            fitted_configuration={"model": "SARIMA"},
+        )
+    return fit_sarima(
+        series,
+        forecast_horizon,
+        seasonal_period=seasonal_period,
+        mase_period=seasonal_period,
+        fitted_configuration=fitted_configuration,
+        evaluation_metrics=metrics,
     )

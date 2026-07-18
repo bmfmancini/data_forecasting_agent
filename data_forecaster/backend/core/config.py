@@ -37,9 +37,34 @@ MAX_UPLOAD_BYTES: int = MAX_UPLOAD_MB * 1024 * 1024
 # and jobs can accumulate before the oldest is evicted.
 MAX_INMEMORY_FILES: int = int(os.getenv("MAX_INMEMORY_FILES", "50"))
 MAX_INMEMORY_JOBS: int = int(os.getenv("MAX_INMEMORY_JOBS", "100"))
-MAX_CONCURRENT_JOBS: int = int(os.getenv("MAX_CONCURRENT_JOBS", "2"))
+MAX_CONCURRENT_JOBS: int = int(os.getenv("MAX_CONCURRENT_JOBS", "1"))
 if MAX_CONCURRENT_JOBS < 1:
     raise ValueError("MAX_CONCURRENT_JOBS must be at least 1.")
+
+# Forecast memory controls. A zero total budget auto-sizes from the effective
+# cgroup/host limit; it does not disable admission control.
+FORECAST_MEMORY_BUDGET_MB: int = int(os.getenv("FORECAST_MEMORY_BUDGET_MB", "0"))
+FORECAST_MEMORY_HEADROOM_MB: int = int(os.getenv("FORECAST_MEMORY_HEADROOM_MB", "1024"))
+THEIL_SEN_MEMORY_BUDGET_MB: int = int(os.getenv("THEIL_SEN_MEMORY_BUDGET_MB", "512"))
+ARIMA_LOW_MEMORY_THRESHOLD_MB: int = int(
+    os.getenv("ARIMA_LOW_MEMORY_THRESHOLD_MB", "512")
+)
+FORECAST_PROCESS_ISOLATION: bool = (
+    os.getenv("FORECAST_PROCESS_ISOLATION", "true").lower() == "true"
+)
+TIMESTAMP_EXPANSION_WARN_RATIO: float = float(
+    os.getenv("TIMESTAMP_EXPANSION_WARN_RATIO", "1.25")
+)
+if FORECAST_MEMORY_BUDGET_MB < 0:
+    raise ValueError("FORECAST_MEMORY_BUDGET_MB cannot be negative.")
+if FORECAST_MEMORY_HEADROOM_MB < 0:
+    raise ValueError("FORECAST_MEMORY_HEADROOM_MB cannot be negative.")
+if THEIL_SEN_MEMORY_BUDGET_MB < 64:
+    raise ValueError("THEIL_SEN_MEMORY_BUDGET_MB must be at least 64.")
+if ARIMA_LOW_MEMORY_THRESHOLD_MB < 192:
+    raise ValueError("ARIMA_LOW_MEMORY_THRESHOLD_MB must be at least 192.")
+if TIMESTAMP_EXPANSION_WARN_RATIO < 1:
+    raise ValueError("TIMESTAMP_EXPANSION_WARN_RATIO must be at least 1.")
 
 ALLOWED_EXTENSIONS: list[str] = os.getenv("ALLOWED_EXTENSIONS", "csv,xlsx,json").split(
     ","
@@ -57,9 +82,7 @@ CHROMA_PERSIST_DIR: str = os.getenv("CHROMA_PERSIST_DIR", "./chroma_db")
 
 # Sentence-transformers model used by the RAG knowledge base for embeddings.
 # Change this to use a different embedding model without editing code.
-EMBED_MODEL: str = os.getenv(
-    "EMBED_MODEL", "sentence-transformers/all-MiniLM-L6-v2"
-)
+EMBED_MODEL: str = os.getenv("EMBED_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 
 # Directory for disk-backed uploaded file storage.  DataFrames are
 # persisted as parquet files so they survive process restarts and don't

@@ -39,3 +39,7 @@ class JobCancelledError(ForecastingAgentError):
     callback returns ``True`` at a stage boundary.  The job worker catches it
     and transitions the job to the ``cancelled`` terminal status.
     """
+
+
+class ForecastResourceError(ForecastingAgentError):
+    """Raised when a forecast cannot fit within configured memory capacity."""

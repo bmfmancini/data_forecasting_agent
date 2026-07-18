@@ -96,37 +96,43 @@ def fit_holt_winters(
     forecast_horizon: int,
     seasonal_period: int = 1,
     mase_period: int = 1,
+    fitted_configuration: dict[str, object] | None = None,
+    evaluation_metrics: ForecastMetrics | None = None,
 ) -> ForecastAdapterResult:
     """Select the Holt-Winters form on training data and refit it on all data."""
     series = series.dropna().astype(float)
     seasonal_period = max(1, int(seasonal_period))
-    holdout = make_terminal_holdout(series, forecast_horizon)
-    train, test = holdout.train, holdout.test
+    selected = _spec_from_configuration(fitted_configuration)
+    if selected is not None:
+        metrics = evaluation_metrics or ForecastMetrics()
+    else:
+        holdout = make_terminal_holdout(series, forecast_horizon)
+        train, test = holdout.train, holdout.test
 
-    try:
-        train_fit, selected = select_holt_winters_fit(train, seasonal_period)
-        metrics = evaluate_predictions(
-            holdout,
-            np.asarray(train_fit.forecast(len(test)), dtype=float),
-            mase_period=mase_period,
-        )
-    except Exception as exc:  # pylint: disable=broad-except
-        logger.warning("Holt-Winters model selection failed: %s", exc)
-        last_val = float(series.iloc[-1]) if not series.empty else 0.0
-        return ForecastAdapterResult(
-            status=ForecastFitStatus.NOT_ESTIMABLE,
-            failure_reason=str(exc),
-            is_fallback=True,
-            forecast=[last_val] * forecast_horizon,
-            lower_ci=[last_val] * forecast_horizon,
-            upper_ci=[last_val] * forecast_horizon,
-            metrics=ForecastMetrics(unavailable_reasons={"all": str(exc)}),
-            fitted_configuration={
-                "model": "Holt-Winters",
-                "requested_seasonal_period": seasonal_period,
-                "fallback": "persistence",
-            },
-        )
+        try:
+            train_fit, selected = select_holt_winters_fit(train, seasonal_period)
+            metrics = evaluate_predictions(
+                holdout,
+                np.asarray(train_fit.forecast(len(test)), dtype=float),
+                mase_period=mase_period,
+            )
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.warning("Holt-Winters model selection failed: %s", exc)
+            last_val = float(series.iloc[-1]) if not series.empty else 0.0
+            return ForecastAdapterResult(
+                status=ForecastFitStatus.NOT_ESTIMABLE,
+                failure_reason=str(exc),
+                is_fallback=True,
+                forecast=[last_val] * forecast_horizon,
+                lower_ci=[last_val] * forecast_horizon,
+                upper_ci=[last_val] * forecast_horizon,
+                metrics=ForecastMetrics(unavailable_reasons={"all": str(exc)}),
+                fitted_configuration={
+                    "model": "Holt-Winters",
+                    "requested_seasonal_period": seasonal_period,
+                    "fallback": "persistence",
+                },
+            )
 
     try:
         full_fit = ExponentialSmoothing(
@@ -170,4 +176,53 @@ def fit_holt_winters(
         },
         innovations=innovations,
         interval_label="bootstrap_prediction_interval",
+    )
+
+
+def _spec_from_configuration(
+    fitted_configuration: dict[str, object] | None,
+) -> HoltWintersSpec | None:
+    """Build a validated Holt-Winters specification from backtest evidence."""
+    if not fitted_configuration or "damped_trend" not in fitted_configuration:
+        return None
+    trend = fitted_configuration.get("trend")
+    seasonal = fitted_configuration.get("seasonal")
+    period = fitted_configuration.get("seasonal_period")
+    if trend not in {None, "add"} or seasonal not in {None, "add", "mul"}:
+        return None
+    if period is not None:
+        try:
+            period = int(period)
+        except (TypeError, ValueError):
+            return None
+    return HoltWintersSpec(
+        trend=trend,
+        damped_trend=bool(fitted_configuration.get("damped_trend")),
+        seasonal=seasonal,
+        seasonal_period=period,
+    )
+
+
+def refit_holt_winters_from_configuration(
+    series: pd.Series,
+    forecast_horizon: int,
+    seasonal_period: int,
+    fitted_configuration: dict[str, object],
+    metrics: ForecastMetrics,
+) -> ForecastAdapterResult:
+    """Refit a backtest-selected Holt-Winters form on full history."""
+    if _spec_from_configuration(fitted_configuration) is None:
+        return ForecastAdapterResult(
+            status=ForecastFitStatus.NOT_ESTIMABLE,
+            failure_reason="Reusable Holt-Winters configuration is unavailable.",
+            metrics=metrics,
+            fitted_configuration={"model": "Holt-Winters"},
+        )
+    return fit_holt_winters(
+        series,
+        forecast_horizon,
+        seasonal_period=seasonal_period,
+        mase_period=seasonal_period,
+        fitted_configuration=fitted_configuration,
+        evaluation_metrics=metrics,
     )

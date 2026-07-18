@@ -224,3 +224,4 @@ review.md
 *.crt
 *.key
 *.env
+*.md

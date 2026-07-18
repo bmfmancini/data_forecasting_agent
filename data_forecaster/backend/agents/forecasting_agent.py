@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import re
+from time import perf_counter
 from typing import Any
 
 import numpy as np
@@ -10,7 +12,8 @@ import pandas as pd
 
 from core.llm_factory import get_llm
 from core.logging_config import get_logger
-from forecasting.arima_model import fit_arima
+from utils.memory import memory_snapshot
+from forecasting.arima_model import fit_arima, refit_arima_from_configuration
 from forecasting.backtesting import BacktestConfig, evaluate_candidates
 from forecasting.contracts import (
     BacktestEvaluation,
@@ -18,8 +21,11 @@ from forecasting.contracts import (
     ForecastFitStatus,
     ForecastMetrics,
 )
-from forecasting.ewma_model import fit_ewma
-from forecasting.holt_winters import fit_holt_winters
+from forecasting.ewma_model import fit_ewma, refit_ewma_from_configuration
+from forecasting.holt_winters import (
+    fit_holt_winters,
+    refit_holt_winters_from_configuration,
+)
 from forecasting.residual_diagnostics import (
     analyze_backtest_errors,
     analyze_innovations,
@@ -27,7 +33,7 @@ from forecasting.residual_diagnostics import (
     interval_nonconformity_scores,
 )
 from forecasting.selection_policy import CandidateEvidence, select_model_deterministic
-from forecasting.sarima_model import fit_sarima
+from forecasting.sarima_model import fit_sarima, refit_sarima_from_configuration
 from forecasting.preprocessing import (
     BoxCoxTransform,
     YeoJohnsonTransform,
@@ -48,6 +54,20 @@ logger = get_logger(__name__)
 
 _SUPPORTED_LOSS_METRICS = ("mase", "wape", "rmse", "mae")
 _AUTO_LOSS_VALUES = {"auto", "ai", "recommended", "let ai decide"}
+
+
+@dataclass(frozen=True)
+class ForecastEvaluationEvidence:
+    """Reusable comparison evidence for one unchanged forecast request."""
+
+    backtest_evaluations: dict[str, BacktestEvaluation]
+    all_metrics: dict[str, dict[str, float]]
+    comparison_summary: str
+    resolved_loss: str
+    loss_resolution_source: str
+    loss_rationale: str
+    reasoning_steps: list[dict[str, Any]]
+    token_usage: dict[str, int]
 
 
 def _has_required_metrics(result: ForecastAdapterResult) -> bool:
@@ -119,7 +139,7 @@ def _loss_recommendation_rationale(
     return "The automatic recommendation was unavailable, so MASE was used safely."
 
 
-def run_forecasting_agent(
+def run_forecasting_agent_with_evidence(
     series: pd.Series,
     model_selection: ModelSelectionResult,
     stat_result: StatisticalResult,
@@ -130,7 +150,12 @@ def run_forecasting_agent(
     loss_preference: str = "auto",
     preprocessing_options: dict[str, Any] | None = None,
     exclude_models: list[str] | None = None,
-) -> tuple[ForecastResult, dict[str, dict[str, float]]]:
+    evaluation_evidence: ForecastEvaluationEvidence | None = None,
+) -> tuple[
+    ForecastResult,
+    dict[str, dict[str, float]],
+    ForecastEvaluationEvidence,
+]:
     """Run all forecasting models, return ForecastResult for the selected model
     and an all-metrics dict for the comparison chart.
 
@@ -175,163 +200,65 @@ def run_forecasting_agent(
     )
     results_store: dict[str, ForecastAdapterResult] = {}
 
-    # ── Fit all models directly in Python ─────────────────────────────────────
-    for name, fn, kwargs in [
+    if evaluation_evidence is None:
+        evaluation_started = perf_counter()
+        backtest_evals = _run_backtest_evaluation(
+            series,
+            forecast_horizon,
+            seasonal_period,
+            apply_iqr_clip=False,
+            imputation_method=imputation_method,
+            smoothing_method=smoothing_method,
+            outlier_strategy=outlier_strategy,
+        )
+        logger.info(
+            "Performance comparison_evaluation wall_seconds=%.3f candidates=%d "
+            "rss_mb=%.1f peak_rss_mb=%.1f",
+            perf_counter() - evaluation_started,
+            len(backtest_evals),
+            memory_snapshot().current_rss_mb,
+            memory_snapshot().peak_rss_mb,
+        )
+        comparison_summary = _build_backtest_comparison_summary(backtest_evals)
         (
-            "Holt-Winters",
-            fit_holt_winters,
-            {
-                "seasonal_period": seasonal_period,
-                "mase_period": seasonal_period,
-            },
-        ),
-        ("ARIMA", fit_arima, {"mase_period": seasonal_period}),
-        (
-            "SARIMA",
-            fit_sarima,
-            {"seasonal_period": seasonal_period, "mase_period": seasonal_period},
-        ),
-        ("EWMA", fit_ewma, {"mase_period": seasonal_period}),
-    ]:
-        try:
-            results_store[name] = fn(production_series, forecast_horizon, **kwargs)
-        except Exception as exc:  # pylint: disable=broad-except
-            logger.warning("%s fitting failed: %s", name, exc)
-            results_store[name] = ForecastAdapterResult(
-                status=ForecastFitStatus.FAILED,
-                failure_reason=str(exc),
-                fitted_configuration={"model": name},
-            )
-
-    # ── Common rolling-origin backtesting ───────────────────────────────────
-    # Run all candidates on identical expanding-window folds so the reported
-    # metrics are apples-to-apples. The terminal-holdout metrics produced by
-    # each adapter remain on the result; the backtest evaluation supplements
-    # them with pooled rolling-origin evidence.
-    backtest_evals = _run_backtest_evaluation(
-        series,
-        forecast_horizon,
-        seasonal_period,
-        apply_iqr_clip=False,
-        imputation_method=imputation_method,
-        smoothing_method=smoothing_method,
-        outlier_strategy=outlier_strategy,
-    )
-
-    comparison_summary = "Model comparison metrics (lower is better):\n"
-    for name, res in results_store.items():
-        # Include status, warnings, and provenance in the evidence passed
-        # to the LLM so it has versioned typed evidence.
-        status_text = f" [status={res.status.value}]"
-        if res.is_fallback:
-            status_text += " [fallback]"
-        if res.failure_reason:
-            status_text += f" [failure={res.failure_reason}]"
-        warnings_text = ""
-        if res.warnings:
-            warnings_text = f" [warnings: {'; '.join(res.warnings)}]"
-        if not res.is_rankable:
-            comparison_summary += (
-                f"- {name}:{status_text}{warnings_text} required metrics unavailable\n"
-            )
-            continue
-        wape_text = (
-            f", WAPE={_format_metric(res.metrics.wape, '.2%')}"
-            if res.metrics.wape is not None
-            else ""
-        )
-        mase_text = (
-            f", MASE={_format_metric(res.metrics.mase, '.4f')}"
-            if res.metrics.mase is not None
-            else ""
-        )
-        backtest_text = ""
-        bt = backtest_evals.get(name)
-        if bt is not None and bt.pooled_metrics.rmse is not None:
-            backtest_text = (
-                f", backtest RMSE={bt.pooled_metrics.rmse:.4f} "
-                f"(n_origins={bt.n_origins})"
-            )
-        interval_text = ""
-        if res.interval_label:
-            interval_text = f" [interval={res.interval_label}]"
-        comparison_summary += (
-            f"- {name}:{status_text}{warnings_text}{interval_text} "
-            f"RMSE={res.metrics.rmse:.4f}, MAE={res.metrics.mae:.4f}, "
-            f"MAPE={_format_metric(res.metrics.mape, '.2f')}%"
-            f"{wape_text}{mase_text}{backtest_text}\n"
-        )
-
-    # ── LLM Setup ────────────────────────────────────────────────────────────
-    llm = get_llm(temperature=0)
-
-    prompt = FORECASTING_PROMPT
-    token_usage: dict[str, int] = {}
-    loss_context = _business_context(preprocessing_options)
-    resolved_loss, loss_resolution_source = _resolve_loss_preference(
-        loss_preference, None
-    )
-    loss_rationale = _loss_recommendation_rationale(
-        resolved_loss, loss_resolution_source, None
-    )
-
-    try:
-        chain = prompt | llm
-        inputs = {
-            "selected": model_selection.selected_model,
-            "summary": comparison_summary,
-            "requested_loss": loss_preference,
-            "business_context": loss_context,
-        }
-        response = chain.invoke(inputs)
-        resolved_loss, loss_resolution_source = _resolve_loss_preference(
-            loss_preference, str(response.content)
-        )
-        loss_rationale = _loss_recommendation_rationale(
             resolved_loss,
             loss_resolution_source,
-            str(response.content),
+            loss_rationale,
+            reasoning_steps,
+            token_usage,
+        ) = _analyze_comparison_with_llm(
+            model_selection,
+            comparison_summary,
+            loss_preference,
+            preprocessing_options,
         )
-        token_usage = extract_token_usage(
-            response, input_text=estimate_input_text(prompt, inputs)
+    else:
+        backtest_evals = evaluation_evidence.backtest_evaluations
+        comparison_summary = evaluation_evidence.comparison_summary
+        resolved_loss = evaluation_evidence.resolved_loss
+        loss_resolution_source = evaluation_evidence.loss_resolution_source
+        loss_rationale = evaluation_evidence.loss_rationale
+        reasoning_steps = list(evaluation_evidence.reasoning_steps)
+        token_usage = dict(evaluation_evidence.token_usage)
+        logger.info(
+            "Performance comparison_evaluation reused=true candidates=%d",
+            len(backtest_evals),
         )
-        reasoning_steps = [
-            {
-                "thought": "Fitting Holt-Winters, ARIMA, and SARIMA in Python...",
-                "observation": comparison_summary,
-            },
-            {
-                "thought": "Analyzing metrics for performance comparison...",
-                "observation": response.content,
-            },
-        ]
-    except Exception as exc:  # pylint: disable=broad-except
-        logger.warning("Forecasting agent LLM call failed: %s", exc)
-        reasoning_steps = [
-            {
-                "thought": "LLM analysis failed, relying on direct Python metrics.",
-                "observation": comparison_summary,
-            }
-        ]
 
     # ── Select from common rolling-origin evidence ───────────────────────────
     selected = model_selection.selected_model
     sensitivity_winners: dict[str, str] = {}
+    production_order: list[str] = []
     if model_selection.selection_method != "forced":
         rankable = {
             name: evaluation
             for name, evaluation in backtest_evals.items()
             if evaluation.is_rankable
-            and (
-                name not in results_store
-                or results_store[name].status == ForecastFitStatus.OK
-            )
         }
         if rankable:
             candidate_evidence = [
                 CandidateEvidence(
                     name=name,
-                    adapter_result=results_store.get(name),
                     backtest=evaluation,
                     is_baseline=name in _BASELINE_NAMES,
                 )
@@ -353,96 +280,68 @@ def run_forecasting_agent(
             outcome = outcomes[resolved_loss]
             if outcome.selected_model:
                 selected = outcome.selected_model
-    if selected not in results_store and selected in _BASELINE_NAMES:
+            production_order = [name for name, _ in outcome.ranking]
+    if not production_order:
+        production_order = [
+            name
+            for name, evaluation in sorted(
+                backtest_evals.items(),
+                key=lambda item: (
+                    getattr(item[1].pooled_metrics, resolved_loss, None)
+                    if getattr(item[1].pooled_metrics, resolved_loss, None) is not None
+                    else float("inf")
+                ),
+            )
+            if evaluation.is_rankable and name not in excluded_models
+        ]
+    production_order = [selected] + [
+        name for name in production_order if name != selected
+    ]
+
+    res: ForecastAdapterResult | None = None
+    for production_candidate in production_order:
+        if production_candidate in excluded_models:
+            continue
+        production_started = perf_counter()
         try:
-            results_store[selected] = _fit_baseline_production(
-                selected,
+            candidate_result = _fit_production_candidate(
+                production_candidate,
                 production_series,
                 forecast_horizon,
                 seasonal_period,
-                backtest_evals.get(selected),
-            )
-        except Exception as exc:  # pylint: disable=broad-except
-            logger.warning("Baseline production refit failed for %s: %s", selected, exc)
-            results_store[selected] = ForecastAdapterResult(
-                status=ForecastFitStatus.FAILED,
-                failure_reason=str(exc),
-                fitted_configuration={"model": selected},
-            )
-    if " + " in selected and selected not in results_store:
-        try:
-            results_store[selected] = _fit_transformed_production(
-                selected,
-                production_series,
-                forecast_horizon,
-                seasonal_period,
-                backtest_evals.get(selected),
+                backtest_evals.get(production_candidate),
             )
         except Exception as exc:  # pylint: disable=broad-except
             logger.warning(
-                "Transformed production refit failed for %s: %s", selected, exc
+                "Production refit failed for %s: %s", production_candidate, exc
             )
-            results_store[selected] = ForecastAdapterResult(
+            candidate_result = ForecastAdapterResult(
                 status=ForecastFitStatus.FAILED,
                 failure_reason=str(exc),
-                fitted_configuration={"model": selected},
+                fitted_configuration={"model": production_candidate},
             )
-    if selected not in results_store:
-        # Try to fit the selected model directly
-        try:
-            if selected == "Holt-Winters":
-                results_store[selected] = fit_holt_winters(
-                    series,
-                    forecast_horizon,
-                    seasonal_period=seasonal_period,
-                    mase_period=seasonal_period,
-                )
-            elif selected == "ARIMA":
-                results_store[selected] = fit_arima(
-                    series, forecast_horizon, mase_period=seasonal_period
-                )
-            elif selected == "EWMA":
-                results_store[selected] = fit_ewma(
-                    series, forecast_horizon, mase_period=seasonal_period
-                )
-            else:
-                results_store[selected] = fit_sarima(
-                    series,
-                    forecast_horizon,
-                    seasonal_period,
-                    mase_period=seasonal_period,
-                )
-        except Exception as exc:  # pylint: disable=broad-except
-            logger.error("Could not fit selected model %s: %s", selected, exc)
-            # Fall back to any available result
-            if results_store:
-                selected = next(iter(results_store))
-                logger.warning("Falling back to %s", selected)
-            else:
-                raise RuntimeError("All forecasting models failed.") from exc
-
-    res = results_store[selected]
-    if not res.is_rankable:
-        rankable = {
-            name: candidate
-            for name, candidate in results_store.items()
-            if candidate.is_rankable and name not in excluded_models
-        }
-        if not rankable:
-            raise RuntimeError(
-                "No forecasting model produced valid evaluation metrics."
-            )
-        # Deterministic policy: lowest RMSE wins. The LLM never decides
-        # model rankings.
-        selected = min(
-            rankable, key=lambda name: rankable[name].metrics.rmse or float("inf")
+        results_store[production_candidate] = candidate_result
+        logger.info(
+            "Performance production_fit model=%s wall_seconds=%.3f status=%s "
+            "rss_mb=%.1f peak_rss_mb=%.1f",
+            production_candidate,
+            perf_counter() - production_started,
+            candidate_result.status.value,
+            memory_snapshot().current_rss_mb,
+            memory_snapshot().peak_rss_mb,
         )
-        res = rankable[selected]
-        res = res.model_copy(update={"is_fallback": True})
+        if candidate_result.is_rankable:
+            selected = production_candidate
+            res = candidate_result
+            break
         logger.warning(
-            "Selected model lacked valid evaluation evidence; falling back to %s",
-            selected,
+            "Production candidate %s was not rankable; trying the next candidate.",
+            production_candidate,
         )
+    if res is None:
+        raise RuntimeError("No forecasting model produced a valid production fit.")
+    if selected != model_selection.selected_model:
+        res = res.model_copy(update={"is_fallback": True})
 
     # ── Generate forecast dates ───────────────────────────────────────────────
     last_date = series.index[-1] if hasattr(series.index, "max") else None
@@ -459,20 +358,14 @@ def run_forecasting_agent(
         forecast_dates = [str(i + 1) for i in range(forecast_horizon)]
 
     # ── Build all_metrics dict for comparison chart ───────────────────────────
-    all_metrics: dict[str, dict[str, float]] = {}
-    for name, evaluation in backtest_evals.items():
-        if not evaluation.is_rankable:
-            continue
-        metrics = evaluation.pooled_metrics
-        all_metrics[name] = {
-            "RMSE": metrics.rmse if metrics.rmse is not None else float("nan"),
-            "MAE": metrics.mae if metrics.mae is not None else float("nan"),
-            "MAPE": metrics.mape if metrics.mape is not None else float("nan"),
-            "WAPE": metrics.wape if metrics.wape is not None else float("nan"),
-            "MASE": metrics.mase if metrics.mase is not None else float("nan"),
-            "sMAPE": metrics.smape if metrics.smape is not None else float("nan"),
-            "RMSSE": metrics.rmsse if metrics.rmsse is not None else float("nan"),
+    all_metrics = (
+        {
+            name: dict(metrics)
+            for name, metrics in evaluation_evidence.all_metrics.items()
         }
+        if evaluation_evidence is not None
+        else _build_all_metrics(backtest_evals)
+    )
     # Merge any pre-existing metrics (e.g. baselines) passed in by the caller
     # so re-runs preserve previously computed results.
     if existing_metrics is not None:
@@ -667,7 +560,237 @@ def run_forecasting_agent(
             else {}
         ),
     )
-    return forecast_result, all_metrics
+    evidence = ForecastEvaluationEvidence(
+        backtest_evaluations=backtest_evals,
+        all_metrics=all_metrics,
+        comparison_summary=comparison_summary,
+        resolved_loss=resolved_loss,
+        loss_resolution_source=loss_resolution_source,
+        loss_rationale=loss_rationale,
+        reasoning_steps=reasoning_steps,
+        token_usage=token_usage,
+    )
+    return forecast_result, all_metrics, evidence
+
+
+def run_forecasting_agent(
+    series: pd.Series,
+    model_selection: ModelSelectionResult,
+    stat_result: StatisticalResult,
+    forecast_horizon: int,
+    freq: str,
+    existing_metrics: dict[str, dict[str, float]] | None = None,
+    disabled_tests: list[str] | None = None,
+    loss_preference: str = "auto",
+    preprocessing_options: dict[str, Any] | None = None,
+    exclude_models: list[str] | None = None,
+) -> tuple[ForecastResult, dict[str, dict[str, float]]]:
+    """Compatibility wrapper returning the historical two-value result."""
+    forecast, metrics, _ = run_forecasting_agent_with_evidence(
+        series,
+        model_selection,
+        stat_result,
+        forecast_horizon,
+        freq,
+        existing_metrics=existing_metrics,
+        disabled_tests=disabled_tests,
+        loss_preference=loss_preference,
+        preprocessing_options=preprocessing_options,
+        exclude_models=exclude_models,
+    )
+    return forecast, metrics
+
+
+def _build_backtest_comparison_summary(
+    evaluations: dict[str, BacktestEvaluation],
+) -> str:
+    """Format rolling-origin evidence without requiring production fits."""
+    lines = ["Model comparison metrics (lower is better):"]
+    for name, evaluation in evaluations.items():
+        if not evaluation.is_rankable:
+            reason = evaluation.unavailable_reasons.get(
+                "all", "required metrics unavailable"
+            )
+            lines.append(f"- {name}: [status=not_estimable] {reason}")
+            continue
+        metrics = evaluation.pooled_metrics
+        warning_text = (
+            f" [warnings: {'; '.join(evaluation.warnings)}]"
+            if evaluation.warnings
+            else ""
+        )
+        lines.append(
+            f"- {name}: [status=ok]{warning_text} "
+            f"RMSE={_format_metric(metrics.rmse, '.4f')}, "
+            f"MAE={_format_metric(metrics.mae, '.4f')}, "
+            f"MAPE={_format_metric(metrics.mape, '.2f')}%, "
+            f"WAPE={_format_metric(metrics.wape, '.2%')}, "
+            f"MASE={_format_metric(metrics.mase, '.4f')} "
+            f"(n_origins={evaluation.n_origins})"
+        )
+    return "\n".join(lines) + "\n"
+
+
+def _analyze_comparison_with_llm(
+    model_selection: ModelSelectionResult,
+    comparison_summary: str,
+    loss_preference: str,
+    preprocessing_options: dict[str, Any],
+) -> tuple[str, str, str, list[dict[str, Any]], dict[str, int]]:
+    """Resolve the decision loss and generate optional comparison narration."""
+    prompt = FORECASTING_PROMPT
+    token_usage: dict[str, int] = {}
+    loss_context = _business_context(preprocessing_options)
+    resolved_loss, source = _resolve_loss_preference(loss_preference, None)
+    rationale = _loss_recommendation_rationale(resolved_loss, source, None)
+    try:
+        inputs = {
+            "selected": model_selection.selected_model,
+            "summary": comparison_summary,
+            "requested_loss": loss_preference,
+            "business_context": loss_context,
+        }
+        response = (prompt | get_llm(temperature=0)).invoke(inputs)
+        resolved_loss, source = _resolve_loss_preference(
+            loss_preference, str(response.content)
+        )
+        rationale = _loss_recommendation_rationale(
+            resolved_loss, source, str(response.content)
+        )
+        token_usage = extract_token_usage(
+            response, input_text=estimate_input_text(prompt, inputs)
+        )
+        reasoning = [
+            {
+                "thought": "Evaluated forecasting candidates on common folds.",
+                "observation": comparison_summary,
+            },
+            {
+                "thought": "Analyzing metrics for performance comparison...",
+                "observation": response.content,
+            },
+        ]
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.warning("Forecasting agent LLM call failed: %s", exc)
+        reasoning = [
+            {
+                "thought": "LLM analysis failed, relying on direct Python metrics.",
+                "observation": comparison_summary,
+            }
+        ]
+    return resolved_loss, source, rationale, reasoning, token_usage
+
+
+def _build_all_metrics(
+    evaluations: dict[str, BacktestEvaluation],
+) -> dict[str, dict[str, float]]:
+    """Build the comparison-chart metrics from rolling-origin evidence."""
+    all_metrics: dict[str, dict[str, float]] = {}
+    for name, evaluation in evaluations.items():
+        if not evaluation.is_rankable:
+            continue
+        metrics = evaluation.pooled_metrics
+        all_metrics[name] = {
+            "RMSE": metrics.rmse if metrics.rmse is not None else float("nan"),
+            "MAE": metrics.mae if metrics.mae is not None else float("nan"),
+            "MAPE": metrics.mape if metrics.mape is not None else float("nan"),
+            "WAPE": metrics.wape if metrics.wape is not None else float("nan"),
+            "MASE": metrics.mase if metrics.mase is not None else float("nan"),
+            "sMAPE": metrics.smape if metrics.smape is not None else float("nan"),
+            "RMSSE": metrics.rmsse if metrics.rmsse is not None else float("nan"),
+        }
+    return all_metrics
+
+
+def _reusable_configuration(
+    evaluation: BacktestEvaluation | None,
+) -> dict[str, object]:
+    """Return final-test configuration or the newest successful fold config."""
+    if evaluation is None:
+        return {}
+    if evaluation.final_test_fitted_configuration:
+        return dict(evaluation.final_test_fitted_configuration)
+    for fold in reversed(evaluation.folds):
+        if fold.status == ForecastFitStatus.OK and fold.fitted_configuration:
+            return dict(fold.fitted_configuration)
+    return {}
+
+
+def _fit_base_production(
+    name: str,
+    series: pd.Series,
+    horizon: int,
+    seasonal_period: int,
+    evaluation: BacktestEvaluation | None,
+) -> ForecastAdapterResult:
+    """Fit one base model, preferring its leak-safe backtest configuration."""
+    configuration = _reusable_configuration(evaluation)
+    metrics = (
+        evaluation.pooled_metrics if evaluation and evaluation.is_rankable else None
+    )
+    reused: ForecastAdapterResult | None = None
+    if metrics is not None and configuration:
+        if name == "ARIMA":
+            reused = refit_arima_from_configuration(
+                series, horizon, configuration, metrics
+            )
+        elif name == "SARIMA":
+            reused = refit_sarima_from_configuration(
+                series, horizon, seasonal_period, configuration, metrics
+            )
+        elif name == "Holt-Winters":
+            reused = refit_holt_winters_from_configuration(
+                series, horizon, seasonal_period, configuration, metrics
+            )
+        elif name == "EWMA":
+            reused = refit_ewma_from_configuration(
+                series, horizon, configuration, metrics
+            )
+        if reused is not None and reused.status != ForecastFitStatus.NOT_ESTIMABLE:
+            return reused
+        logger.warning(
+            "Reusable configuration was incomplete for %s; using safe search fallback.",
+            name,
+        )
+
+    if name == "ARIMA":
+        return fit_arima(series, horizon, mase_period=seasonal_period)
+    if name == "SARIMA":
+        return fit_sarima(
+            series,
+            horizon,
+            seasonal_period=seasonal_period,
+            mase_period=seasonal_period,
+        )
+    if name == "Holt-Winters":
+        return fit_holt_winters(
+            series,
+            horizon,
+            seasonal_period=seasonal_period,
+            mase_period=seasonal_period,
+        )
+    if name == "EWMA":
+        return fit_ewma(series, horizon, mase_period=seasonal_period)
+    raise ValueError(f"Unsupported production model: {name}")
+
+
+def _fit_production_candidate(
+    name: str,
+    series: pd.Series,
+    horizon: int,
+    seasonal_period: int,
+    evaluation: BacktestEvaluation | None,
+) -> ForecastAdapterResult:
+    """Fit exactly one selected base, transformed, or baseline candidate."""
+    if name in _BASELINE_NAMES:
+        return _fit_baseline_production(
+            name, series, horizon, seasonal_period, evaluation
+        )
+    if " + " in name:
+        return _fit_transformed_production(
+            name, series, horizon, seasonal_period, evaluation
+        )
+    return _fit_base_production(name, series, horizon, seasonal_period, evaluation)
 
 
 _BASELINE_NAMES = {"Constant", "Naive", "Seasonal Naive", "Mean Forecast", "Drift"}
@@ -717,17 +840,13 @@ def _fit_transformed_production(
         BoxCoxTransform() if transform_name == "Box-Cox" else YeoJohnsonTransform()
     ).fit(series)
     transformed = transform.transform_series(series)
-    fitters = {
-        "ARIMA": lambda: fit_arima(transformed, horizon, mase_period=mase_period),
-        "SARIMA": lambda: fit_sarima(
-            transformed, horizon, mase_period, mase_period=mase_period
-        ),
-        "Holt-Winters": lambda: fit_holt_winters(
-            transformed, horizon, seasonal_period=mase_period, mase_period=mase_period
-        ),
-        "EWMA": lambda: fit_ewma(transformed, horizon, mase_period=mase_period),
-    }
-    result = fitters[base_name]()
+    result = _fit_base_production(
+        base_name,
+        transformed,
+        horizon,
+        mase_period,
+        evaluation,
+    )
     configuration = dict(result.fitted_configuration)
     configuration["preprocessing"] = transform.transform.model_dump()
     configuration["retransformation_bias"] = "residual_smearing"
@@ -737,8 +856,16 @@ def _fit_transformed_production(
             "forecast": bias_adjusted_inverse(
                 transform, result.forecast, residuals
             ).tolist(),
-            "lower_ci": transform.inverse_transform(result.lower_ci).tolist(),
-            "upper_ci": transform.inverse_transform(result.upper_ci).tolist(),
+            "lower_ci": (
+                transform.inverse_transform(result.lower_ci).tolist()
+                if result.lower_ci
+                else []
+            ),
+            "upper_ci": (
+                transform.inverse_transform(result.upper_ci).tolist()
+                if result.upper_ci
+                else []
+            ),
             "metrics": evaluation.pooled_metrics if evaluation else result.metrics,
             "fitted_configuration": configuration,
         }
@@ -787,12 +914,12 @@ def _run_backtest_evaluation(
     )
 
     def _arima_fn(train: pd.Series, fold: BacktestFold) -> FoldPrediction | None:
-        from forecasting.pmdarima_compat import import_pmdarima  # local
+        from forecasting.pmdarima_compat import fit_auto_arima_memory_aware  # local
 
-        pm = import_pmdarima()
         try:
-            model = pm.auto_arima(
+            model = fit_auto_arima_memory_aware(
                 train,
+                seasonal_period=1,
                 seasonal=False,
                 stepwise=True,
                 max_p=5,
@@ -821,13 +948,13 @@ def _run_backtest_evaluation(
             return None
 
     def _sarima_fn(train: pd.Series, fold: BacktestFold) -> FoldPrediction | None:
-        from forecasting.pmdarima_compat import import_pmdarima  # local
+        from forecasting.pmdarima_compat import fit_auto_arima_memory_aware  # local
 
-        pm = import_pmdarima()
         use_seasonal = len(train) >= 2 * seasonal_period
         try:
-            model = pm.auto_arima(
+            model = fit_auto_arima_memory_aware(
                 train,
+                seasonal_period=seasonal_period if use_seasonal else 1,
                 seasonal=use_seasonal,
                 m=seasonal_period if use_seasonal else 1,
                 stepwise=True,

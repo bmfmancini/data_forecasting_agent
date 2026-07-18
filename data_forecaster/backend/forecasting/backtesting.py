@@ -30,6 +30,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from time import perf_counter
 
 import numpy as np
 import pandas as pd
@@ -391,6 +392,7 @@ def evaluate_candidate(
     final_test_metrics = ForecastMetrics(
         unavailable_reasons={"all": "No untouched final test window was reserved."}
     )
+    final_test_fitted_configuration: dict[str, object] = {}
     # Reuse the same clamped final_test_size as generate_folds so at least
     # two training observations are preserved.
     final_test_size = max(0, min(config.final_test_size, max(0, len(series) - 2)))
@@ -418,6 +420,10 @@ def evaluate_candidate(
             config,
         )
         if final_result is not None and final_result.status == ForecastFitStatus.OK:
+            final_test_fitted_configuration = dict(
+                final_result.fitted_configuration
+            )
+        if final_result is not None and final_result.status == ForecastFitStatus.OK:
             strategy = "clip" if config.apply_iqr_clip else config.outlier_strategy
             final_training = prepare_training_series(
                 series.iloc[:final_start].copy(),
@@ -444,6 +450,7 @@ def evaluate_candidate(
         folds=fold_results,
         pooled_metrics=pooled,
         final_test_metrics=final_test_metrics,
+        final_test_fitted_configuration=final_test_fitted_configuration,
         by_horizon_metrics=by_horizon,
         n_origins=successful_origins,
         n_failed_origins=len(fold_results) - successful_origins,
@@ -502,7 +509,16 @@ def evaluate_candidates(
     folds = generate_folds(series, config)
     evaluations: dict[str, BacktestEvaluation] = {}
     for name, fn in candidates.items():
+        started = perf_counter()
         evaluations[name] = evaluate_candidate(name, series, folds, fn, config)
+        logger.info(
+            "Performance candidate_evaluation model=%s wall_seconds=%.3f "
+            "origins=%d failed_origins=%d",
+            name,
+            perf_counter() - started,
+            evaluations[name].n_origins,
+            evaluations[name].n_failed_origins,
+        )
     references = [
         evaluations[name]
         for name in ("Seasonal Naive", "Naive")

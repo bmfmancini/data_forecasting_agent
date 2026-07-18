@@ -227,6 +227,48 @@ def get_file(
     }
 
 
+def load_file_from_disk(
+    file_id: str,
+    *,
+    selected_date_col: str,
+    selected_value_col: str,
+) -> dict[str, Any] | None:
+    """Load a reserved file using durable metadata in a spawned worker.
+
+    Spawned forecast processes intentionally do not inherit the parent's
+    in-memory metadata index. This read-only path avoids resetting reservation
+    counters while retaining parquet column pruning.
+    """
+    connection = get_connection()
+    try:
+        row = connection.execute(
+            "SELECT owner_id, date_col, value_col, freq, filename "
+            "FROM uploaded_files WHERE file_id = ?",
+            (file_id,),
+        ).fetchone()
+    finally:
+        connection.close()
+    if row is None:
+        return None
+    path = _file_path(file_id)
+    try:
+        frame = pd.read_parquet(
+            path,
+            columns=list(dict.fromkeys([selected_date_col, selected_value_col])),
+        )
+    except (ImportError, OSError, RuntimeError, TypeError, ValueError):
+        logger.exception("Spawned worker could not load file_id=%s", file_id)
+        return None
+    return {
+        "df": frame,
+        "owner_id": row["owner_id"],
+        "date_col": row["date_col"],
+        "value_col": row["value_col"],
+        "freq": row["freq"],
+        "filename": row["filename"],
+    }
+
+
 def _remove_disk_file(file_id: str) -> None:
     """Delete the parquet file for a given ``file_id`` from disk.
 

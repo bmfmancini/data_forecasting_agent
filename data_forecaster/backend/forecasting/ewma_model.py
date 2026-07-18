@@ -51,6 +51,7 @@ def fit_ewma(
     forecast_horizon: int,
     alpha: float | None = None,
     mase_period: int = 1,
+    evaluation_metrics: ForecastMetrics | None = None,
 ) -> ForecastAdapterResult:
     """Fit SES/EWMA and return a typed adapter result.
 
@@ -98,27 +99,29 @@ def fit_ewma(
             },
         )
 
-    # Split data into train and test sets for metrics calculation.
-    holdout = make_terminal_holdout(series, forecast_horizon)
-    train, test = holdout.train, holdout.test
+    if alpha is not None and evaluation_metrics is not None:
+        estimated_alpha = float(alpha)
+        metrics = evaluation_metrics
+    else:
+        # Split data into train and test sets for metrics calculation.
+        holdout = make_terminal_holdout(series, forecast_horizon)
+        train, test = holdout.train, holdout.test
+        estimated_alpha = alpha if alpha is not None else _estimate_alpha(train)
 
-    estimated_alpha = alpha if alpha is not None else _estimate_alpha(train)
-
-    # ── Evaluate holdout metrics on the training split ──────────────────────
-    try:
-        train_fit = SimpleExpSmoothing(train, initialization_method="estimated").fit(
-            smoothing_level=alpha, optimized=alpha is None
-        )
-        estimated_alpha = float(train_fit.params["smoothing_level"])
-        test_fc = np.asarray(train_fit.forecast(len(test)), dtype=float)
-        metrics = evaluate_predictions(
-            holdout,
-            test_fc,
-            mase_period=mase_period,
-        )
-    except Exception as exc:  # pylint: disable=broad-except
-        logger.warning("EWMA metrics calculation failed: %s", exc)
-        metrics = ForecastMetrics(unavailable_reasons={"all": str(exc)})
+        try:
+            train_fit = SimpleExpSmoothing(
+                train, initialization_method="estimated"
+            ).fit(smoothing_level=alpha, optimized=alpha is None)
+            estimated_alpha = float(train_fit.params["smoothing_level"])
+            test_fc = np.asarray(train_fit.forecast(len(test)), dtype=float)
+            metrics = evaluate_predictions(
+                holdout,
+                test_fc,
+                mase_period=mase_period,
+            )
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.warning("EWMA metrics calculation failed: %s", exc)
+            metrics = ForecastMetrics(unavailable_reasons={"all": str(exc)})
 
     # ── Full-series fit for forecast ─────────────────────────────────────────
     full_fit = SimpleExpSmoothing(series, initialization_method="estimated").fit(
@@ -166,4 +169,28 @@ def fit_ewma(
         },
         innovations=innovations,
         interval_label="bootstrap_prediction_interval",
+    )
+
+
+def refit_ewma_from_configuration(
+    series: pd.Series,
+    forecast_horizon: int,
+    fitted_configuration: dict[str, object],
+    metrics: ForecastMetrics,
+) -> ForecastAdapterResult:
+    """Refit a backtest-selected EWMA smoothing level on full history."""
+    try:
+        alpha = float(fitted_configuration["alpha"])
+    except (KeyError, TypeError, ValueError):
+        return ForecastAdapterResult(
+            status=ForecastFitStatus.NOT_ESTIMABLE,
+            failure_reason="Reusable EWMA alpha is unavailable.",
+            metrics=metrics,
+            fitted_configuration={"model": "EWMA"},
+        )
+    return fit_ewma(
+        series,
+        forecast_horizon,
+        alpha=alpha,
+        evaluation_metrics=metrics,
     )

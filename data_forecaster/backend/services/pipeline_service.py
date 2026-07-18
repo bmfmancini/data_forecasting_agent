@@ -9,12 +9,18 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from time import perf_counter
 from typing import Any
 
 import pandas as pd
 
+import core.config as settings
 from agents.data_validation_agent import run_validation_agent
-from agents.forecasting_agent import run_forecasting_agent
+from agents.forecasting_agent import (
+    ForecastEvaluationEvidence,
+    run_forecasting_agent,
+    run_forecasting_agent_with_evidence,
+)
 from agents.model_selection_agent import (
     build_model_rejection_reasons,
     run_model_selection_agent,
@@ -50,6 +56,7 @@ from utils.visualization import (
     plot_model_comparison,
     plot_stl,
 )
+from utils.memory import memory_snapshot
 
 logger = get_logger(__name__)
 
@@ -66,6 +73,7 @@ class PreparedPipelineInput:
     freq: str
     seasonal_period: int
     disabled_statistical_tests: list[str]
+    preparation_provenance: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -86,6 +94,7 @@ class ForecastStageOutput:
     forecast: ForecastResult
     statistical_review: StatisticalReviewResult
     all_metrics: dict[str, dict[str, float]]
+    evaluation_evidence: ForecastEvaluationEvidence | None = None
 
 
 def _deterministic_selection_reasoning(
@@ -200,13 +209,17 @@ def run_pipeline(
             raise JobCancelledError("Job cancelled by user request.")
 
     logger.info(
-        "Pipeline start: file_id=%s date_col=%s value_col=%s freq=%s horizon=%d",
+        "Pipeline start: file_id=%s date_col=%s value_col=%s freq=%s horizon=%d "
+        "rss_mb=%.1f peak_rss_mb=%.1f",
         file_id,
         date_col,
         value_col,
         freq,
         forecast_horizon,
+        memory_snapshot().current_rss_mb,
+        memory_snapshot().peak_rss_mb,
     )
+    pipeline_started = perf_counter()
 
     if (preflight_options or {}).get("continue_short_series") == "stop":
         raise DataValidationError(
@@ -214,15 +227,34 @@ def run_pipeline(
         )
 
     _check_cancelled()
+    stage_started = perf_counter()
     prepared = _prepare_pipeline_input(df, date_col, value_col, freq, preflight_options)
+    logger.info(
+        "Performance stage=prepare_input wall_seconds=%.3f file_id=%s "
+        "rss_mb=%.1f peak_rss_mb=%.1f",
+        perf_counter() - stage_started,
+        file_id,
+        memory_snapshot().current_rss_mb,
+        memory_snapshot().peak_rss_mb,
+    )
     _check_cancelled()
+    stage_started = perf_counter()
     statistical_stage = _run_statistical_stages(
         prepared, date_col, value_col, preflight_options, _progress
+    )
+    logger.info(
+        "Performance stage=statistical_analysis wall_seconds=%.3f file_id=%s "
+        "rss_mb=%.1f peak_rss_mb=%.1f",
+        perf_counter() - stage_started,
+        file_id,
+        memory_snapshot().current_rss_mb,
+        memory_snapshot().peak_rss_mb,
     )
     _check_cancelled()
     forecast_options = dict(preflight_options or {})
     if user_prompt:
         forecast_options["user_context"] = user_prompt
+    stage_started = perf_counter()
     forecast_stage = _run_forecast_stages(
         statistical_stage.forecasting_series,
         statistical_stage.statistical,
@@ -234,7 +266,16 @@ def run_pipeline(
         forecast_options,
         _progress,
     )
+    logger.info(
+        "Performance stage=forecasting wall_seconds=%.3f file_id=%s "
+        "rss_mb=%.1f peak_rss_mb=%.1f",
+        perf_counter() - stage_started,
+        file_id,
+        memory_snapshot().current_rss_mb,
+        memory_snapshot().peak_rss_mb,
+    )
     _check_cancelled()
+    stage_started = perf_counter()
     report_stage = _run_report_stage(
         statistical_stage.validation,
         statistical_stage.statistical,
@@ -246,7 +287,16 @@ def run_pipeline(
         prepared_by,
         _progress,
     )
+    logger.info(
+        "Performance stage=report wall_seconds=%.3f file_id=%s "
+        "rss_mb=%.1f peak_rss_mb=%.1f",
+        perf_counter() - stage_started,
+        file_id,
+        memory_snapshot().current_rss_mb,
+        memory_snapshot().peak_rss_mb,
+    )
     _check_cancelled()
+    stage_started = perf_counter()
     visualization_stage = _build_visualizations(
         statistical_stage.series,
         statistical_stage.statistical,
@@ -255,12 +305,26 @@ def run_pipeline(
         prepared.disabled_statistical_tests,
         _progress,
     )
+    logger.info(
+        "Performance stage=visualization wall_seconds=%.3f file_id=%s "
+        "rss_mb=%.1f peak_rss_mb=%.1f",
+        perf_counter() - stage_started,
+        file_id,
+        memory_snapshot().current_rss_mb,
+        memory_snapshot().peak_rss_mb,
+    )
     _check_cancelled()
     pipeline_token_usage = _build_pipeline_token_usage(
         statistical_stage, forecast_stage, report_stage.token_usage
     )
 
-    logger.info("Pipeline complete: file_id=%s", file_id)
+    logger.info(
+        "Pipeline complete: file_id=%s wall_seconds=%.3f rss_mb=%.1f peak_rss_mb=%.1f",
+        file_id,
+        perf_counter() - pipeline_started,
+        memory_snapshot().current_rss_mb,
+        memory_snapshot().peak_rss_mb,
+    )
     _progress(100, "Analysis complete")
 
     return AnalysisResponse(
@@ -302,8 +366,33 @@ def _prepare_pipeline_input(
     if not isinstance(disabled_statistical_tests, list):
         disabled_statistical_tests = []
 
+    observed_dates = pd.to_datetime(df[date_col], errors="coerce").dropna()
+    observed_count = int(observed_dates.nunique())
     prepared_df, prepared_freq = prepare_series_frame(
         df, date_col, value_col, preflight_options
+    )
+    modeled_count = len(prepared_df)
+    inserted_count = max(0, modeled_count - observed_count)
+    expansion_ratio = modeled_count / observed_count if observed_count else 1.0
+    preparation_provenance = {
+        "observed_count": observed_count,
+        "modeled_count": modeled_count,
+        "inserted_timestamp_count": inserted_count,
+        "expansion_ratio": expansion_ratio,
+    }
+    log_method = (
+        logger.warning
+        if expansion_ratio >= settings.TIMESTAMP_EXPANSION_WARN_RATIO
+        else logger.info
+    )
+    log_method(
+        "Timestamp grid observed_count=%d modeled_count=%d inserted_count=%d "
+        "expansion_ratio=%.3f frequency=%s",
+        observed_count,
+        modeled_count,
+        inserted_count,
+        expansion_ratio,
+        prepared_freq,
     )
     series = prepared_df.set_index(date_col)[value_col].astype(float)
     seasonal_period = _freq_to_period(prepared_freq or freq)
@@ -313,6 +402,7 @@ def _prepare_pipeline_input(
         freq=prepared_freq,
         seasonal_period=seasonal_period,
         disabled_statistical_tests=disabled_statistical_tests,
+        preparation_provenance=preparation_provenance,
     )
 
 
@@ -332,6 +422,7 @@ def _run_statistical_stages(
         value_col,
         prepared.freq,
         preflight_options=preflight_options,
+        preparation_provenance=prepared.preparation_provenance,
     )
     progress(15, "Data validation complete")
 
@@ -438,15 +529,17 @@ def _run_forecast_stages(
 
     logger.info("Agent 4: Forecasting")
     progress(60, "Running forecast…")
-    forecast_result, all_metrics = run_forecasting_agent(
-        series,
-        model_selection,
-        stat_result,
-        forecast_horizon,
-        freq,
-        disabled_tests=disabled_statistical_tests,
-        loss_preference=(preflight_options or {}).get("loss_metric", "auto"),
-        preprocessing_options=preflight_options,
+    forecast_result, all_metrics, evaluation_evidence = (
+        run_forecasting_agent_with_evidence(
+            series,
+            model_selection,
+            stat_result,
+            forecast_horizon,
+            freq,
+            disabled_tests=disabled_statistical_tests,
+            loss_preference=(preflight_options or {}).get("loss_metric", "auto"),
+            preprocessing_options=preflight_options,
+        )
     )
     if model_selection.selection_method != "forced":
         decision_loss = forecast_result.validation_design.get("decision_loss", {})
@@ -540,6 +633,7 @@ def _run_forecast_stages(
         forced_model,
         preflight_options,
         progress,
+        evaluation_evidence=evaluation_evidence,
     )
 
 
@@ -628,6 +722,7 @@ def _maybe_retry_forecast_after_review(
     forced_model: str | None,
     preflight_options: dict[str, Any] | None,
     progress: ProgressCallback,
+    evaluation_evidence: ForecastEvaluationEvidence | None = None,
 ) -> ForecastStageOutput:
     """Retry forecasting once when statistical review identifies critical issues."""
     retry_enabled = (preflight_options or {}).get(
@@ -642,6 +737,7 @@ def _maybe_retry_forecast_after_review(
             forecast=forecast_result,
             statistical_review=statistical_review,
             all_metrics=all_metrics,
+            evaluation_evidence=evaluation_evidence,
         )
 
     # Respect the deterministic selection policy. The review agent can only
@@ -660,6 +756,7 @@ def _maybe_retry_forecast_after_review(
             forecast=forecast_result,
             statistical_review=statistical_review,
             all_metrics=all_metrics,
+            evaluation_evidence=evaluation_evidence,
         )
 
     logger.info(
@@ -702,18 +799,35 @@ def _maybe_retry_forecast_after_review(
         )
 
     progress(85, "Re-running forecast with revised model…")
-    forecast_result, all_metrics = run_forecasting_agent(
-        series,
-        model_selection,
-        stat_result,
-        forecast_horizon,
-        freq,
-        existing_metrics=all_metrics,
-        disabled_tests=disabled_statistical_tests,
-        loss_preference=(preflight_options or {}).get("loss_metric", "auto"),
-        preprocessing_options=preflight_options,
-        exclude_models=retry_exclusions,
-    )
+    if evaluation_evidence is None:
+        forecast_result, all_metrics = run_forecasting_agent(
+            series,
+            model_selection,
+            stat_result,
+            forecast_horizon,
+            freq,
+            existing_metrics=all_metrics,
+            disabled_tests=disabled_statistical_tests,
+            loss_preference=(preflight_options or {}).get("loss_metric", "auto"),
+            preprocessing_options=preflight_options,
+            exclude_models=retry_exclusions,
+        )
+    else:
+        forecast_result, all_metrics, evaluation_evidence = (
+            run_forecasting_agent_with_evidence(
+                series,
+                model_selection,
+                stat_result,
+                forecast_horizon,
+                freq,
+                existing_metrics=all_metrics,
+                disabled_tests=disabled_statistical_tests,
+                loss_preference=(preflight_options or {}).get("loss_metric", "auto"),
+                preprocessing_options=preflight_options,
+                exclude_models=retry_exclusions,
+                evaluation_evidence=evaluation_evidence,
+            )
+        )
     if not forced_model:
         retry_selected_model = model_selection.selected_model
         rejection_reasons = build_model_rejection_reasons(
@@ -786,6 +900,7 @@ def _maybe_retry_forecast_after_review(
             }
         ),
         all_metrics=all_metrics,
+        evaluation_evidence=evaluation_evidence,
     )
 
 

@@ -90,6 +90,7 @@ from services.job_service import (
     init_job_queue,
     is_queue_ready,
     job_worker,
+    shutdown_forecast_executor,
     list_jobs_for_user,
     list_recent_jobs,
     request_cancel,
@@ -247,6 +248,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         worker_task.cancel()
     cleanup_task.cancel()
     await asyncio.gather(*worker_tasks, cleanup_task, return_exceptions=True)
+    await asyncio.to_thread(shutdown_forecast_executor)
 
 
 app = FastAPI(title="Data Forecaster API", version="1.0.0", lifespan=lifespan)

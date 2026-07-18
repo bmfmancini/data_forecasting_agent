@@ -50,6 +50,7 @@ _HARMONIC_TOLERANCE = 0.15  # 15% tolerance for harmonic matching
 
 # ── Frequency → period mapping ──────────────────────────────────────────────
 
+
 def _freq_to_period(freq: str | None) -> int | None:
     """Map a pandas frequency string to an integer seasonal period.
 
@@ -931,20 +932,47 @@ def assess_arch_effects(series: pd.Series, lags: int = 5) -> dict[str, object]:
 
 def assess_sen_trend(series: pd.Series) -> dict[str, object]:
     """Return Kendall monotonic-trend evidence and a robust Sen slope."""
+    import core.config as settings
     from scipy.stats import kendalltau, theilslopes
+    from forecasting.exact_statistics import exact_theilslopes_bounded
+    from utils.memory import estimate_theil_sen_workspace_mb, memory_snapshot
 
     values = series.dropna().astype(float).to_numpy()
     if values.size < 8:
         return {"status": "not_estimable", "p_value": None, "sen_slope": None}
     time = np.arange(values.size, dtype=float)
     tau, p_value = kendalltau(time, values)
-    slope, _, lower, upper = theilslopes(values, time, alpha=0.95)
+    estimated_mb = estimate_theil_sen_workspace_mb(values.size)
+    bounded = estimated_mb > settings.THEIL_SEN_MEMORY_BUDGET_MB
+    before = memory_snapshot()
+    if bounded:
+        result = exact_theilslopes_bounded(
+            values,
+            time,
+            alpha=0.95,
+            workspace_mb=settings.THEIL_SEN_MEMORY_BUDGET_MB,
+        )
+        slope, lower, upper = result.slope, result.low_slope, result.high_slope
+    else:
+        slope, _, lower, upper = theilslopes(values, time, alpha=0.95)
+    after = memory_snapshot()
+    logger.info(
+        "Memory diagnostic=theil_sen observations=%d estimated_mb=%d "
+        "bounded=%s rss_mb=%.1f peak_rss_mb=%.1f rss_delta_mb=%.1f",
+        values.size,
+        estimated_mb,
+        bounded,
+        after.current_rss_mb,
+        after.peak_rss_mb,
+        after.current_rss_mb - before.current_rss_mb,
+    )
     return {
         "status": "ok",
         "kendall_tau": float(tau),
         "p_value": float(p_value),
         "sen_slope": float(slope),
         "sen_slope_ci": [float(lower), float(upper)],
+        "sen_slope_method": "exact_disk_backed" if bounded else "exact_in_memory",
     }
 
 

@@ -22,6 +22,7 @@ def run_validation_agent(
     value_col: str,
     freq: str,
     preflight_options: dict[str, Any] | None = None,
+    preparation_provenance: dict[str, Any] | None = None,
 ) -> ValidationResult:
     """Run the data validation ReAct agent and return a ValidationResult.
 
@@ -166,4 +167,5 @@ def run_validation_agent(
         summary=summary,
         reasoning_steps=reasoning_steps,
         token_usage=token_usage,
+        preparation_provenance=preparation_provenance or {},
     )

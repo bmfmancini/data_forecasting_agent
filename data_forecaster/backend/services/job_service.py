@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import importlib
 import json
+import multiprocessing
 import os
 import sqlite3
 import threading
@@ -14,9 +16,21 @@ from typing import Any, cast
 import core.config as settings
 from core.database import get_connection
 from core.logging_config import get_logger
-from exceptions import JobCancelledError
+from exceptions import ForecastResourceError, JobCancelledError
 from schemas import AnalysisResponse
-from services.file_service import get_file, release_file, reserve_file
+from services.file_service import (
+    get_file,
+    load_file_from_disk,
+    release_file,
+    reserve_file,
+)
+from utils.data_cleaning import frequency_to_seasonal_period
+from utils.memory import (
+    effective_memory_capacity_mb,
+    estimate_forecast_memory,
+    estimate_modeled_observations,
+    memory_snapshot,
+)
 
 logger = get_logger(__name__)
 
@@ -24,6 +38,73 @@ MAX_JOBS: int = settings.MAX_INMEMORY_JOBS
 _job_store: dict[str, dict[str, Any]] = {}
 _job_store_lock = threading.Lock()
 JOB_QUEUE: asyncio.Queue[str] = cast(asyncio.Queue, None)
+
+
+class MemoryAdmissionController:
+    """Weighted asynchronous admission for forecast working-set estimates."""
+
+    def __init__(self, capacity_mb: int) -> None:
+        self.capacity_mb = capacity_mb
+        self.used_mb = 0
+        self._condition = asyncio.Condition()
+
+    async def acquire(self, requested_mb: int, job_id: str) -> None:
+        """Wait for capacity, or fail immediately when it can never fit."""
+        if requested_mb > self.capacity_mb:
+            raise ForecastResourceError(
+                f"Forecast requires an estimated {requested_mb} MiB, exceeding "
+                f"the configured {self.capacity_mb} MiB forecast-memory budget."
+            )
+        async with self._condition:
+            while self.used_mb + requested_mb > self.capacity_mb:
+                if _is_cancel_requested(job_id):
+                    raise JobCancelledError("Job cancelled while waiting for memory.")
+                _update_job_progress(job_id, 0, "Queued — waiting for forecast memory…")
+                try:
+                    await asyncio.wait_for(self._condition.wait(), timeout=1.0)
+                except TimeoutError:
+                    pass
+            self.used_mb += requested_mb
+
+    async def release(self, requested_mb: int) -> None:
+        """Return capacity and wake all waiters to re-evaluate admission."""
+        async with self._condition:
+            self.used_mb = max(0, self.used_mb - requested_mb)
+            self._condition.notify_all()
+
+
+_MEMORY_ADMISSION = MemoryAdmissionController(
+    effective_memory_capacity_mb(
+        settings.FORECAST_MEMORY_BUDGET_MB,
+        settings.FORECAST_MEMORY_HEADROOM_MB,
+    )
+)
+_PROCESS_POOL: concurrent.futures.ProcessPoolExecutor | None = None
+_PROCESS_POOL_LOCK = threading.Lock()
+
+
+def _get_process_pool() -> concurrent.futures.ProcessPoolExecutor:
+    """Return the spawned, renewable forecast executor."""
+    global _PROCESS_POOL  # pylint: disable=global-statement
+    with _PROCESS_POOL_LOCK:
+        if _PROCESS_POOL is None:
+            _PROCESS_POOL = concurrent.futures.ProcessPoolExecutor(
+                max_workers=settings.MAX_CONCURRENT_JOBS,
+                mp_context=multiprocessing.get_context("spawn"),
+                max_tasks_per_child=1,
+            )
+        return _PROCESS_POOL
+
+
+def shutdown_forecast_executor() -> None:
+    """Release spawned workers during application shutdown."""
+    global _PROCESS_POOL  # pylint: disable=global-statement
+    with _PROCESS_POOL_LOCK:
+        executor = _PROCESS_POOL
+        _PROCESS_POOL = None
+    if executor is not None:
+        executor.shutdown(wait=True, cancel_futures=True)
+
 
 # Directory where completed analysis results are persisted as JSON so they
 # survive backend restarts and in-memory cache eviction.
@@ -929,14 +1010,62 @@ async def _run_job(job_id: str, job: dict[str, Any]) -> None:
         release_file(str(job["file_id"]))
         return
 
-    def run_pipeline_sync() -> AnalysisResponse:
-        return _run_pipeline(**_pipeline_kwargs_from_job(job_id, job, stored))
+    preflight_options = json.loads(str(job["preflight_options"]))
+    requested_frequency = preflight_options.get("frequency")
+    effective_frequency = (
+        requested_frequency
+        if requested_frequency and requested_frequency != "Let AI Decide"
+        else stored.get("freq")
+    )
+    modeled_observations = estimate_modeled_observations(
+        stored["df"], str(job["date_col"]), effective_frequency
+    )
+    seasonal_period = frequency_to_seasonal_period(effective_frequency, default=1) or 1
+    values = stored["df"][str(job["value_col"])].dropna().astype(float)
+    if values.empty or bool(values.std(ddof=0) == 0):
+        candidate_count = 1
+    else:
+        candidate_count = 12 if abs(float(values.skew())) > 1 else 8
+    estimate = estimate_forecast_memory(
+        modeled_observations,
+        seasonal_period,
+        diagnostic_budget_mb=settings.THEIL_SEN_MEMORY_BUDGET_MB,
+        horizon=int(job["forecast_horizon"]),
+        origins=5,
+        candidate_count=candidate_count,
+    )
+    logger.info(
+        "Memory admission job_id=%s observations=%d estimated_mb=%d "
+        "capacity_mb=%d used_mb=%d rss_mb=%.1f",
+        job_id,
+        modeled_observations,
+        estimate.total_mb,
+        _MEMORY_ADMISSION.capacity_mb,
+        _MEMORY_ADMISSION.used_mb,
+        memory_snapshot().current_rss_mb,
+    )
 
+    admitted = False
     try:
-        result = await asyncio.to_thread(run_pipeline_sync)
+        await _MEMORY_ADMISSION.acquire(estimate.total_mb, job_id)
+        admitted = True
+        if settings.FORECAST_PROCESS_ISOLATION:
+            # The child reloads the two selected parquet columns. Releasing the
+            # parent's frame avoids retaining two input copies during fitting.
+            stored = None
+            loop = asyncio.get_running_loop()
+            result_dict = await loop.run_in_executor(
+                _get_process_pool(), _execute_pipeline_process, job_id, job
+            )
+            result = AnalysisResponse.model_validate(result_dict)
+        else:
+            result = await asyncio.to_thread(
+                _run_pipeline,
+                **_pipeline_kwargs_from_job(job_id, job, stored),
+            )
+            result_dict = result.model_dump()
         # Persist the result to disk *before* marking the job done so that
         # ``done`` always implies the result is available durably.
-        result_dict = result.model_dump()
         _persist_result(job_id, result_dict)
         _complete_job(job_id)
         with _job_store_lock:
@@ -963,6 +1092,8 @@ async def _run_job(job_id: str, job: dict[str, Any]) -> None:
         logger.exception("Pipeline failed for job_id=%s", job_id)
         _set_job_error(job_id, str(exc))
     finally:
+        if admitted:
+            await _MEMORY_ADMISSION.release(estimate.total_mb)
         release_file(str(job["file_id"]))
 
 
@@ -988,6 +1119,19 @@ def _pipeline_kwargs_from_job(
         "progress_callback": lambda pct, step: _update_job_progress(job_id, pct, step),
         "cancel_check": lambda: _is_cancel_requested(job_id),
     }
+
+
+def _execute_pipeline_process(job_id: str, job: dict[str, Any]) -> dict[str, Any]:
+    """Serializable entry point for one fresh forecast worker process."""
+    stored = load_file_from_disk(
+        str(job["file_id"]),
+        selected_date_col=str(job["date_col"]),
+        selected_value_col=str(job["value_col"]),
+    )
+    if stored is None:
+        raise FileNotFoundError("Uploaded file not found by forecast worker.")
+    result = _run_pipeline(**_pipeline_kwargs_from_job(job_id, job, stored))
+    return result.model_dump()
 
 
 def _complete_job(job_id: str) -> None:

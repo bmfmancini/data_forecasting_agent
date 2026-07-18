@@ -1,5 +1,14 @@
 FROM python:3.11-slim
 
+ENV FORECAST_NUM_THREADS=3 \
+    OPENBLAS_NUM_THREADS=1 \
+    OMP_NUM_THREADS=1 \
+    MKL_NUM_THREADS=1 \
+    NUMEXPR_NUM_THREADS=1 \
+    BLIS_NUM_THREADS=1 \
+    VECLIB_MAXIMUM_THREADS=1 \
+    MAX_CONCURRENT_JOBS=4
+
 WORKDIR /app
 
 # Install curl for the healthcheck as the slim image does not include it

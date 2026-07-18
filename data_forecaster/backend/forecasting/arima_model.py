@@ -12,7 +12,10 @@ from forecasting.contracts import (
     ForecastMetrics,
 )
 from forecasting.evaluation import evaluate_predictions, make_terminal_holdout
-from forecasting.pmdarima_compat import import_pmdarima
+from forecasting.pmdarima_compat import (
+    fit_auto_arima_memory_aware,
+    import_pmdarima,
+)
 
 logger = get_logger(__name__)
 pm = import_pmdarima()
@@ -91,8 +94,9 @@ def fit_arima(
 
     if len(train) >= 2:
         try:
-            train_model = pm.auto_arima(
+            train_model = fit_auto_arima_memory_aware(
                 train,
+                seasonal_period=1,
                 seasonal=False,
                 stepwise=True,
                 max_p=5,
@@ -126,6 +130,40 @@ def fit_arima(
         forecast_horizon=forecast_horizon,
         metrics=metrics,
         train_model=train_model,
+    )
+
+
+def refit_arima_from_configuration(
+    series: pd.Series,
+    forecast_horizon: int,
+    fitted_configuration: dict[str, object],
+    metrics: ForecastMetrics,
+) -> ForecastAdapterResult:
+    """Refit a backtest-selected ARIMA order on the complete history."""
+    raw_order = fitted_configuration.get("order")
+    if not isinstance(raw_order, (list, tuple)) or len(raw_order) != 3:
+        return ForecastAdapterResult(
+            status=ForecastFitStatus.NOT_ESTIMABLE,
+            failure_reason="Reusable ARIMA order is unavailable.",
+            metrics=metrics,
+            fitted_configuration={"model": "ARIMA"},
+        )
+    try:
+        order = tuple(int(value) for value in raw_order)
+    except (TypeError, ValueError):
+        return ForecastAdapterResult(
+            status=ForecastFitStatus.NOT_ESTIMABLE,
+            failure_reason="Reusable ARIMA order is invalid.",
+            metrics=metrics,
+            fitted_configuration={"model": "ARIMA", "order": raw_order},
+        )
+    return _refit_full_series_arima(
+        series=series.dropna().astype(float),
+        order=order,
+        with_intercept=fitted_configuration.get("with_intercept"),
+        forecast_horizon=forecast_horizon,
+        metrics=metrics,
+        train_model=True,
     )
 
 
@@ -212,9 +250,7 @@ def _refit_full_series_arima(
             else ForecastFitStatus.DEGRADED
         )
         failure_reason = (
-            None
-            if metrics.rmse is not None
-            else metrics.unavailable_reasons.get("all")
+            None if metrics.rmse is not None else metrics.unavailable_reasons.get("all")
         )
 
         return ForecastAdapterResult(

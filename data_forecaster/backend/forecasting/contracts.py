@@ -145,6 +145,7 @@ class BacktestEvaluation(BaseModel):
     folds: list[BacktestFoldResult] = Field(default_factory=list)
     pooled_metrics: ForecastMetrics = Field(default_factory=ForecastMetrics)
     final_test_metrics: ForecastMetrics = Field(default_factory=ForecastMetrics)
+    final_test_fitted_configuration: dict[str, object] = Field(default_factory=dict)
     by_horizon_metrics: dict[int, ForecastMetrics] = Field(default_factory=dict)
     n_origins: int = 0
     n_failed_origins: int = 0

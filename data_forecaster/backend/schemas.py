@@ -103,6 +103,7 @@ class ValidationResult(BaseModel):
     summary: str
     reasoning_steps: list[dict[str, Any]] = Field(default_factory=list)
     token_usage: dict[str, Any] = Field(default_factory=dict)
+    preparation_provenance: dict[str, Any] = Field(default_factory=dict)
 
 
 class StatisticalResult(BaseModel):
