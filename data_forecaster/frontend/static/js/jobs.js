@@ -30,10 +30,12 @@
                 return resp.json();
             })
             .then(function (jobs) {
+                setConnectionStatus(false);
                 renderJobs(jobs);
                 maybeContinuePolling(jobs);
             })
             .catch(function () {
+                setConnectionStatus(true);
                 currentInterval = Math.min(currentInterval * 2, MAX_BACKOFF_MS);
                 scheduleNext();
             })
@@ -115,6 +117,29 @@
         }
     }
 
+    function setConnectionStatus(visible) {
+        var notice = document.getElementById("jobs-connection-status");
+        if (notice) notice.classList.toggle("d-none", !visible);
+    }
+
+    function formatDuration(value) {
+        if (value === null || typeof value === "undefined") return "—";
+        var seconds = Math.max(0, parseInt(value, 10) || 0);
+        if (seconds < 60) return seconds + "s";
+        if (seconds < 3600) return Math.floor(seconds / 60) + "m " + (seconds % 60) + "s";
+        return Math.floor(seconds / 3600) + "h " + Math.floor((seconds % 3600) / 60) + "m";
+    }
+
+    function livenessLabel(job) {
+        switch (job.liveness) {
+            case "active": return "Worker active";
+            case "delayed": return "Worker signal delayed";
+            case "stale": return "Worker status uncertain";
+            case "terminal": return "Finished";
+            default: return "Queued";
+        }
+    }
+
     function escapeHtml(str) {
         if (!str) return "";
         return String(str)
@@ -152,6 +177,14 @@
             var badgeClass = statusBadgeClass(job.status);
             var progress = parseInt(job.progress, 10) || 0;
             var step = escapeHtml(job.step || "");
+            var liveness = escapeHtml(job.liveness || "queued");
+            var activity = '<div class="small text-secondary"><span class="job-liveness-dot job-liveness-' +
+                liveness + '"></span> ' + escapeHtml(livenessLabel(job)) + " · " +
+                escapeHtml(formatDuration(job.elapsed_seconds)) + " elapsed";
+            if (job.liveness === "active" || job.liveness === "delayed" || job.liveness === "stale") {
+                activity += " · stage " + escapeHtml(formatDuration(job.stage_age_seconds));
+            }
+            activity += "</div>";
             var error = job.error ? '<div class="small text-danger">' + escapeHtml(job.error) + "</div>" : "";
             var submitted = escapeHtml(job.queued_at || "");
 
@@ -178,7 +211,7 @@
             html += '<tr data-job-id="' + escapeHtml(job.job_id) + '">' +
                 "<td>" + name + "</td>" +
                 '<td><span class="badge ' + badgeClass + '">' + status + "</span>" +
-                '<div class="small text-secondary">' + step + "</div>" + error + "</td>" +
+                '<div class="small text-secondary">' + step + "</div>" + activity + error + "</td>" +
                 '<td><div class="progress" style="height:8px;">' +
                 '<div class="progress-bar" style="width:' + progress + '%"></div>' +
                 '</div><small class="text-secondary">' + progress + "%</small></td>" +

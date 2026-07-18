@@ -67,6 +67,8 @@ CREATE TABLE IF NOT EXISTS forecast_jobs (
     error                     TEXT,
     queued_at                 TEXT NOT NULL DEFAULT (datetime('now')),
     started_at                TEXT,
+    heartbeat_at              TEXT,
+    progress_updated_at       TEXT,
     completed_at              TEXT,
     FOREIGN KEY (backend_owner_id) REFERENCES api_users(id) ON DELETE RESTRICT
 );
@@ -103,6 +105,8 @@ _FORECAST_JOBS_MIGRATION_COLUMNS = (
     ("source_filename", "TEXT NOT NULL DEFAULT ''"),
     ("custom_settings_json", "TEXT NOT NULL DEFAULT '[]'"),
     ("cancel_requested", "INTEGER NOT NULL DEFAULT 0"),
+    ("heartbeat_at", "TEXT"),
+    ("progress_updated_at", "TEXT"),
 )
 
 # Columns added to ``forecast_job_settings`` after the initial release.

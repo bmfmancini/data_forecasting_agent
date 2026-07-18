@@ -11,6 +11,8 @@ import os
 import sqlite3
 import threading
 import uuid
+from contextlib import suppress
+from datetime import UTC, datetime
 from typing import Any, cast
 
 import core.config as settings
@@ -116,6 +118,74 @@ _TERMINAL_STATUSES: tuple[str, ...] = ("done", "error", "cancelled")
 # Statuses that count toward the per-user running concurrency cap.  A
 # ``cancelling`` job still occupies its slot until the worker acknowledges.
 _RUNNING_STATUSES: tuple[str, ...] = ("running", "cancelling")
+
+
+def _parse_utc_timestamp(value: Any) -> datetime | None:
+    """Parse a SQLite UTC timestamp without depending on local timezone."""
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _seconds_between(start: Any, end: Any) -> int | None:
+    """Return a non-negative whole-second duration for stored timestamps."""
+    start_at = _parse_utc_timestamp(start)
+    end_at = _parse_utc_timestamp(end)
+    if start_at is None or end_at is None:
+        return None
+    return max(0, int((end_at - start_at).total_seconds()))
+
+
+def _with_activity_metadata(
+    record: dict[str, Any], now: datetime | None = None
+) -> dict[str, Any]:
+    """Add elapsed-time and heartbeat liveness fields to a job record."""
+    current = (now or datetime.now(UTC)).astimezone(UTC)
+    current_text = current.isoformat()
+    status = str(record.get("status") or "")
+    start_value = record.get("started_at") or record.get("queued_at")
+    end_value = (
+        record.get("completed_at") if status in _TERMINAL_STATUSES else current_text
+    )
+    elapsed_seconds = _seconds_between(start_value, end_value) or 0
+    heartbeat_age = _seconds_between(record.get("heartbeat_at"), current_text)
+    stage_age = _seconds_between(
+        record.get("progress_updated_at") or record.get("started_at"), current_text
+    )
+
+    if status in _TERMINAL_STATUSES:
+        liveness = "terminal"
+    elif status == "pending":
+        liveness = "queued"
+    elif status in _RUNNING_STATUSES:
+        activity_age = heartbeat_age
+        if activity_age is None:
+            activity_age = _seconds_between(record.get("started_at"), current_text)
+        if (
+            activity_age is None
+            or activity_age <= settings.JOB_HEARTBEAT_ACTIVE_SECONDS
+        ):
+            liveness = "active"
+        elif activity_age <= settings.JOB_HEARTBEAT_STALE_SECONDS:
+            liveness = "delayed"
+        else:
+            liveness = "stale"
+    else:
+        liveness = "stale"
+
+    return {
+        **record,
+        "elapsed_seconds": elapsed_seconds,
+        "heartbeat_age_seconds": heartbeat_age,
+        "stage_age_seconds": stage_age,
+        "liveness": liveness,
+    }
 
 
 def init_job_queue() -> None:
@@ -557,7 +627,8 @@ def _claim_job(job_id: str) -> dict[str, Any] | None:
             """
             UPDATE forecast_jobs
             SET status = 'running', step = 'Analysis in progress.',
-                started_at = datetime('now')
+                started_at = datetime('now'), heartbeat_at = datetime('now'),
+                progress_updated_at = datetime('now')
             WHERE job_id = ?
             """,
             (job_id,),
@@ -649,7 +720,7 @@ def get_job(
     result = cached.get("result")
     if result is None and record["status"] == "done":
         result = _load_result(job_id)
-    return {**record, "result": result}
+    return {**_with_activity_metadata(record), "result": result}
 
 
 def get_job_status_only(
@@ -671,7 +742,17 @@ def get_job_status_only(
     job = get_job(job_id, requester, application_user_id)
     if job is None:
         return None
-    return {"status": job["status"], "progress": job["progress"], "step": job["step"]}
+    return {
+        "status": job["status"],
+        "progress": job["progress"],
+        "step": job["step"],
+        "heartbeat_at": job.get("heartbeat_at"),
+        "progress_updated_at": job.get("progress_updated_at"),
+        "elapsed_seconds": job["elapsed_seconds"],
+        "heartbeat_age_seconds": job["heartbeat_age_seconds"],
+        "stage_age_seconds": job["stage_age_seconds"],
+        "liveness": job["liveness"],
+    }
 
 
 def list_jobs_for_user(
@@ -696,14 +777,14 @@ def list_jobs_for_user(
             """
             SELECT job_id, report_name, status, progress, step,
                    forecast_horizon, forced_model, queued_at, started_at,
-                   completed_at, error
+                   heartbeat_at, progress_updated_at, completed_at, error
             FROM forecast_jobs
             WHERE backend_owner_id IS ? AND application_user_id IS ?
             ORDER BY queued_at DESC, rowid DESC LIMIT ?
             """,
             (backend_owner_id, application_user_id, limit),
         ).fetchall()
-        return [dict(row) for row in rows]
+        return [_with_activity_metadata(dict(row)) for row in rows]
     finally:
         connection.close()
 
@@ -716,12 +797,12 @@ def list_recent_jobs(limit: int = 25) -> list[dict[str, Any]]:
             """
             SELECT job_id, application_username, status, progress, step,
                    forecast_horizon, forced_model, queued_at, started_at,
-                   completed_at, error
+                   heartbeat_at, progress_updated_at, completed_at, error
             FROM forecast_jobs ORDER BY queued_at DESC, rowid DESC LIMIT ?
             """,
             (limit,),
         ).fetchall()
-        return [dict(row) for row in rows]
+        return [_with_activity_metadata(dict(row)) for row in rows]
     finally:
         connection.close()
 
@@ -731,13 +812,38 @@ def _update_job_progress(job_id: str, pct: int, step: str) -> None:
     connection = get_connection()
     try:
         connection.execute(
-            "UPDATE forecast_jobs SET progress = ?, step = ? "
+            "UPDATE forecast_jobs SET progress = ?, step = ?, "
+            "heartbeat_at = datetime('now'), progress_updated_at = datetime('now') "
             "WHERE job_id = ? AND status = 'running'",
             (pct, step, job_id),
         )
         connection.commit()
     finally:
         connection.close()
+
+
+def _touch_job_heartbeat(job_id: str) -> None:
+    """Record worker activity without changing user-visible stage progress."""
+    connection = get_connection()
+    try:
+        connection.execute(
+            "UPDATE forecast_jobs SET heartbeat_at = datetime('now') "
+            "WHERE job_id = ? AND status IN ('running', 'cancelling')",
+            (job_id,),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+async def _maintain_job_heartbeat(job_id: str) -> None:
+    """Maintain a durable heartbeat while the admitted forecast is running."""
+    while True:
+        try:
+            _touch_job_heartbeat(job_id)
+        except sqlite3.Error:
+            logger.exception("Failed to persist heartbeat for job_id=%s", job_id)
+        await asyncio.sleep(settings.JOB_HEARTBEAT_INTERVAL_SECONDS)
 
 
 def _set_job_error(job_id: str, error: str) -> None:
@@ -1046,9 +1152,14 @@ async def _run_job(job_id: str, job: dict[str, Any]) -> None:
     )
 
     admitted = False
+    heartbeat_task: asyncio.Task[None] | None = None
     try:
         await _MEMORY_ADMISSION.acquire(estimate.total_mb, job_id)
         admitted = True
+        heartbeat_task = asyncio.create_task(
+            _maintain_job_heartbeat(job_id),
+            name=f"forecast-heartbeat-{job_id}",
+        )
         if settings.FORECAST_PROCESS_ISOLATION:
             # The child reloads the two selected parquet columns. Releasing the
             # parent's frame avoids retaining two input copies during fitting.
@@ -1092,6 +1203,10 @@ async def _run_job(job_id: str, job: dict[str, Any]) -> None:
         logger.exception("Pipeline failed for job_id=%s", job_id)
         _set_job_error(job_id, str(exc))
     finally:
+        if heartbeat_task is not None:
+            heartbeat_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await heartbeat_task
         if admitted:
             await _MEMORY_ADMISSION.release(estimate.total_mb)
         release_file(str(job["file_id"]))

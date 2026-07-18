@@ -9,10 +9,13 @@
 (function () {
   "use strict";
 
-  var _intervalId = null;
+  var _pollTimer = null;
   var _pollInFlight = false;
   var _terminal = false;
+  var _started = false;
   var POLL_INTERVAL_MS = 1500;
+  var MAX_BACKOFF_MS = 10000;
+  var _currentInterval = POLL_INTERVAL_MS;
 
   function updateBar(elementId, progress) {
     var bar = document.getElementById(elementId);
@@ -47,6 +50,71 @@
     // Also update the main progress bar on the setup page
     var mainStep = document.getElementById("progress-step");
     if (mainStep) mainStep.textContent = stepText;
+  }
+
+  function formatDuration(value) {
+    if (value === null || typeof value === "undefined") return "—";
+    var seconds = Math.max(0, parseInt(value, 10) || 0);
+    if (seconds < 60) return seconds + "s";
+    if (seconds < 3600) return Math.floor(seconds / 60) + "m " + (seconds % 60) + "s";
+    return Math.floor(seconds / 3600) + "h " + Math.floor((seconds % 3600) / 60) + "m";
+  }
+
+  function updateHeartbeat(data) {
+    var state = data.liveness || (data.status === "pending" ? "queued" : "active");
+    var titles = {
+      queued: "Queued for a forecast worker",
+      active: "Forecast worker is active",
+      delayed: "Worker signal is delayed",
+      stale: "Worker status needs attention",
+      terminal: "Forecast processing finished"
+    };
+    var details = {
+      queued: "The job is safely queued and will start when capacity is available.",
+      active: "The backend is still processing this forecast, even if the percentage has not changed.",
+      delayed: "The last worker signal is later than expected. The job has not been marked failed.",
+      stale: "The worker signal is stale. The system will keep checking; this warning is not a failure result.",
+      terminal: "The backend reported a terminal job state."
+    };
+    var panel = document.getElementById("job-heartbeat");
+    if (panel) {
+      panel.className = "job-heartbeat job-heartbeat-" + state + " mt-4";
+    }
+    var title = document.getElementById("heartbeat-title");
+    if (title) title.textContent = titles[state] || titles.active;
+    var detail = document.getElementById("heartbeat-detail");
+    if (detail) detail.textContent = details[state] || details.active;
+    var elapsed = document.getElementById("heartbeat-elapsed");
+    if (elapsed) elapsed.textContent = formatDuration(data.elapsed_seconds);
+    var stageAge = document.getElementById("heartbeat-stage-age");
+    if (stageAge) stageAge.textContent = formatDuration(data.stage_age_seconds);
+    var heartbeatAge = document.getElementById("heartbeat-age");
+    if (heartbeatAge) heartbeatAge.textContent = formatDuration(data.heartbeat_age_seconds);
+    var sidebar = document.getElementById("sidebar-heartbeat");
+    if (sidebar) {
+      sidebar.textContent = (titles[state] || titles.active) + " · " + formatDuration(data.elapsed_seconds) + " elapsed";
+    }
+  }
+
+  function showReconnecting(visible, message) {
+    var notice = document.getElementById("poll-reconnecting");
+    if (!notice) return;
+    if (message) notice.textContent = message;
+    notice.classList.toggle("d-none", !visible);
+  }
+
+  function scheduleNext() {
+    if (_terminal || !_started) return;
+    if (_pollTimer !== null) clearTimeout(_pollTimer);
+    _pollTimer = setTimeout(poll, _currentInterval);
+  }
+
+  function handleTransient(message) {
+    showReconnecting(
+      true,
+      message || "Connection interrupted. The forecast continues in the background; reconnecting automatically…"
+    );
+    _currentInterval = Math.min(_currentInterval * 2, MAX_BACKOFF_MS);
   }
 
   /**
@@ -118,9 +186,20 @@
     fetch("/api/jobs/status", {
       headers: { "X-CSRFToken": "" },
     })
-      .then(function (r) { return r.json(); })
-      .then(function (data) {
+      .then(function (response) {
+        return response.json().then(function (data) {
+          return { ok: response.ok, data: data };
+        });
+      })
+      .then(function (result) {
         if (_terminal) return;
+        var data = result.data;
+        if (data.transient || !result.ok) {
+          handleTransient(data.error);
+          return;
+        }
+        showReconnecting(false);
+        _currentInterval = POLL_INTERVAL_MS;
         if (data.error) {
           _terminal = true;
           stop();
@@ -129,6 +208,7 @@
         }
 
         updateProgress(data.progress || 0, data.step || "Processing...");
+        updateHeartbeat(data);
 
         if (data.done) {
           _terminal = true;
@@ -146,30 +226,31 @@
       })
       .catch(function (err) {
         if (_terminal) return;
-        _terminal = true;
-        stop();
-        showError("Status poll failed: " + err);
+        handleTransient("Connection interrupted. The forecast continues in the background; reconnecting automatically…");
       })
       .finally(function () {
         _pollInFlight = false;
+        scheduleNext();
       });
   }
 
-  /** Start the polling interval. */
+  /** Start resilient polling. */
   function start() {
-    if (_intervalId !== null) return;
+    if (_started) return;
+    _started = true;
     _terminal = false;
+    _currentInterval = POLL_INTERVAL_MS;
     poll();
-    _intervalId = setInterval(poll, POLL_INTERVAL_MS);
     var progressArea = document.getElementById("progress-area");
     if (progressArea) progressArea.classList.remove("d-none");
   }
 
   /** Stop the polling interval. */
   function stop() {
-    if (_intervalId !== null) {
-      clearInterval(_intervalId);
-      _intervalId = null;
+    _started = false;
+    if (_pollTimer !== null) {
+      clearTimeout(_pollTimer);
+      _pollTimer = null;
     }
     // Remove animated stripes when done
     var bars = document.querySelectorAll(".progress-bar.active-polling");

@@ -41,6 +41,24 @@ MAX_CONCURRENT_JOBS: int = int(os.getenv("MAX_CONCURRENT_JOBS", "1"))
 if MAX_CONCURRENT_JOBS < 1:
     raise ValueError("MAX_CONCURRENT_JOBS must be at least 1.")
 
+# Long-running job activity thresholds. The parent backend process maintains
+# this heartbeat even while a model is busy inside an opaque native call.
+JOB_HEARTBEAT_INTERVAL_SECONDS: int = int(
+    os.getenv("JOB_HEARTBEAT_INTERVAL_SECONDS", "10")
+)
+JOB_HEARTBEAT_ACTIVE_SECONDS: int = int(os.getenv("JOB_HEARTBEAT_ACTIVE_SECONDS", "30"))
+JOB_HEARTBEAT_STALE_SECONDS: int = int(os.getenv("JOB_HEARTBEAT_STALE_SECONDS", "90"))
+if JOB_HEARTBEAT_INTERVAL_SECONDS < 1:
+    raise ValueError("JOB_HEARTBEAT_INTERVAL_SECONDS must be at least 1.")
+if JOB_HEARTBEAT_ACTIVE_SECONDS < JOB_HEARTBEAT_INTERVAL_SECONDS * 2:
+    raise ValueError(
+        "JOB_HEARTBEAT_ACTIVE_SECONDS must be at least twice the heartbeat interval."
+    )
+if JOB_HEARTBEAT_STALE_SECONDS <= JOB_HEARTBEAT_ACTIVE_SECONDS:
+    raise ValueError(
+        "JOB_HEARTBEAT_STALE_SECONDS must be greater than the active threshold."
+    )
+
 # Forecast memory controls. A zero total budget auto-sizes from the effective
 # cgroup/host limit; it does not disable admission control.
 FORECAST_MEMORY_BUDGET_MB: int = int(os.getenv("FORECAST_MEMORY_BUDGET_MB", "0"))

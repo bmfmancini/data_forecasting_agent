@@ -539,6 +539,7 @@ def _run_forecast_stages(
             disabled_tests=disabled_statistical_tests,
             loss_preference=(preflight_options or {}).get("loss_metric", "auto"),
             preprocessing_options=preflight_options,
+            activity_callback=lambda step: progress(60, step),
         )
     )
     if model_selection.selection_method != "forced":

@@ -914,6 +914,7 @@ def _handle_done_job(
             "step": str(status_data.get("step", "")),
             "done": True,
             "redirect": url_for("main.report"),
+            **_job_activity_payload(status_data),
         }
     )
 
@@ -940,7 +941,38 @@ def _handle_error_job(
             "step": str(status_data.get("step", "")),
             "done": False,
             "error": error_msg,
+            **_job_activity_payload(status_data),
         }
+    )
+
+
+def _job_activity_payload(status_data: dict[str, Any]) -> dict[str, Any]:
+    """Return backend-owned heartbeat fields without reclassifying them."""
+    return {
+        "heartbeat_at": status_data.get("heartbeat_at"),
+        "progress_updated_at": status_data.get("progress_updated_at"),
+        "elapsed_seconds": int(status_data.get("elapsed_seconds", 0)),
+        "heartbeat_age_seconds": status_data.get("heartbeat_age_seconds"),
+        "stage_age_seconds": status_data.get("stage_age_seconds"),
+        "liveness": status_data.get("liveness", "queued"),
+    }
+
+
+def _transient_job_poll_response(message: str, status_code: int) -> Response:
+    """Report a recoverable polling interruption while retaining job state."""
+    return make_response(
+        jsonify(
+            {
+                "status": "reconnecting",
+                "progress": int(session.get("job_progress", 0)),
+                "step": str(session.get("job_step", "Processing…")),
+                "done": False,
+                "transient": True,
+                "error": message,
+                "liveness": "delayed",
+            }
+        ),
+        status_code,
     )
 
 
@@ -967,7 +999,9 @@ def api_job_status() -> Response:
             job_id, application_user_id=current_user.id
         )
         if status_resp.status_code != 200:
-            return make_response(jsonify({"error": "Failed to poll job status."}), 502)
+            return _transient_job_poll_response(
+                "Reconnecting to the forecast worker…", 502
+            )
 
         status_data: dict[str, Any] = status_resp.json()
         status: str = status_data.get("status", "")
@@ -988,24 +1022,19 @@ def api_job_status() -> Response:
                 "progress": progress,
                 "step": step,
                 "done": False,
+                **_job_activity_payload(status_data),
             }
         )
 
     except requests.exceptions.Timeout:
         logger.exception("Status poll timed out")
-        session["job_running"] = False
-        session["job_id"] = None
-        session["analysis_error"] = _JOB_STATUS_TIMEOUT_ERROR
-        return make_response(jsonify({"error": _JOB_STATUS_TIMEOUT_ERROR}), 504)
+        return _transient_job_poll_response(_JOB_STATUS_TIMEOUT_ERROR, 504)
     except requests.exceptions.RequestException:
         logger.exception("Status poll request error")
-        session["job_running"] = False
-        session["job_id"] = None
-        session["analysis_error"] = _BACKEND_CONN_ERROR
-        return make_response(jsonify({"error": _BACKEND_CONN_ERROR}), 503)
+        return _transient_job_poll_response(_BACKEND_CONN_ERROR, 503)
     except (KeyError, ValueError):
         logger.exception("Status poll error")
-        return make_response(jsonify({"error": "Status poll error."}), 503)
+        return _transient_job_poll_response("Status response was interrupted.", 503)
 
 
 # ── Per-user job queue AJAX endpoints ─────────────────────────────────────────
@@ -1082,6 +1111,7 @@ def api_jobs_mine() -> Response:
                 "report_id": report_id,
                 "report_ready": report_ready,
                 "finalization_error": finalization_error,
+                **_job_activity_payload(job),
             }
         )
     active_session_job_id = str(session.get("job_id") or "")

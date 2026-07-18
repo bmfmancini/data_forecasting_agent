@@ -13,6 +13,22 @@
             <div id="progress-bar-main" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%;" aria-label="Forecast progress" aria-valuemin="0" aria-valuenow="0" aria-valuemax="100">0%</div>
         </div>
         <p id="progress-step" class="small text-muted mt-3 mb-0" aria-live="polite">Preparing your forecast…</p>
+        <div id="job-heartbeat" class="job-heartbeat job-heartbeat-queued mt-4" role="status" aria-live="polite">
+            <div class="job-heartbeat-heading">
+                <span class="job-heartbeat-dot" aria-hidden="true"></span>
+                <strong id="heartbeat-title">Waiting for worker activity</strong>
+            </div>
+            <p id="heartbeat-detail" class="mb-2">The forecast is queued and its activity signal will appear here.</p>
+            <div class="job-heartbeat-metrics" aria-label="Forecast timing">
+                <span>Elapsed <strong id="heartbeat-elapsed">0s</strong></span>
+                <span>Current stage <strong id="heartbeat-stage-age">—</strong></span>
+                <span>Worker signal <strong id="heartbeat-age">—</strong></span>
+            </div>
+        </div>
+        <div id="poll-reconnecting" class="job-reconnecting mt-3 d-none" role="status">
+            Connection interrupted. The forecast continues in the background; reconnecting automatically…
+        </div>
+        <p class="small text-muted mt-3 mb-0">Complex models can remain at one percentage for a long time. Worker activity above is independent of stage progress.</p>
         <div class="mt-4">
             <a class="btn btn-outline-primary" href="{{ url_for('main.jobs') }}">Continue in background</a>
         </div>

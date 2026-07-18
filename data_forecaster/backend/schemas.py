@@ -341,6 +341,12 @@ class JobStatusResponse(BaseModel):
     source_filename: str = ""
     forecast_horizon: int = 0
     custom_settings_json: str = "[]"
+    heartbeat_at: str | None = None
+    progress_updated_at: str | None = None
+    elapsed_seconds: int = 0
+    heartbeat_age_seconds: int | None = None
+    stage_age_seconds: int | None = None
+    liveness: str = "queued"
 
 
 class ForecastJobQueueItem(BaseModel):
@@ -357,6 +363,12 @@ class ForecastJobQueueItem(BaseModel):
     started_at: str | None = None
     completed_at: str | None = None
     error: str | None = None
+    heartbeat_at: str | None = None
+    progress_updated_at: str | None = None
+    elapsed_seconds: int = 0
+    heartbeat_age_seconds: int | None = None
+    stage_age_seconds: int | None = None
+    liveness: str = "queued"
 
 
 class ForecastJobSettings(BaseModel):
@@ -396,6 +408,12 @@ class UserJobQueueItem(BaseModel):
     report_id: int | None = None
     report_ready: bool = False
     finalization_error: str | None = None
+    heartbeat_at: str | None = None
+    progress_updated_at: str | None = None
+    elapsed_seconds: int = 0
+    heartbeat_age_seconds: int | None = None
+    stage_age_seconds: int | None = None
+    liveness: str = "queued"
 
 
 class DeletedJobsResponse(BaseModel):

@@ -317,6 +317,7 @@ def evaluate_candidate(
     folds: Sequence[BacktestFold],
     candidate_fn: CandidateFn,
     config: BacktestConfig,
+    activity_callback: Callable[[str], None] | None = None,
 ) -> BacktestEvaluation:
     """Evaluate one candidate model across all folds.
 
@@ -338,7 +339,11 @@ def evaluate_candidate(
     by_horizon_preds: dict[int, list[float]] = {}
     warnings: list[str] = []
 
-    for fold in folds:
+    for fold_number, fold in enumerate(folds, start=1):
+        if activity_callback is not None:
+            activity_callback(
+                f"Evaluating {name}: validation fold {fold_number} of {len(folds)}…"
+            )
         result = _process_fold(
             name,
             series,
@@ -397,6 +402,8 @@ def evaluate_candidate(
     # two training observations are preserved.
     final_test_size = max(0, min(config.final_test_size, max(0, len(series) - 2)))
     if final_test_size > 0 and len(series) > final_test_size:
+        if activity_callback is not None:
+            activity_callback(f"Evaluating {name}: final holdout test…")
         final_start = len(series) - final_test_size
         final_fold = BacktestFold(
             fold_index=len(folds),
@@ -420,9 +427,7 @@ def evaluate_candidate(
             config,
         )
         if final_result is not None and final_result.status == ForecastFitStatus.OK:
-            final_test_fitted_configuration = dict(
-                final_result.fitted_configuration
-            )
+            final_test_fitted_configuration = dict(final_result.fitted_configuration)
         if final_result is not None and final_result.status == ForecastFitStatus.OK:
             strategy = "clip" if config.apply_iqr_clip else config.outlier_strategy
             final_training = prepare_training_series(
@@ -492,6 +497,7 @@ def evaluate_candidates(
     series: pd.Series,
     candidates: dict[str, CandidateFn],
     config: BacktestConfig | None = None,
+    activity_callback: Callable[[str], None] | None = None,
 ) -> dict[str, BacktestEvaluation]:
     """Evaluate multiple candidates on identical folds.
 
@@ -508,9 +514,21 @@ def evaluate_candidates(
         config = BacktestConfig()
     folds = generate_folds(series, config)
     evaluations: dict[str, BacktestEvaluation] = {}
-    for name, fn in candidates.items():
+    candidate_total = len(candidates)
+    for candidate_number, (name, fn) in enumerate(candidates.items(), start=1):
+        if activity_callback is not None:
+            activity_callback(
+                f"Evaluating {name} candidate {candidate_number} of {candidate_total}…"
+            )
         started = perf_counter()
-        evaluations[name] = evaluate_candidate(name, series, folds, fn, config)
+        evaluations[name] = evaluate_candidate(
+            name,
+            series,
+            folds,
+            fn,
+            config,
+            activity_callback=activity_callback,
+        )
         logger.info(
             "Performance candidate_evaluation model=%s wall_seconds=%.3f "
             "origins=%d failed_origins=%d",

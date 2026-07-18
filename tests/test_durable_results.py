@@ -307,5 +307,7 @@ def test_backend_migrates_pre_queue_schema(tmp_path, monkeypatch) -> None:
         "source_filename",
         "custom_settings_json",
         "cancel_requested",
+        "heartbeat_at",
+        "progress_updated_at",
     } <= job_columns
     assert "max_queued_jobs_per_user" in settings_columns

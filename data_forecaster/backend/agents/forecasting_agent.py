@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import re
 from time import perf_counter
+from collections.abc import Callable
 from typing import Any
 
 import numpy as np
@@ -151,6 +152,7 @@ def run_forecasting_agent_with_evidence(
     preprocessing_options: dict[str, Any] | None = None,
     exclude_models: list[str] | None = None,
     evaluation_evidence: ForecastEvaluationEvidence | None = None,
+    activity_callback: Callable[[str], None] | None = None,
 ) -> tuple[
     ForecastResult,
     dict[str, dict[str, float]],
@@ -210,6 +212,7 @@ def run_forecasting_agent_with_evidence(
             imputation_method=imputation_method,
             smoothing_method=smoothing_method,
             outlier_strategy=outlier_strategy,
+            activity_callback=activity_callback,
         )
         logger.info(
             "Performance comparison_evaluation wall_seconds=%.3f candidates=%d "
@@ -881,6 +884,7 @@ def _run_backtest_evaluation(
     imputation_method: str = "interpolate",
     smoothing_method: str = "none",
     outlier_strategy: str = "none",
+    activity_callback: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """Run common rolling-origin backtesting for all four adapters.
 
@@ -1167,7 +1171,12 @@ def _run_backtest_evaluation(
                 base_fn, transform_type
             )
     try:
-        return evaluate_candidates(series, candidates, config=config)
+        return evaluate_candidates(
+            series,
+            candidates,
+            config=config,
+            activity_callback=activity_callback,
+        )
     except Exception as exc:  # pylint: disable=broad-except
         logger.warning("Backtest evaluation failed: %s", exc)
         return {}

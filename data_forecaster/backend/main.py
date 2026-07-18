@@ -905,6 +905,12 @@ def my_jobs(
                 "can_cancel": can_cancel,
                 "forecast_horizon": int(job.get("forecast_horizon", 0)),
                 "forced_model": job.get("forced_model"),
+                "heartbeat_at": job.get("heartbeat_at"),
+                "progress_updated_at": job.get("progress_updated_at"),
+                "elapsed_seconds": int(job.get("elapsed_seconds", 0)),
+                "heartbeat_age_seconds": job.get("heartbeat_age_seconds"),
+                "stage_age_seconds": job.get("stage_age_seconds"),
+                "liveness": job.get("liveness", "queued"),
             }
         )
     return result
@@ -996,6 +1002,12 @@ def get_job_status(
         source_filename=str(job.get("source_filename") or ""),
         forecast_horizon=int(job.get("forecast_horizon") or 0),
         custom_settings_json=str(job.get("custom_settings_json") or "[]"),
+        heartbeat_at=job.get("heartbeat_at"),
+        progress_updated_at=job.get("progress_updated_at"),
+        elapsed_seconds=int(job.get("elapsed_seconds", 0)),
+        heartbeat_age_seconds=job.get("heartbeat_age_seconds"),
+        stage_age_seconds=job.get("stage_age_seconds"),
+        liveness=str(job.get("liveness", "queued")),
     )
 
 
