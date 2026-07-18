@@ -713,7 +713,12 @@ async def preflight_check(
     _user: Annotated[dict, Depends(require_api_key)],
 ) -> PreflightResponse:
     """Run data quality checks before starting the full analysis pipeline."""
-    stored = get_file(body.file_id, requester=_user)
+    stored = get_file(
+        body.file_id,
+        requester=_user,
+        selected_date_col=body.date_col,
+        selected_value_col=body.value_col,
+    )
     if not stored:
         raise HTTPException(
             status_code=404,
@@ -762,7 +767,12 @@ def analyze(
             detail="Application-user identity does not match the request body.",
         )
 
-    stored = get_file(body.file_id, requester=_user)
+    stored = get_file(
+        body.file_id,
+        requester=_user,
+        selected_date_col=body.date_col,
+        selected_value_col=body.value_col,
+    )
     if stored is None:
         raise HTTPException(
             status_code=404, detail=f"File ID '{body.file_id}' not found."

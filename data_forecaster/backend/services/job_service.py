@@ -919,7 +919,11 @@ async def _run_job(job_id: str, job: dict[str, Any]) -> None:
     ``cancel_requested`` is set.  If the pipeline completes before noticing
     the cancellation request, completion wins (the result is valid).
     """
-    stored = get_file(str(job["file_id"]))
+    stored = get_file(
+        str(job["file_id"]),
+        selected_date_col=str(job["date_col"]),
+        selected_value_col=str(job["value_col"]),
+    )
     if stored is None:
         _set_job_error(job_id, "Uploaded file not found.")
         release_file(str(job["file_id"]))

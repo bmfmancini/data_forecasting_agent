@@ -159,16 +159,23 @@ def store_file(
 
 
 def get_file(
-    file_id: str, requester: dict[str, Any] | None = None
+    file_id: str,
+    requester: dict[str, Any] | None = None,
+    *,
+    selected_date_col: str | None = None,
+    selected_value_col: str | None = None,
 ) -> dict[str, Any] | None:
     """Retrieve a stored file's metadata and DataFrame by ``file_id``.
 
-    Loads the DataFrame lazily from the parquet file on disk.  Only the
-    date and value columns are read from parquet (columnar pruning),
-    keeping memory bounded for wide datasets.
+    Loads the DataFrame lazily from the parquet file on disk. Only the
+    user-selected date and value columns are read when supplied; otherwise
+    the initially detected columns are used. This preserves columnar pruning
+    while allowing the frontend to override the upload-time suggestion.
 
     Args:
         file_id: The UUID returned by :func:`store_file`.
+        selected_date_col: Optional date-column override selected after upload.
+        selected_value_col: Optional value-column override selected after upload.
 
     Returns:
         A dict with ``df``, ``date_col``, ``value_col``, ``freq``, and
@@ -193,11 +200,19 @@ def get_file(
 
     date_col = meta["date_col"]
     value_col = meta["value_col"]
+    columns = list(
+        dict.fromkeys(
+            [
+                selected_date_col or date_col,
+                selected_value_col or value_col,
+            ]
+        )
+    )
 
     try:
-        # Columnar pruning: read only the needed columns from parquet.
+        # Columnar pruning: read only the columns needed for this request.
         # This avoids loading wide DataFrames entirely into memory.
-        df = pd.read_parquet(path, columns=[date_col, value_col])
+        df = pd.read_parquet(path, columns=columns)
     except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
         logger.exception("Failed to load parquet for file_id=%s: %s", file_id, exc)
         return None

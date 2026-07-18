@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pandas as pd
@@ -12,6 +13,8 @@ import services.file_service as file_service
 import services.job_service as job_service
 from auth.api_key_db import create_first_user, delete_api_user
 from core.database import get_connection, init_database
+from main import preflight_check
+from schemas import AnalyzeRequest
 
 
 @pytest.fixture
@@ -51,6 +54,79 @@ def test_files_are_owner_scoped_and_survive_index_reload(storage_dir: str) -> No
     assert restored is not None
     assert restored["filename"] == "forecast.csv"
     assert restored["df"]["value"].tolist() == [1, 2, 3]
+
+
+def test_preflight_loads_the_value_column_selected_after_upload(
+    storage_dir: str,
+) -> None:
+    """A dropdown override must be loaded instead of the detected value column."""
+    del storage_dir
+    frame = pd.DataFrame(
+        {
+            "Date": pd.date_range("2024-01-01", periods=20, freq="D"),
+            "Socrata Bounce Rate": range(20),
+            "Combined Users": range(100, 120),
+        }
+    )
+    file_id = file_service.store_file(
+        frame,
+        "Date",
+        "Socrata Bounce Rate",
+        "D",
+        "traffic.csv",
+    )
+
+    stored = file_service.get_file(
+        file_id,
+        selected_date_col="Date",
+        selected_value_col="Combined Users",
+    )
+    assert stored is not None
+    assert stored["df"].columns.tolist() == ["Date", "Combined Users"]
+
+    result = asyncio.run(
+        preflight_check(
+            AnalyzeRequest(
+                file_id=file_id,
+                forecast_horizon=3,
+                date_col="Date",
+                value_col="Combined Users",
+            ),
+            {},
+        )
+    )
+    assert result.row_count == 20
+    assert result.usable_observations == 20
+
+
+def test_analysis_job_loads_its_selected_columns(monkeypatch: Any) -> None:
+    """The background worker must use the same columns that passed preflight."""
+    requested: dict[str, Any] = {}
+
+    def fake_get_file(file_id: str, **kwargs: Any) -> None:
+        requested.update({"file_id": file_id, **kwargs})
+        return None
+
+    monkeypatch.setattr(job_service, "get_file", fake_get_file)
+    monkeypatch.setattr(job_service, "_set_job_error", lambda *_args: None)
+    monkeypatch.setattr(job_service, "release_file", lambda *_args: None)
+
+    asyncio.run(
+        job_service._run_job(  # pylint: disable=protected-access
+            "job-id",
+            {
+                "file_id": "file-id",
+                "date_col": "Date",
+                "value_col": "Combined Users",
+            },
+        )
+    )
+
+    assert requested == {
+        "file_id": "file-id",
+        "selected_date_col": "Date",
+        "selected_value_col": "Combined Users",
+    }
 
 
 def test_jobs_are_owner_scoped(storage_dir: str) -> None:
