@@ -34,6 +34,8 @@ def _app(tmp_path: Path) -> Flask:
     app = Flask(__name__)
     app.config.update(
         DATABASE=str(tmp_path / "frontend.db"),
+        DEFAULT_ADMIN_PASSWORD="admin",
+        SECRET_KEY="test-secret",
     )
     init_app(app)
     return app
@@ -105,14 +107,12 @@ def test_save_api_credentials_preserves_existing_key(
             preserve_existing_key=True,
         )
 
-        row = db.execute(
-            """
+        row = db.execute("""
             SELECT base_url, timeout, verify_ssl, encrypted_username,
                    encrypted_password
             FROM api_credentials
             WHERE label = 'default'
-            """
-        ).fetchone()
+            """).fetchone()
 
     assert row["base_url"] == "https://new-backend"
     assert row["timeout"] == 45
@@ -159,3 +159,35 @@ def test_client_from_api_config_form_uses_stored_key_server_side(
     assert client._api_username == "edited-user"
     assert client._api_key == "stored-key"
     assert client._verify is True
+
+
+def test_saved_connection_test_uses_saved_client(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    """The summary button must ignore any browser-posted edit-form values."""
+    app = _app(tmp_path)
+    saved_client = object()
+    form_client_called = False
+
+    def form_client() -> None:
+        nonlocal form_client_called
+        form_client_called = True
+        return None
+
+    monkeypatch.setattr(routes, "get_api_client", lambda: saved_client)
+    monkeypatch.setattr(routes, "_client_from_api_config_form", form_client)
+
+    with app.test_request_context(
+        "/admin/api-config/test",
+        method="POST",
+        data={
+            "use_saved_credentials": "1",
+            "api_username": "browser-autofill",
+            "api_password": "wrong-password",
+        },
+    ):
+        client = routes._client_for_api_config_test()
+
+    assert client is saved_client
+    assert form_client_called is False

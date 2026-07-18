@@ -151,15 +151,13 @@ def users() -> str:
     Returns:
         Rendered HTML for the user management list page.
     """
-    rows = query_db(
-        """
+    rows = query_db("""
         SELECT u.id, u.username, r.name AS role, u.active, u.created_at,
                u.must_change_password
         FROM users u
         JOIN roles r ON r.id = u.role_id
         ORDER BY u.id
-        """
-    )
+        """)
     user_list: list[dict[str, Any]] = rows if isinstance(rows, list) else []
     return render_template("admin/users.html", users=user_list)
 
@@ -760,6 +758,18 @@ def _client_from_api_config_form() -> BackendAPIClient | None:
     )
 
 
+def _client_for_api_config_test() -> BackendAPIClient:
+    """Resolve the client requested by an API Config connection test.
+
+    The summary-row button tests the saved configuration exactly as the rest
+    of the application uses it. The edit-form button tests posted changes,
+    falling back to the saved client only when no usable form URL was posted.
+    """
+    if request.form.get("use_saved_credentials") == "1":
+        return get_api_client()
+    return _client_from_api_config_form() or get_api_client()
+
+
 @admin_bp.route("/api-config", methods=["GET", "POST"])
 @admin_required
 def api_config() -> str | Response:
@@ -841,9 +851,9 @@ def api_config() -> str | Response:
 def api_config_test() -> Response:
     """Test connectivity to the currently configured backend API.
 
-    Calls ``GET /auth-check`` on the backend using either the credentials
-    currently typed into the form or the stored credentials when the form
-    did not include a full username/key pair.
+    Calls ``GET /auth-check`` using the saved credentials when requested by
+    the summary-row button. Otherwise it tests the values currently typed in
+    the form, using the saved API key when the key field is blank.
     Returns a sanitised result without exposing raw credential or
     connection details.
 
@@ -851,7 +861,7 @@ def api_config_test() -> Response:
         JSON with ``ok`` (bool) and ``message`` (str) keys.
     """
     try:
-        client = _client_from_api_config_form() or get_api_client()
+        client = _client_for_api_config_test()
         resp = client.auth_check()
         if resp.status_code == 200:
             data = resp.json()

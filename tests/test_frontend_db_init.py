@@ -34,6 +34,7 @@ def _app(tmp_path: Path) -> Flask:
     app = Flask(__name__)
     app.config.update(
         DATABASE=str(tmp_path / "frontend.db"),
+        DEFAULT_ADMIN_PASSWORD="admin",
     )
     init_app(app)
     return app

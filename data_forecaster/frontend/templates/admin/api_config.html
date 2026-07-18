@@ -56,6 +56,7 @@
                                 <td>{{ current_api_config.timeout }}s</td>
                                 <td>{{ 'Verify' if current_api_config.verify_ssl else 'Skip' }}</td>
                                 <td class="text-end">
+                                    <button type="button" id="api-config-test-saved-btn" class="btn btn-outline-success btn-sm">Test Connection</button>
                                     <button type="button" id="api-config-edit-btn" class="btn btn-outline-info btn-sm">Edit</button>
                                 </td>
                             </tr>
@@ -68,11 +69,11 @@
 
         <div class="card">
             <div class="card-body">
-                <form method="post" novalidate id="api-config-form" class="{{ 'd-none' if current_api_config else '' }}">
+                <form method="post" novalidate autocomplete="off" id="api-config-form" class="{{ 'd-none' if current_api_config else '' }}">
                     {{ form.hidden_tag() }}
                     <div class="mb-3">{{ form.base_url.label(class="form-label") }}{{ form.base_url(class="form-control", placeholder="http://backend:8000") }}</div>
-                    <div class="mb-3">{{ form.api_username.label(class="form-label") }}{{ form.api_username(class="form-control", placeholder="X-API-Username") }}</div>
-                    <div class="mb-3">{{ form.api_password.label(class="form-label") }}{{ form.api_password(class="form-control", value="", placeholder=api_key_placeholder) }}
+                    <div class="mb-3">{{ form.api_username.label(class="form-label") }}{{ form.api_username(class="form-control", placeholder="X-API-Username", autocomplete="off", spellcheck="false", **{"data-1p-ignore": "true", "data-lpignore": "true"}) }}</div>
+                    <div class="mb-3">{{ form.api_password.label(class="form-label") }}{{ form.api_password(class="form-control", value="", placeholder=api_key_placeholder, autocomplete="new-password", **{"data-1p-ignore": "true", "data-lpignore": "true"}) }}
                         <small class="text-muted">Leave blank to keep the existing API key. Enter a new key only when rotating credentials.</small>
                     </div>
                     <div class="mb-3">{{ form.timeout.label(class="form-label") }}{{ form.timeout(class="form-control") }}</div>
@@ -82,7 +83,7 @@
                         <small class="text-muted d-block">Uncheck when the backend uses a self-signed certificate.</small>
                     </div>
                     <div class="d-flex justify-content-between">
-                        <button type="button" id="btn-test-conn" class="btn btn-outline-info btn-sm">Test Connection</button>
+                        <button type="button" id="btn-test-conn" class="btn btn-outline-info btn-sm">{{ 'Test Changes' if current_api_config else 'Test Connection' }}</button>
                         {{ form.submit(class="btn btn-primary btn-sm") }}
                     </div>
                 </form>
@@ -96,7 +97,10 @@
 <script>
 var summaryRow = document.getElementById("api-config-summary-row");
 var editButton = document.getElementById("api-config-edit-btn");
+var testSavedButton = document.getElementById("api-config-test-saved-btn");
 var configForm = document.getElementById("api-config-form");
+var testChangesButton = document.getElementById("btn-test-conn");
+var resultEl = document.getElementById("test-result");
 function showApiConfigForm() {
     if (configForm) {
         configForm.classList.remove("d-none");
@@ -119,22 +123,50 @@ if (editButton) {
         showApiConfigForm();
     });
 }
-document.getElementById("btn-test-conn").addEventListener("click", function() {
-    var resultEl = document.getElementById("test-result");
-    var form = document.getElementById("api-config-form");
-    var formData = new FormData(form);
+function showTestResult(ok, message) {
+    resultEl.textContent = "";
+    var alert = document.createElement("div");
+    alert.className = "alert " + (ok ? "alert-success" : "alert-danger") + " py-2 px-3 small mb-0";
+    alert.textContent = message;
+    resultEl.appendChild(alert);
+}
+function runConnectionTest(formData, button) {
+    var csrfMeta = document.querySelector('meta[name="csrf-token"]');
+    if (!csrfMeta) {
+        showTestResult(false, "CSRF token is unavailable. Refresh the page and try again.");
+        return;
+    }
+    button.disabled = true;
     resultEl.innerHTML = '<span style="color:var(--text-muted-custom);">Testing…</span>';
     fetch("{{ url_for('admin.api_config_test') }}", {
         method: "POST",
-        headers: { "X-CSRFToken": document.querySelector('meta[name="csrf-token"]').getAttribute("content") },
+        headers: { "X-CSRFToken": csrfMeta.getAttribute("content") },
         body: formData
-    }).then(function(r) { return r.json(); })
+    }).then(function(response) {
+        return response.json().catch(function() {
+            throw new Error("Backend test returned an invalid response.");
+        });
+    })
     .then(function(data) {
-        var cls = data.ok ? "alert-success" : "alert-danger";
-        resultEl.innerHTML = '<div class="alert ' + cls + ' py-2 px-3 small mb-0">' + data.message + '</div>';
-    }).catch(function() {
-        resultEl.innerHTML = '<div class="alert alert-danger py-2 px-3 small mb-0">Request failed.</div>';
+        showTestResult(Boolean(data.ok), data.message || "Connection test failed.");
+    }).catch(function(error) {
+        showTestResult(false, error.message || "Request failed.");
+    }).finally(function() {
+        button.disabled = false;
     });
-});
+}
+if (testSavedButton) {
+    testSavedButton.addEventListener("click", function(event) {
+        event.stopPropagation();
+        var formData = new FormData();
+        formData.set("use_saved_credentials", "1");
+        runConnectionTest(formData, testSavedButton);
+    });
+}
+if (testChangesButton) {
+    testChangesButton.addEventListener("click", function() {
+        runConnectionTest(new FormData(configForm), testChangesButton);
+    });
+}
 </script>
 {% endblock %}
