@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from core.config import GEMINI_TEMPERATURE
+from core.llm_config_store import get_llm_config
 from core.llm_factory import get_llm
 from core.logging_config import get_logger
 from prompts.report_generation_prompt import (
@@ -48,7 +48,7 @@ def generate_narratives(
     Returns:
         A tuple of (updated :class:`ExecutiveReport`, token_usage_dict).
     """
-    llm = get_llm(temperature=GEMINI_TEMPERATURE)
+    llm = get_llm(temperature=get_llm_config().temperature)
     total_usage: dict[str, int] = {
         "input_tokens": 0,
         "output_tokens": 0,

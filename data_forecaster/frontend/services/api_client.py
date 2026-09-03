@@ -478,27 +478,110 @@ class BackendAPIClient:
             verify=self._verify,
         )
 
-    def bootstrap_api_user(
-        self, username: str, api_key: str, admin_key: str
-    ) -> requests.Response:
-        """Create the first API user and enable auth on the backend.
+    def get_setup_status(self) -> requests.Response:
+        """Return the backend's first-run setup status.
 
-        Calls the ``POST /api-users/bootstrap`` endpoint, protected by
-        the deployment-time ``ADMIN_API_KEY`` sent via the ``X-Admin-Key``
-        header.  No API auth headers are required (auth is still off).
-
-        Args:
-            username:   Desired username for the first API user.
-            api_key:    Desired plaintext API key.
-            admin_key:  The ``ADMIN_API_KEY`` deployment secret.
+        Calls the unauthenticated ``GET /setup/status`` endpoint.  The
+        payload contains only completion booleans — never secrets.
 
         Returns:
-            The :class:`requests.Response` from the bootstrap endpoint.
+            The :class:`requests.Response` from ``GET /setup/status``.
+        """
+        return requests.get(
+            f"{self._base_url}/setup/status",
+            timeout=JOB_STATUS_TIMEOUT,
+            verify=self._verify,
+        )
+
+    def setup_bootstrap(
+        self, username: str, api_key: str
+    ) -> requests.Response:
+        """Atomically create the first admin API user and enable auth.
+
+        Calls the one-time ``POST /setup/bootstrap`` endpoint.  No auth
+        headers and no admin key are required — the endpoint returns 409
+        once any API user exists.
+
+        Args:
+            username: Desired username for the first admin API user.
+            api_key:  Desired plaintext API key.
+
+        Returns:
+            The :class:`requests.Response` from ``POST /setup/bootstrap``.
         """
         return requests.post(
-            f"{self._base_url}/api-users/bootstrap",
+            f"{self._base_url}/setup/bootstrap",
             json={"username": username, "api_key": api_key},
-            headers={"X-Admin-Key": admin_key},
+            timeout=ANALYSIS_TIMEOUT,
+            verify=self._verify,
+        )
+
+    # ── LLM Configuration & Model Registry (admin) ──────────────────────
+
+    def get_llm_config(self) -> requests.Response:
+        """Return the masked LLM configuration from the backend.
+
+        The response structurally excludes the API key — only the
+        ``api_key_set`` boolean reveals whether a key is stored.
+
+        Returns:
+            The :class:`requests.Response` from ``GET /config/llm``.
+        """
+        return requests.get(
+            f"{self._base_url}/config/llm",
+            headers=self._headers(),
+            timeout=JOB_STATUS_TIMEOUT,
+            verify=self._verify,
+        )
+
+    def put_llm_config(self, payload: dict[str, Any]) -> requests.Response:
+        """Update the backend LLM configuration.
+
+        Args:
+            payload: Dict with ``provider``, ``model``, ``temperature``,
+                and optionally ``base_url`` and ``api_key``.  Omitting
+                ``api_key`` preserves the stored key (one-way write).
+
+        Returns:
+            The :class:`requests.Response` from ``PUT /config/llm``.
+        """
+        return requests.put(
+            f"{self._base_url}/config/llm",
+            json=payload,
+            headers=self._headers(),
+            timeout=ANALYSIS_TIMEOUT,
+            verify=self._verify,
+        )
+
+    def get_models(self) -> requests.Response:
+        """List all forecasting models with their enabled state.
+
+        Returns:
+            The :class:`requests.Response` from ``GET /models``.
+        """
+        return requests.get(
+            f"{self._base_url}/models",
+            headers=self._headers(),
+            timeout=JOB_STATUS_TIMEOUT,
+            verify=self._verify,
+        )
+
+    def put_model(self, name: str, enabled: bool) -> requests.Response:
+        """Enable or disable a forecasting model on the backend.
+
+        Args:
+            name:    Canonical model name (e.g. ``"ARIMA"``).
+            enabled: ``True`` to enable, ``False`` to disable.
+
+        Returns:
+            The :class:`requests.Response` from ``PUT /models/{name}``.
+            The backend returns 400 when the change would disable the
+            last enabled model.
+        """
+        return requests.put(
+            f"{self._base_url}/models/{name}",
+            json={"enabled": enabled},
+            headers=self._headers(),
             timeout=ANALYSIS_TIMEOUT,
             verify=self._verify,
         )

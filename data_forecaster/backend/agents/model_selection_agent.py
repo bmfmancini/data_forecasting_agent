@@ -13,14 +13,21 @@ import math
 
 from core.llm_factory import get_llm
 from core.logging_config import get_logger
+from forecasting.registry import MODEL_NAMES, get_enabled_models
 from prompts.model_selection_prompt import MODEL_SELECTION_PROMPT
 from schemas import ModelSelectionResult, StatisticalResult
 from utils.token_tracking import estimate_input_text, extract_token_usage
 
 logger = get_logger(__name__)
 
-_MODELS = ("ARIMA", "SARIMA", "Holt-Winters", "EWMA", "Prophet")
+# Canonical model names live in forecasting.registry.MODEL_NAMES; enabled
+# state is read from the DB via get_enabled_models() at call time so that
+# admin changes take effect without a restart.
+_MODELS = MODEL_NAMES  # Backward-compatible alias (all known models).
 _METRIC_PRIORITY = ("MASE", "WAPE", "RMSE", "MAE", "MAPE")
+
+# Message shown for models disabled by the administrator.
+_DISABLED_REASON = "Model disabled by administrator."
 
 # Unicode hyphen characters that the LLM may emit instead of ASCII '-'.
 _UNICODE_HYPHENS = (
@@ -216,20 +223,29 @@ def _prophet_suitability(stat_result: StatisticalResult) -> str:
 
 
 def _build_suitability_summary(stat_result: StatisticalResult) -> str:
-    """Combine all four model suitability assessments into one summary.
+    """Combine enabled models' suitability assessments into one summary.
+
+    Disabled models are omitted entirely so the LLM never sees (and never
+    selects) a model the administrator has turned off.
 
     Args:
         stat_result: Output of the statistical analysis agent.
 
     Returns:
-        A single string containing all five assessments separated by blank lines.
+        A single string containing the enabled models' assessments
+        separated by blank lines.
     """
+    builders = {
+        "Holt-Winters": _hw_suitability,
+        "ARIMA": _arima_suitability,
+        "SARIMA": _sarima_suitability,
+        "EWMA": _ewma_suitability,
+        "Prophet": _prophet_suitability,
+    }
     sections = [
-        _hw_suitability(stat_result),
-        _arima_suitability(stat_result),
-        _sarima_suitability(stat_result),
-        _ewma_suitability(stat_result),
-        _prophet_suitability(stat_result),
+        builders[name](stat_result)
+        for name in get_enabled_models()
+        if name in builders
     ]
     if stat_result.disabled_tests:
         sections.append(
@@ -256,12 +272,10 @@ def _heuristic_fallback(
     """
     preference = _heuristic_preference(stat_result)
     fallback_model = preference[0]
+    enabled = set(get_enabled_models())
     reasoning: dict[str, str | None] = {
-        "Holt-Winters": None,
-        "ARIMA": None,
-        "SARIMA": None,
-        "EWMA": None,
-        "Prophet": None,
+        name: (None if name in enabled else _DISABLED_REASON)
+        for name in MODEL_NAMES
     }
     for m in preference[1:]:
         reasoning[m] = _heuristic_rejection_reason(stat_result, m)
@@ -279,16 +293,28 @@ def _heuristic_preference(stat_result: StatisticalResult) -> list[str]:
         stat_result: Output of the statistical analysis agent.
 
     Returns:
-        A list of model names ordered by heuristic preference.
+        A list of enabled model names ordered by heuristic preference.
+        Guaranteed non-empty (the registry enforces at least one enabled
+        model).
     """
     sp = stat_result.seasonal_period or 1
     if sp > 1:
-        return ["SARIMA", "Prophet", "Holt-Winters", "ARIMA", "EWMA"]
-    if stat_result.has_trend and abs(stat_result.trend_slope) > 0.1:
-        return ["Holt-Winters", "Prophet", "ARIMA", "SARIMA", "EWMA"]
-    if stat_result.is_white_noise:
-        return ["EWMA", "ARIMA", "Holt-Winters", "SARIMA", "Prophet"]
-    return ["ARIMA", "Prophet", "Holt-Winters", "SARIMA", "EWMA"]
+        preference = ["SARIMA", "Prophet", "Holt-Winters", "ARIMA", "EWMA"]
+    elif stat_result.has_trend and abs(stat_result.trend_slope) > 0.1:
+        preference = ["Holt-Winters", "Prophet", "ARIMA", "SARIMA", "EWMA"]
+    elif stat_result.is_white_noise:
+        preference = ["EWMA", "ARIMA", "Holt-Winters", "SARIMA", "Prophet"]
+    else:
+        preference = ["ARIMA", "Prophet", "Holt-Winters", "SARIMA", "EWMA"]
+    enabled = set(get_enabled_models())
+    filtered = [m for m in preference if m in enabled]
+    if not filtered:  # Defensive: registry should prevent this.
+        logger.warning(
+            "Heuristic preference was empty after filtering disabled models; "
+            "falling back to the enabled set."
+        )
+        return list(get_enabled_models())
+    return filtered
 
 
 def _heuristic_rejection_reason(
@@ -409,9 +435,9 @@ def _match_exact(normalized_lower: str) -> str | None:
         normalized_lower: Lower-cased, normalized LLM output.
 
     Returns:
-        The matched model name, or ``None`` if no exact match is found.
+        The matched enabled model name, or ``None`` if no exact match.
     """
-    for m in _MODELS:
+    for m in get_enabled_models():
         if f"selected model: {m.lower()}" in normalized_lower:
             return m
     return None
@@ -433,7 +459,7 @@ def _match_line_scan(normalized: str) -> str | None:
         if "selected model" not in line.lower():
             continue
         upper_line = line.upper()
-        for m in sorted(_MODELS, key=len, reverse=True):
+        for m in sorted(get_enabled_models(), key=len, reverse=True):
             if m.upper() in upper_line:
                 return m
     return None
@@ -672,8 +698,12 @@ def _business_selection_reasons(
     all_metrics: dict[str, dict[str, float]] | None = None,
 ) -> dict[str, str | None]:
     """Build per-model business explanations for selection and rejection."""
+    enabled = set(get_enabled_models())
     reasons: dict[str, str | None] = {}
-    for model in _MODELS:
+    for model in MODEL_NAMES:
+        if model not in enabled:
+            reasons[model] = _DISABLED_REASON
+            continue
         if model == selected_model:
             reasons[model] = None
             continue

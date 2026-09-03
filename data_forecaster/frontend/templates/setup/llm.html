@@ -1,0 +1,60 @@
+{% extends "setup/base.html" %}
+{% block title %}LLM Provider — Setup{% endblock %}
+{% block content %}
+<h5 class="mb-1">Step 2 — LLM provider</h5>
+<p class="small text-muted mb-3">Configure the language model provider. The API key is sent to the backend and is never stored by this frontend.</p>
+<form method="post" novalidate>
+    {{ form.hidden_tag() }}
+    <div class="mb-3">
+        <span class="form-label d-block">{{ form.provider.label.text }}</span>
+        {% for subfield in form.provider %}
+        <div class="form-check">
+            {{ subfield(class="form-check-input") }}
+            {{ subfield.label(class="form-check-label") }}
+        </div>
+        {% endfor %}
+    </div>
+    <div class="mb-3">
+        {{ form.model.label(class="form-label") }}
+        {{ form.model(class="form-control", placeholder="e.g. gemini-1.5-flash or llama3") }}
+        {% for error in form.model.errors %}<small class="text-danger d-block">{{ error }}</small>{% endfor %}
+    </div>
+    <div class="mb-3" id="base-url-group">
+        {{ form.base_url.label(class="form-label") }}
+        {{ form.base_url(class="form-control", placeholder="http://host.docker.internal:11434") }}
+        <small class="text-muted">Only required for Ollama providers.</small>
+        {% for error in form.base_url.errors %}<small class="text-danger d-block">{{ error }}</small>{% endfor %}
+    </div>
+    <div class="mb-3">
+        {{ form.api_key.label(class="form-label") }}
+        {{ form.api_key(class="form-control", placeholder="Provider API key (if required)") }}
+        {% for error in form.api_key.errors %}<small class="text-danger d-block">{{ error }}</small>{% endfor %}
+    </div>
+    <div class="mb-3">
+        {{ form.temperature.label(class="form-label") }}
+        {{ form.temperature(class="form-control", step="0.1", min="0", max="2") }}
+        {% for error in form.temperature.errors %}<small class="text-danger d-block">{{ error }}</small>{% endfor %}
+    </div>
+    <div class="d-grid">
+        {{ form.submit(class="btn btn-primary") }}
+    </div>
+</form>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+    "use strict";
+    var group = document.getElementById("base-url-group");
+    var radios = document.querySelectorAll('input[name="provider"]');
+    function toggleBaseUrl() {
+        var selected = document.querySelector('input[name="provider"]:checked');
+        var needsUrl = selected && selected.value !== "gemini";
+        group.style.display = needsUrl ? "" : "none";
+    }
+    for (var i = 0; i < radios.length; i++) {
+        radios[i].addEventListener("change", toggleBaseUrl);
+    }
+    toggleBaseUrl();
+})();
+</script>
+{% endblock %}

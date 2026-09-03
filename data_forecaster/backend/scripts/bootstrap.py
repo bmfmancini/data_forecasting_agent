@@ -305,14 +305,9 @@ def bootstrap(args: argparse.Namespace) -> int:
             assume_yes=args.yes,
             force=args.force,
         )
-    maybe_set_secret(
-        BACKEND_ENV,
-        backend_values,
-        "ADMIN_API_KEY",
-        generate_secret_urlsafe,
-        assume_yes=args.yes,
-        force=args.force,
-    )
+    # NOTE: ADMIN_API_KEY was removed along with the /api-users/bootstrap
+    # endpoint.  First-run provisioning now goes through the setup wizard
+    # (POST /setup/bootstrap), guarded by "no users exist yet".
 
     service_username = backend_values.get("FRONTEND_API_USERNAME") or "frontend"
     if args.force or is_placeholder(backend_values.get("FRONTEND_API_KEY")):

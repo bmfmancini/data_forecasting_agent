@@ -14,17 +14,54 @@ variable or by passing *config_name* to the application factory.
 from __future__ import annotations
 
 import os
+import secrets
 from datetime import timedelta
+from pathlib import Path
 
-from dotenv import load_dotenv
+_INSTANCE_DIR = Path(__file__).resolve().parent / "instance"
+_SESSION_KEY_FILE = _INSTANCE_DIR / ".session_key"
+_LEGACY_ENV_FILE = Path(__file__).resolve().parent / ".env"
 
-load_dotenv()
+
+def _legacy_env_value(key: str) -> str | None:
+    """Return a value from the pre-wizard ``.env`` file, if it exists.
+
+    This is a one-time migration path only. Runtime configuration no longer
+    loads dotenv files.
+    """
+    if not _LEGACY_ENV_FILE.is_file():
+        return None
+    for line in _LEGACY_ENV_FILE.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#") and "=" in stripped:
+            name, value = stripped.split("=", 1)
+            if name.strip() == key:
+                return value.strip().strip("\"'") or None
+    return None
+
+
+def _read_or_create_secret(path: Path, legacy_key: str) -> str:
+    """Load a stable instance secret or generate it securely on first run."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.is_file():
+        return path.read_text(encoding="utf-8").strip()
+
+    value = _legacy_env_value(legacy_key) or secrets.token_urlsafe(48)
+    try:
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        return path.read_text(encoding="utf-8").strip()
+    try:
+        os.write(descriptor, value.encode("utf-8"))
+    finally:
+        os.close(descriptor)
+    return value
 
 
 class BaseConfig:
     """Shared settings inherited by all environment configurations."""
 
-    SECRET_KEY: str = os.environ.get("SECRET_KEY", "change-me-in-production")
+    SECRET_KEY: str = _read_or_create_secret(_SESSION_KEY_FILE, "SECRET_KEY")
     DATABASE: str = os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "instance", "forecaster.db"
     )
@@ -59,8 +96,7 @@ class DevelopmentConfig(BaseConfig):
 class ProductionConfig(BaseConfig):
     """Configuration for production deployment.
 
-    Enforces a strong ``SECRET_KEY`` from the environment and disables
-    debug output.
+    Uses the generated, persistent instance secret and disables debug output.
     """
 
     DEBUG: bool = False
@@ -69,20 +105,6 @@ class ProductionConfig(BaseConfig):
     SESSION_COOKIE_SECURE: bool = True
     SESSION_COOKIE_HTTPONLY: bool = True
     SESSION_COOKIE_SAMESITE: str = "Lax"
-
-    SECRET_KEY: str = os.environ.get("SECRET_KEY", "")
-
-    def __init__(self) -> None:
-        """Raise when ``SECRET_KEY`` is absent in production.
-
-        Raises:
-            RuntimeError: When ``SECRET_KEY`` is not set in the environment.
-        """
-        if not self.SECRET_KEY:
-            raise RuntimeError(
-                "SECRET_KEY environment variable must be set in production."
-            )
-
 
 class TestingConfig(BaseConfig):
     """Configuration for automated testing."""

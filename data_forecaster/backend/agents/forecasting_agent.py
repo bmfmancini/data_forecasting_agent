@@ -9,11 +9,7 @@ import pandas as pd
 
 from core.llm_factory import get_llm
 from core.logging_config import get_logger
-from forecasting.arima_model import fit_arima
-from forecasting.ewma_model import fit_ewma
-from forecasting.holt_winters import fit_holt_winters
-from forecasting.prophet_model import fit_prophet
-from forecasting.sarima_model import fit_sarima
+from forecasting.registry import get_fit_functions
 from prompts.forecasting_prompt import FORECASTING_PROMPT
 from schemas import ForecastResult, ModelSelectionResult, StatisticalResult
 from utils.statistical_analysis import analyze_residuals
@@ -90,14 +86,9 @@ def run_forecasting_agent(
     seasonal_period = stat_result.seasonal_period or 12
     results_store: dict[str, dict[str, Any]] = {}
 
-    # ── Fit all models directly in Python ─────────────────────────────────────
-    for name, fn, kwargs in [
-        ("Holt-Winters", fit_holt_winters, {}),
-        ("ARIMA", fit_arima, {}),
-        ("SARIMA", fit_sarima, {"seasonal_period": seasonal_period}),
-        ("EWMA", fit_ewma, {}),
-        ("Prophet", fit_prophet, {"freq": freq}),
-    ]:
+    # ── Fit all enabled models directly in Python ───────────────────────────
+    fit_context = {"seasonal_period": seasonal_period, "freq": freq}
+    for name, fn, kwargs in get_fit_functions(fit_context):
         try:
             results_store[name] = fn(series, forecast_horizon, **kwargs)
             # Post-hoc calculation of WAPE and MASE
@@ -170,20 +161,18 @@ def run_forecasting_agent(
     # ── Select result for the chosen model ───────────────────────────────────
     selected = model_selection.selected_model
     if selected not in results_store:
-        # Try to fit the selected model directly
+        # Try to fit the selected model directly via the registry
         try:
-            if selected == "Holt-Winters":
-                results_store[selected] = fit_holt_winters(series, forecast_horizon)
-            elif selected == "ARIMA":
-                results_store[selected] = fit_arima(series, forecast_horizon)
-            elif selected == "Prophet":
-                results_store[selected] = fit_prophet(
-                    series, forecast_horizon, freq=freq
+            fit_map = {
+                name: (fn, kwargs)
+                for name, fn, kwargs in get_fit_functions(fit_context)
+            }
+            if selected not in fit_map:
+                raise RuntimeError(
+                    f"Selected model {selected!r} is disabled or unknown."
                 )
-            else:
-                results_store[selected] = fit_sarima(
-                    series, forecast_horizon, seasonal_period
-                )
+            fn, kwargs = fit_map[selected]
+            results_store[selected] = fn(series, forecast_horizon, **kwargs)
         except Exception as exc:
             logger.error("Could not fit selected model %s: %s", selected, exc)
             # Fall back to any available result

@@ -19,7 +19,7 @@ from auth.dependency import require_admin_api_key, require_api_key
 from core.database import init_database
 from main import app
 
-# Test API key reused from the ADMIN_API_KEY env var set in _reset_api_key_db.
+# Plaintext admin API key used by the fixtures (hashed via Argon2id in DB).
 _ADMIN_KEY = "test-admin-key"
 
 
@@ -34,13 +34,12 @@ def _reset_api_key_db(tmp_path: Any, monkeypatch: Any) -> None:
     db_path = str(tmp_path / "backend.db")
     monkeypatch.setenv("BACKEND_DB_PATH", db_path)
     monkeypatch.setenv("API_KEY_ENABLED", "true")
-    monkeypatch.setenv("ADMIN_API_KEY", _ADMIN_KEY)
     monkeypatch.setenv("CHROMA_PERSIST_DIR", str(tmp_path / "chroma"))
     monkeypatch.setenv("FILE_STORAGE_DIR", str(tmp_path / "files"))
     # Patch the cached module attributes (read at import time).
     monkeypatch.setattr(settings, "BACKEND_DB_PATH", db_path)
     monkeypatch.setattr(settings, "API_KEY_ENABLED", True)
-    monkeypatch.setattr(settings, "ADMIN_API_KEY", _ADMIN_KEY)
+    monkeypatch.setattr(settings, "SECRETS_DIR", str(tmp_path / "secrets"))
     init_database()
 
 
@@ -194,27 +193,53 @@ class TestAdminEndpoints:
 
 
 class TestBootstrap:
-    """Tests for the bootstrap endpoint."""
+    """Tests for the setup bootstrap endpoint (replaces /api-users/bootstrap)."""
 
-    def test_bootstrap_creates_admin_user(self, client: TestClient) -> None:
-        """The bootstrap endpoint creates the first user as an admin."""
+    def test_old_bootstrap_endpoint_removed(self, client: TestClient) -> None:
+        """The retired endpoint responds with an unambiguous tombstone."""
         response = client.post(
             "/api-users/bootstrap",
             headers={"X-Admin-Key": "test-admin-key"},
             json={"username": "bootstrap-admin", "api_key": "secret"},
         )
+        assert response.status_code == 410
+
+    def test_setup_bootstrap_creates_admin_user(self, client: TestClient) -> None:
+        """/setup/bootstrap creates the first user as an admin (no token)."""
+        response = client.post(
+            "/setup/bootstrap",
+            json={"username": "setup-admin", "api_key": "secret"},
+        )
         assert response.status_code == 200
         data = response.json()
         assert data["user"]["is_admin"] is True
-        assert data["auth_enabled"] is True
+        assert data["setup_complete"] is True
 
-    def test_bootstrap_requires_admin_key(self, client: TestClient) -> None:
-        """The bootstrap endpoint requires the deployment admin key."""
-        response = client.post(
-            "/api-users/bootstrap",
-            json={"username": "bootstrap-admin", "api_key": "secret"},
+    def test_setup_bootstrap_conflict_after_first_user(
+        self, client: TestClient
+    ) -> None:
+        """A second /setup/bootstrap call returns 409."""
+        first = client.post(
+            "/setup/bootstrap",
+            json={"username": "setup-admin", "api_key": "secret"},
         )
-        assert response.status_code == 403
+        assert first.status_code == 200
+
+        second = client.post(
+            "/setup/bootstrap",
+            json={"username": "other", "api_key": "secret"},
+        )
+        assert second.status_code == 409
+
+    def test_setup_status_reports_flags(self, client: TestClient) -> None:
+        """/setup/status reports booleans only, no secret material."""
+        response = client.get("/setup/status")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["setup_complete"] is False
+        assert data["admin_exists"] is False
+        assert data["models_enabled"] == 5
+        assert "key" not in str(data).lower().replace("api_key_set", "")
 
 
 class TestSetUserAdmin:

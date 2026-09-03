@@ -31,6 +31,8 @@ from blueprints.admin import admin_bp
 from blueprints.admin.forms import (
     APIConfigForm,
     APIKeyCreateForm,
+    LLMConfigForm,
+    ModelsForm,
     UserCreateForm,
     UserEditForm,
 )
@@ -38,6 +40,7 @@ from db.crypto import decrypt, encrypt
 from db.db import execute_db, query_db
 from services.api_client import BackendAPIClient, get_api_client
 from services.connection_errors import sanitize_connection_error
+from services.credentials_service import save_api_credentials
 from services.report_service import (
     delete_all_reports_for_admin,
     delete_report_for_admin,
@@ -667,55 +670,17 @@ def _save_api_credentials(
 ) -> None:
     """Upsert the default API credential row.
 
-    When both encrypted values are supplied the row is fully updated;
-    otherwise only ``base_url``, ``timeout``, and ``verify_ssl`` are
-    touched, preserving any existing encrypted credentials.
+    Delegates to :func:`services.credentials_service.save_api_credentials`
+    so the setup wizard shares the same persistence logic.
     """
-    if enc_user and enc_pass:
-        execute_db(
-            """
-            INSERT INTO api_credentials
-                (label, base_url, encrypted_username, encrypted_password,
-                 timeout, verify_ssl)
-            VALUES ('default', ?, ?, ?, ?, ?)
-            ON CONFLICT(label) DO UPDATE SET
-                base_url           = excluded.base_url,
-                encrypted_username = excluded.encrypted_username,
-                encrypted_password = excluded.encrypted_password,
-                timeout            = excluded.timeout,
-                verify_ssl         = excluded.verify_ssl
-            """,
-            (base_url, enc_user, enc_pass, timeout, verify_ssl),
-        )
-    elif enc_user and preserve_existing_key:
-        execute_db(
-            """
-            INSERT INTO api_credentials
-                (label, base_url, encrypted_username, encrypted_password,
-                 timeout, verify_ssl)
-            VALUES ('default', ?, ?, NULL, ?, ?)
-            ON CONFLICT(label) DO UPDATE SET
-                base_url           = excluded.base_url,
-                encrypted_username = excluded.encrypted_username,
-                timeout            = excluded.timeout,
-                verify_ssl         = excluded.verify_ssl
-            """,
-            (base_url, enc_user, timeout, verify_ssl),
-        )
-    else:
-        execute_db(
-            """
-            INSERT INTO api_credentials
-                (label, base_url, encrypted_username, encrypted_password,
-                 timeout, verify_ssl)
-            VALUES ('default', ?, NULL, NULL, ?, ?)
-            ON CONFLICT(label) DO UPDATE SET
-                base_url   = excluded.base_url,
-                timeout    = excluded.timeout,
-                verify_ssl = excluded.verify_ssl
-            """,
-            (base_url, timeout, verify_ssl),
-        )
+    save_api_credentials(
+        base_url,
+        timeout,
+        verify_ssl,
+        enc_user,
+        enc_pass,
+        preserve_existing_key,
+    )
 
 
 def _client_from_api_config_form() -> BackendAPIClient | None:
@@ -889,80 +854,257 @@ def api_config_test() -> Response:
 @admin_bp.route("/api-config/enable-auth", methods=["POST"])
 @admin_required
 def api_config_enable_auth() -> Response:
-    """Enable API authentication on the backend via the bootstrap endpoint.
+    """Route auth enablement through the first-run setup wizard.
 
-    Reads the admin key, desired username, and API key from the form,
-    calls the backend's ``POST /api-users/bootstrap`` endpoint, and
-    stores the returned credentials encrypted in the frontend database.
+    The backend's ``POST /api-users/bootstrap`` endpoint and the
+    ``ADMIN_API_KEY`` deployment secret were removed — first-run auth
+    enablement now happens exclusively through the setup wizard's atomic
+    ``POST /setup/bootstrap``.  This handler redirects to the wizard when
+    the backend has no API users, and reports current state otherwise.
 
     Returns:
-        Redirect to the API config page with a flash message.
+        Redirect to the setup wizard or back to the API config page.
     """
-    admin_key: str = str(request.form.get("admin_key", "")).strip()
-    api_username: str = str(request.form.get("api_username", "")).strip()
-    api_key: str = str(request.form.get("api_key", "")).strip()
-
-    if not admin_key:
-        flash("Admin key is required.", "danger")
-        return redirect(url_for(_ADMIN_API_CONFIG_ENDPOINT))
-    if not api_username or not api_key:
-        flash("Username and API key are required.", "danger")
-        return redirect(url_for(_ADMIN_API_CONFIG_ENDPOINT))
-
-    client = get_api_client()
+    status: dict[str, Any] = {}
     try:
-        resp = client.bootstrap_api_user(api_username, api_key, admin_key)
-    except requests.RequestException as exc:
+        client = get_api_client()
+        resp = client.get_setup_status()
+        if resp.status_code == 200:
+            status = resp.json()
+    except (requests.RequestException, ValueError):
+        status = {}
+
+    if not status:
         flash(
-            f"Could not connect to backend: {_sanitise_connection_error(str(exc))}",
+            "Backend unreachable — cannot determine setup state.",
             "danger",
         )
         return redirect(url_for(_ADMIN_API_CONFIG_ENDPOINT))
 
-    if resp.status_code == 403:
+    if status.get("admin_exists"):
         flash(
-            "Invalid admin key. Verify the ADMIN_API_KEY in the backend .env.",
-            "danger",
+            "API users already exist on the backend. Manage them under "
+            "API Keys; first-run bootstrap is no longer available.",
+            "info",
         )
-        return redirect(url_for(_ADMIN_API_CONFIG_ENDPOINT))
-    if resp.status_code == 409:
-        flash(
-            "API users already exist on the backend. Bootstrap is no longer available.",
-            "warning",
-        )
-        return redirect(url_for(_ADMIN_API_CONFIG_ENDPOINT))
-    if resp.status_code != 200:
-        detail: str = "Unknown error."
-        try:
-            detail = resp.json().get("detail", detail)
-        except ValueError:
-            logger.exception("Failed to parse bootstrap error response")
-        flash(f"Bootstrap failed (HTTP {resp.status_code}): {detail}", "danger")
-        return redirect(url_for(_ADMIN_API_CONFIG_ENDPOINT))
-
-    # Success — store the credentials encrypted in the frontend DB
-    try:
-        enc_user = encrypt(api_username)
-        enc_pass = encrypt(api_key)
-        execute_db(
-            """
-            UPDATE api_credentials
-            SET encrypted_username = ?,
-                encrypted_password = ?
-            WHERE label = 'default'
-            """,
-            (enc_user, enc_pass),
-        )
-    except RuntimeError as exc:
-        flash(str(exc), "danger")
         return redirect(url_for(_ADMIN_API_CONFIG_ENDPOINT))
 
     flash(
-        "API authentication enabled successfully. "
-        "Credentials stored — the frontend can now authenticate with the backend.",
-        "success",
+        "No API users exist yet. Complete the setup wizard to create the "
+        "first admin API user and enable authentication.",
+        "info",
     )
-    return redirect(url_for(_ADMIN_API_CONFIG_ENDPOINT))
+    return redirect(url_for("setup.index"))
+
+
+# ── LLM Configuration & Model Registry ────────────────────────────────────────
+
+_ADMIN_LLM_CONFIG_ENDPOINT: str = "admin.llm_config"
+_ADMIN_MODELS_ENDPOINT: str = "admin.models"
+
+
+def _backend_error_detail(resp: requests.Response) -> str:
+    """Extract the ``detail`` message from a backend error response."""
+    try:
+        detail: str = resp.json().get("detail", "Unknown error.")
+        return detail
+    except ValueError:
+        return "Unknown error."
+
+
+def _llm_config_payload(form: LLMConfigForm) -> dict[str, Any]:
+    """Build the ``PUT /config/llm`` payload from a validated form.
+
+    The API key is included only when a new one was entered — omitting
+    it preserves the key stored on the backend (one-way write).
+    """
+    payload: dict[str, Any] = {
+        "provider": str(form.provider.data),
+        "model": str(form.model.data or "").strip(),
+        "temperature": float(form.temperature.data or 0.1),
+    }
+    base_url: str = str(form.base_url.data or "").strip()
+    if base_url:
+        payload["base_url"] = base_url
+    api_key: str = str(form.api_key.data or "").strip()
+    if api_key:
+        payload["api_key"] = api_key
+    return payload
+
+
+def _submit_llm_config_update(
+    client: BackendAPIClient, payload: dict[str, Any]
+) -> None:
+    """PUT the LLM configuration to the backend, flashing the outcome."""
+    try:
+        resp = client.put_llm_config(payload)
+    except requests.RequestException as exc:
+        flash(
+            f"Could not connect to backend: "
+            f"{_sanitise_connection_error(str(exc))}",
+            "danger",
+        )
+        return
+    if resp.status_code == 200:
+        flash("LLM configuration saved.", "success")
+    else:
+        flash(
+            f"Could not save LLM configuration (HTTP {resp.status_code}): "
+            f"{_backend_error_detail(resp)}",
+            "danger",
+        )
+
+
+def _fetch_llm_config(client: BackendAPIClient) -> dict[str, Any] | None:
+    """Fetch the masked LLM configuration, flashing on failure.
+
+    Returns:
+        The configuration dict, or ``None`` when unavailable.
+    """
+    try:
+        resp = client.get_llm_config()
+    except requests.RequestException:
+        flash("Backend unreachable — current values unavailable.", "warning")
+        return None
+    if resp.status_code != 200:
+        flash(
+            f"Could not load LLM configuration (HTTP {resp.status_code}).",
+            "warning",
+        )
+        return None
+    try:
+        config: dict[str, Any] = resp.json()
+        return config
+    except ValueError:
+        flash("Backend returned an invalid LLM configuration.", "warning")
+        return None
+
+
+@admin_bp.route("/llm-config", methods=["GET", "POST"])
+@admin_required
+def llm_config() -> str | Response:
+    """View and update the backend LLM configuration.
+
+    The API key is a one-way write: the backend's ``GET /config/llm``
+    response structurally excludes it (only ``api_key_set`` is shown),
+    and leaving the form field blank preserves the stored key.
+
+    Returns:
+        Rendered template on GET/validation error; redirect on success.
+    """
+    form = LLMConfigForm()
+    client = get_api_client()
+
+    if form.validate_on_submit():
+        _submit_llm_config_update(client, _llm_config_payload(form))
+        return redirect(url_for(_ADMIN_LLM_CONFIG_ENDPOINT))
+
+    config = _fetch_llm_config(client)
+    if config:
+        form.provider.data = str(config.get("provider", "gemini"))
+        form.model.data = str(config.get("model", ""))
+        form.base_url.data = str(config.get("base_url") or "")
+        form.temperature.data = float(config.get("temperature", 0.1))
+
+    return render_template(
+        "admin/llm_config.html",
+        form=form,
+        llm_config=config,
+    )
+
+
+@admin_bp.route("/models", methods=["GET", "POST"])
+@admin_required
+def models() -> str | Response:
+    """Enable or disable forecasting models via the backend registry.
+
+    At least one model must remain enabled — enforced client-side,
+    server-side here, and by the backend (whose 400 "last model" error
+    is surfaced as a flash message).
+
+    Returns:
+        Rendered template on GET; redirect on POST.
+    """
+    form = ModelsForm()
+    client = get_api_client()
+    model_list: list[dict[str, Any]] = []
+
+    try:
+        resp = client.get_models()
+        if resp.status_code == 200:
+            model_list = resp.json().get("models", [])
+        else:
+            flash(
+                f"Could not load models (HTTP {resp.status_code}): "
+                f"{_backend_error_detail(resp)}",
+                "danger",
+            )
+    except (requests.RequestException, ValueError):
+        flash("Backend unreachable — model list unavailable.", "danger")
+
+    if request.method == "GET" or not form.validate_on_submit():
+        return render_template(
+            "admin/models.html",
+            form=form,
+            models=model_list,
+        )
+
+    if not model_list:
+        flash("No models loaded from the backend.", "danger")
+        return redirect(url_for(_ADMIN_MODELS_ENDPOINT))
+
+    selected = set(request.form.getlist("model_enabled"))
+    if not selected:
+        flash("At least one model must remain enabled.", "danger")
+        return redirect(url_for(_ADMIN_MODELS_ENDPOINT))
+
+    if not _apply_model_changes(client, model_list, selected):
+        return redirect(url_for(_ADMIN_MODELS_ENDPOINT))
+
+    flash("Model selection saved.", "success")
+    return redirect(url_for(_ADMIN_MODELS_ENDPOINT))
+
+
+def _apply_model_changes(
+    client: BackendAPIClient,
+    model_list: list[dict[str, Any]],
+    selected: set[str],
+) -> bool:
+    """PUT the desired enabled state for every changed model.
+
+    Flash messages surface connection failures and the backend's
+    last-model guard (HTTP 400).
+
+    Args:
+        client:     The configured backend API client.
+        model_list: Current model states from the backend.
+        selected:   Names of the models that should be enabled.
+
+    Returns:
+        ``True`` when all updates succeeded, ``False`` otherwise.
+    """
+    for model in model_list:
+        desired: bool = model["name"] in selected
+        if desired == bool(model.get("enabled")):
+            continue
+        try:
+            update_resp = client.put_model(str(model["name"]), desired)
+        except requests.RequestException as exc:
+            flash(
+                f"Could not connect to backend: "
+                f"{_sanitise_connection_error(str(exc))}",
+                "danger",
+            )
+            return False
+        if update_resp.status_code != 200:
+            flash(
+                f"Could not update "
+                f"{model.get('display_name', model['name'])}: "
+                f"{_backend_error_detail(update_resp)}",
+                "danger",
+            )
+            return False
+    return True
 
 
 def _check_backend_health() -> bool:

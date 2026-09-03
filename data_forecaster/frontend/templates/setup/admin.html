@@ -1,0 +1,28 @@
+{% extends "setup/base.html" %}
+{% block title %}Create Admin — Setup{% endblock %}
+{% block content %}
+<h5 class="mb-1">Step 5 — Create the first admin API user</h5>
+<p class="small text-muted mb-3">
+    This creates the first administrator on the backend and enables API
+    authentication. The same credentials are stored (encrypted) locally so
+    this frontend can authenticate with the backend. Store the API key
+    somewhere safe — it cannot be retrieved later.
+</p>
+<form method="post" novalidate>
+    {{ form.hidden_tag() }}
+    <div class="mb-3">
+        {{ form.username.label(class="form-label") }}
+        {{ form.username(class="form-control", placeholder="e.g. frontend") }}
+        {% for error in form.username.errors %}<small class="text-danger d-block">{{ error }}</small>{% endfor %}
+    </div>
+    <div class="mb-3">
+        {{ form.api_key.label(class="form-label") }}
+        {{ form.api_key(class="form-control font-monospace") }}
+        <small class="text-muted">Auto-generated strong key — you may replace it with your own.</small>
+        {% for error in form.api_key.errors %}<small class="text-danger d-block">{{ error }}</small>{% endfor %}
+    </div>
+    <div class="d-grid">
+        {{ form.submit(class="btn btn-primary") }}
+    </div>
+</form>
+{% endblock %}

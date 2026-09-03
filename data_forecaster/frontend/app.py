@@ -19,7 +19,9 @@ from werkzeug.wrappers import Response
 
 from blueprints.admin import admin_bp
 from blueprints.auth import auth_bp
+from blueprints.decorators import get_backend_setup_status
 from blueprints.main import main_bp
+from blueprints.setup import setup_bp
 from config import get_config
 from db.db import init_app as db_init_app, init_db, query_db
 from extensions import csrf, login_manager
@@ -72,6 +74,7 @@ def create_app(config_name: str | None = None) -> Flask:
     _register_blueprints(app)
     _register_context_processors(app)
     _register_user_loader()
+    _register_setup_gate(app)
     _register_password_change(app)
 
     register_commands(app)
@@ -159,6 +162,7 @@ def _register_blueprints(app: Flask) -> None:
     app.register_blueprint(auth_bp)
     app.register_blueprint(main_bp)
     app.register_blueprint(admin_bp)
+    app.register_blueprint(setup_bp)
 
 
 def _register_context_processors(app: Flask) -> None:
@@ -236,6 +240,42 @@ def _register_user_loader() -> None:
                 session_version=session_version,
             )
         return None
+
+
+def _register_setup_gate(app: Flask) -> None:
+    """Redirect all requests to the setup wizard until setup is complete.
+
+    The backend's ``GET /setup/status`` endpoint is the source of truth.
+    While ``setup_complete`` is false (or the backend is unreachable),
+    every request outside the allowlist — setup wizard, static assets,
+    and the login/logout endpoints — is redirected to ``/setup`` (or
+    rejected with a 403 for JSON/AJAX callers).
+
+    Args:
+        app: The Flask application instance.
+    """
+
+    @app.before_request
+    def _enforce_setup_complete() -> (
+        Response | tuple[Response, int] | tuple[str, int] | None
+    ):
+        """Redirect to the setup wizard until backend setup completes."""
+        endpoint = request.endpoint or ""
+        if (
+            endpoint == "static"
+            or endpoint.startswith("setup.")
+            or endpoint in ("auth.login", "auth.logout")
+        ):
+            return None
+
+        if get_backend_setup_status().get("setup_complete"):
+            return None
+
+        # AJAX/JSON callers get a structured error instead of a redirect.
+        if request.path.startswith("/api/") or _wants_json():
+            return jsonify({"error": "Setup required."}), 403
+
+        return redirect(url_for("setup.index"))
 
 
 def _register_password_change(app: Flask) -> None:

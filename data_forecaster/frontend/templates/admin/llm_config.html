@@ -1,0 +1,85 @@
+{% extends "admin/base.html" %}
+{% block title %}LLM Configuration — Admin{% endblock %}
+{% block header %}LLM Configuration{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-7">
+        {% if llm_config %}
+        <div class="card mb-3">
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-dark table-hover align-middle mb-0">
+                        <tbody>
+                            <tr>
+                                <th class="w-25">Provider</th>
+                                <td>{{ llm_config.provider }}</td>
+                            </tr>
+                            <tr>
+                                <th>Model</th>
+                                <td>{{ llm_config.model }}</td>
+                            </tr>
+                            <tr>
+                                <th>Base URL</th>
+                                <td>{{ llm_config.base_url or '—' }}</td>
+                            </tr>
+                            <tr>
+                                <th>Temperature</th>
+                                <td>{{ llm_config.temperature }}</td>
+                            </tr>
+                            <tr>
+                                <th>API Key</th>
+                                <td>
+                                    {% if llm_config.api_key_set %}
+                                    <span class="badge text-bg-success">Set</span>
+                                    {% else %}
+                                    <span class="badge text-bg-secondary">Not set</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            <tr>
+                                <th>Status</th>
+                                <td>
+                                    {% if llm_config.configured %}
+                                    <span class="badge text-bg-success">Configured</span>
+                                    {% else %}
+                                    <span class="badge text-bg-warning">Incomplete</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        {% else %}
+        <div class="alert alert-warning small">Current configuration could not be loaded from the backend.</div>
+        {% endif %}
+
+        <div class="card">
+            <div class="card-body">
+                <form method="post" novalidate>
+                    {{ form.hidden_tag() }}
+                    <div class="mb-3">{{ form.provider.label(class="form-label") }}{{ form.provider(class="form-select") }}</div>
+                    <div class="mb-3">{{ form.model.label(class="form-label") }}{{ form.model(class="form-control") }}
+                        {% for error in form.model.errors %}<small class="text-danger d-block">{{ error }}</small>{% endfor %}
+                    </div>
+                    <div class="mb-3">{{ form.base_url.label(class="form-label") }}{{ form.base_url(class="form-control", placeholder="http://host.docker.internal:11434") }}
+                        <small class="text-muted">Only required for Ollama providers.</small>
+                        {% for error in form.base_url.errors %}<small class="text-danger d-block">{{ error }}</small>{% endfor %}
+                    </div>
+                    <div class="mb-3">{{ form.api_key.label(class="form-label") }}{{ form.api_key(class="form-control", value="", placeholder="•••••• (leave blank to keep current)") }}
+                        <small class="text-muted">Write-only: the stored key is never displayed. Enter a new key only when rotating credentials.</small>
+                        {% for error in form.api_key.errors %}<small class="text-danger d-block">{{ error }}</small>{% endfor %}
+                    </div>
+                    <div class="mb-3">{{ form.temperature.label(class="form-label") }}{{ form.temperature(class="form-control", step="0.1", min="0", max="2") }}
+                        {% for error in form.temperature.errors %}<small class="text-danger d-block">{{ error }}</small>{% endfor %}
+                    </div>
+                    <div class="d-flex justify-content-end">
+                        {{ form.submit(class="btn btn-primary btn-sm") }}
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

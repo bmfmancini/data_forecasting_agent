@@ -43,24 +43,26 @@ That's it. Four containers come up:
 | `nginx-backend` | TLS termination for the API | `https://localhost:8443` |
 | `backend` | FastAPI + forecasting engine | internal only |
 
-Open `https://localhost` in your browser. Log in with `admin` / `admin` (you'll be prompted to change the password). The default API credentials (`frontend` / `frontend`) are already configured, so the frontend can talk to the backend out of the box.
+Open `https://localhost` in your browser. On first run you'll be redirected to the **setup wizard** (`/setup`), which walks you through: backend connection → LLM provider and credentials → enabling API auth → choosing forecasting models → creating the first admin account. No `.env` secrets are needed — keys are generated and stored encrypted at setup time (see [docs/secrets-management.md](docs/secrets-management.md)).
 
-> **Heads up:** The default `frontend` API key is publicly known. Rotate it before exposing this to anything beyond your local machine. See [docs/api-auth.md](docs/api-auth.md) for how.
+> **Existing deployments** (database already has API users) migrate automatically on startup: setup is marked complete and your current env-based LLM config is kept as the initial database values. You can change everything afterwards from the admin panel.
 
 ## LLM setup
 
-The agents need an LLM to do their analysis. You can use either Google Gemini or Ollama.
+The agents need an LLM to do their analysis. You can use either Google Gemini or Ollama — configured in the setup wizard or later under **Admin → LLM Config** (keys are stored encrypted in the backend database, never in the frontend).
+
+The values in `backend/.env` are only a **pre-setup fallback** for fresh installs that haven't run the wizard yet:
 
 **Gemini** (easiest — just add your key):
 ```bash
-# In backend/.env
+# In backend/.env (pre-setup fallback only)
 GOOGLE_API_KEY=your_key_here
 USE_OLLAMA=false
 ```
 
 **Ollama** (runs locally or via Ollama Cloud):
 ```bash
-# In backend/.env
+# In backend/.env (pre-setup fallback only)
 USE_OLLAMA=true
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=llama3

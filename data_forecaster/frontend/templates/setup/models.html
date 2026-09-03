@@ -1,0 +1,40 @@
+{% extends "setup/base.html" %}
+{% block title %}Models — Setup{% endblock %}
+{% block content %}
+<h5 class="mb-1">Step 4 — Forecasting models</h5>
+<p class="small text-muted mb-3">Choose which forecasting models are available to the pipeline. At least one model must remain enabled.</p>
+{% if models %}
+<form method="post" novalidate id="models-form">
+    {{ form.hidden_tag() }}
+    {% for model in models %}
+    <div class="mb-2 form-check form-switch">
+        <input class="form-check-input model-toggle" type="checkbox" role="switch"
+               id="model-{{ loop.index }}" name="model_enabled" value="{{ model.name }}"
+               {{ 'checked' if model.enabled }}>
+        <label class="form-check-label" for="model-{{ loop.index }}">{{ model.display_name }}</label>
+    </div>
+    {% endfor %}
+    <div class="d-grid mt-3">
+        {{ form.submit(class="btn btn-primary") }}
+    </div>
+</form>
+{% else %}
+<div class="alert alert-warning small">No models could be loaded from the backend. Verify the backend connection and reload this page.</div>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+    "use strict";
+    var form = document.getElementById("models-form");
+    if (!form) return;
+    form.addEventListener("submit", function (event) {
+        var checked = form.querySelectorAll('input[name="model_enabled"]:checked');
+        if (checked.length === 0) {
+            event.preventDefault();
+            alert("At least one model must remain enabled.");
+        }
+    });
+})();
+</script>
+{% endblock %}

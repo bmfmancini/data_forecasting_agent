@@ -433,10 +433,11 @@ class TestProphetAwareness:
         assert result.selected_model == "Prophet"
 
     def test_prophet_in_models_registry(self) -> None:
-        """Prophet is a candidate model in the module's registry."""
-        from agents.model_selection_agent import _MODELS
+        """Prophet is a candidate model in the canonical registry."""
+        from forecasting import registry
 
-        assert "Prophet" in _MODELS
+        assert "Prophet" in registry.MODEL_NAMES
+        assert "fit_fn" in registry.MODELS["Prophet"]
 
     def test_deterministic_override_selects_prophet_on_best_metrics(
         self,
@@ -505,3 +506,94 @@ class TestProphetAwareness:
         summary = _build_suitability_summary(seasonal_stat_result)
         assert "Prophet Assessment:" in summary
         assert "Prophet models seasonality" in summary
+
+
+# ── Disabled-model (registry) Tests ──────────────────────────────────────────
+
+
+class TestDisabledModels:
+    """Disabled models must be invisible to selection and heuristics."""
+
+    def test_suitability_summary_omits_disabled(
+        self,
+        seasonal_stat_result: StatisticalResult,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Disabled models do not appear in the LLM suitability summary."""
+        monkeypatch.setattr(
+            "agents.model_selection_agent.get_enabled_models",
+            lambda: ("ARIMA", "EWMA"),
+        )
+        from agents.model_selection_agent import _build_suitability_summary
+
+        summary = _build_suitability_summary(seasonal_stat_result)
+
+        assert "ARIMA Assessment:" in summary
+        assert "EWMA Assessment:" in summary
+        assert "Prophet Assessment:" not in summary
+        assert "SARIMA Assessment:" not in summary
+
+    def test_heuristic_never_selects_disabled(
+        self,
+        seasonal_stat_result: StatisticalResult,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """LLM failure falls back to an enabled model, never a disabled one."""
+        monkeypatch.setattr(
+            "agents.model_selection_agent.get_enabled_models",
+            lambda: ("Holt-Winters", "EWMA"),
+        )
+        monkeypatch.setattr(
+            "agents.model_selection_agent.get_llm",
+            lambda temperature=0: SimpleNamespace(),
+        )
+        monkeypatch.setattr(
+            "agents.model_selection_agent.MODEL_SELECTION_PROMPT",
+            _FailingPrompt(),
+        )
+
+        result = run_model_selection_agent(seasonal_stat_result)
+
+        assert result.selected_model in ("Holt-Winters", "EWMA")
+
+    def test_single_enabled_model_is_selected(
+        self,
+        seasonal_stat_result: StatisticalResult,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """With one enabled model, heuristics return it without error."""
+        monkeypatch.setattr(
+            "agents.model_selection_agent.get_enabled_models",
+            lambda: ("EWMA",),
+        )
+        monkeypatch.setattr(
+            "agents.model_selection_agent.get_llm",
+            lambda temperature=0: SimpleNamespace(),
+        )
+        monkeypatch.setattr(
+            "agents.model_selection_agent.MODEL_SELECTION_PROMPT",
+            _FailingPrompt(),
+        )
+
+        result = run_model_selection_agent(seasonal_stat_result)
+
+        assert result.selected_model == "EWMA"
+
+    def test_llm_selecting_disabled_model_falls_back(
+        self,
+        seasonal_stat_result: StatisticalResult,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An LLM naming a disabled model is overridden by the fallback."""
+        monkeypatch.setattr(
+            "agents.model_selection_agent.get_enabled_models",
+            lambda: ("ARIMA", "EWMA"),
+        )
+        _patch_llm(
+            monkeypatch,
+            SimpleNamespace(content="Selected model: Prophet\n\nBecause reasons."),
+        )
+
+        result = run_model_selection_agent(seasonal_stat_result)
+
+        assert result.selected_model in ("ARIMA", "EWMA")

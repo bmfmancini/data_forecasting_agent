@@ -26,11 +26,11 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 import core.config as settings
 from auth.api_key_db import (
     create_api_user,
-    create_first_user,
     delete_api_user,
     has_any_users,
     has_bootstrap_user,
@@ -41,15 +41,10 @@ from auth.api_key_db import (
     set_user_enabled,
 )
 from auth.dependency import require_admin_api_key, require_api_key
-from core.config import (
-    GOOGLE_API_KEY,
-    OLLAMA_API_KEY,
-    OLLAMA_MODEL,
-    USE_OLLAMA,
-    USE_OLLAMA_CLOUD,
-    set_api_key_enabled,
-)
+from core.config import set_api_key_enabled
 from core.database import init_database
+from core.llm_config_store import get_llm_config, is_configured, put_llm_config
+from forecasting import registry
 from core.logging_config import get_logger
 from schemas import (
     APIKeyRotatedResponse,
@@ -60,8 +55,6 @@ from schemas import (
     APIUserToggleRequest,
     AnalyzeRequest,
     AuthStatusResponse,
-    BootstrapRequest,
-    BootstrapResponse,
     ChatRequest,
     ChatResponse,
     DeletedJobsResponse,
@@ -70,10 +63,24 @@ from schemas import (
     JobStatusResponse,
     JobSubmitResponse,
     PreflightResponse,
+    SetupBootstrapRequest,
+    SetupBootstrapResponse,
+    SetupStatusResponse,
+    ModelsResponse,
+    ModelUpdateRequest,
+    LLMConfigResponse,
+    LLMConfigUpdateRequest,
     UploadResponse,
 )
 from services.chat_service import chat_general, chat_with_data
 from services.file_service import get_file, init_storage, store_file
+from services.setup_service import (
+    SetupAlreadyCompleteError,
+    get_setup_status,
+    is_setup_complete,
+    migrate_legacy_deployment,
+    run_bootstrap,
+)
 from services.job_service import (
     create_job,
     clear_terminal_jobs,
@@ -131,51 +138,41 @@ def _reconcile_frontend_service_user() -> None:
         )
 
 
-def _create_frontend_service_user_from_env() -> None:
-    """Create the first API user from frontend service env vars when present."""
-    if not _service_credentials_configured():
-        logger.info("No API users — auth disabled (open mode).")
-        return
-
-    try:
-        create_first_user(
-            username=settings.FRONTEND_API_USERNAME,
-            api_key=settings.FRONTEND_API_KEY,
-        )
-    except ValueError as exc:
-        logger.warning("Failed to auto-create frontend API user: %s", exc)
-        logger.info("No API users — auth disabled (open mode).")
-        return
-
-    set_api_key_enabled(True)
-    logger.info(
-        "Frontend API user '%s' auto-created from env vars — auth enabled.",
-        settings.FRONTEND_API_USERNAME,
-    )
-    if settings.FRONTEND_API_KEY == "frontend":
-        logger.warning(
-            "SECURITY: The frontend API key is the default 'frontend'. "
-            "Rotate it via the admin panel and update the stored "
-            "frontend credentials before production use."
-        )
-        return
-
-    logger.warning(
-        "The initial API key was sourced from the FRONTEND_API_KEY "
-        "env var.  For production security, rotate this key via the "
-        "admin panel and update the stored frontend credentials."
-    )
-
-
 def _configure_startup_auth() -> None:
-    """Enable or bootstrap API authentication during startup."""
+    """Enable or bootstrap API authentication during startup.
+
+    Once first-run setup is complete the DB is authoritative and the
+    ``FRONTEND_API_USERNAME``/``FRONTEND_API_KEY`` env vars are ignored
+    (logged once).  On a fresh install (setup incomplete) auth stays OFF
+    and no service user is created from env — the setup wizard generates
+    the service-account credentials and ``POST /setup/bootstrap`` enables
+    auth.  Creating an env user pre-setup would 401 the wizard's
+    unauthenticated configuration calls and block bootstrap with a 409.
+    """
+    if is_setup_complete():
+        if has_any_users():
+            set_api_key_enabled(True)
+            logger.info("API users found — auth enabled.")
+        if _service_credentials_configured():
+            logger.info(
+                "Setup is complete — FRONTEND_API_USERNAME/FRONTEND_API_KEY "
+                "env vars are ignored; the database is authoritative."
+            )
+        return
+
     if has_any_users():
+        # Pre-wizard deployment not yet migrated (defensive; the lifespan
+        # runs migrate_legacy_deployment() first, so this should not be
+        # reachable in practice).
         _reconcile_frontend_service_user()
         set_api_key_enabled(True)
         logger.info("API users found — auth enabled.")
         return
 
-    _create_frontend_service_user_from_env()
+    logger.info(
+        "Fresh install — auth disabled until the setup wizard completes "
+        "(POST /setup/bootstrap)."
+    )
 
 
 @asynccontextmanager
@@ -188,6 +185,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """
     logger.info("Initializing API key database…")
     init_database()
+    migrate_legacy_deployment()
     cleanup_terminal_jobs()
     init_storage()
     _configure_startup_auth()
@@ -227,7 +225,18 @@ async def add_security_headers(request: Request, call_next: Any) -> Any:
     ``Strict-Transport-Security`` to mitigate MIME sniffing, clickjacking,
     and protocol downgrade attacks.
     """
-    response = await call_next(request)
+    if request.url.path == "/api-users/bootstrap":
+        response = JSONResponse(
+            status_code=410,
+            content={
+                "detail": (
+                    "This bootstrap endpoint has been retired. "
+                    "Use POST /setup/bootstrap during initial setup."
+                )
+            },
+        )
+    else:
+        response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Strict-Transport-Security"] = (
@@ -297,16 +306,17 @@ async def _check_ollama_reachable() -> bool:
 
     Handles both Ollama Cloud (with optional API key) and local Ollama.
     """
+    config = get_llm_config()
     try:
-        if USE_OLLAMA_CLOUD:
-            ollama_url = f"{settings.OLLAMA_BASE_URL}/api/version"
+        if config.provider == "ollama_cloud":
+            ollama_url = f"{config.base_url}/api/version"
             headers = {"Content-Type": _JSON_MEDIA_TYPE}
-            if OLLAMA_API_KEY:
-                headers["Authorization"] = f"Bearer {OLLAMA_API_KEY}"
+            if config.api_key:
+                headers["Authorization"] = f"Bearer {config.api_key}"
             async with httpx.AsyncClient() as client:
                 response = await client.get(ollama_url, headers=headers)
                 return response.status_code == 200
-        ollama_url = f"{settings.OLLAMA_BASE_URL}/api/tags"
+        ollama_url = f"{config.base_url}/api/tags"
         async with httpx.AsyncClient() as client:
             response = await client.get(ollama_url)
             return response.status_code == 200
@@ -316,10 +326,11 @@ async def _check_ollama_reachable() -> bool:
 
 async def _check_gemini_reachable() -> bool:
     """Return whether the Gemini API responds to a lightweight probe."""
+    config = get_llm_config()
     try:
         gemini_url = (
             "https://generativelanguage.googleapis.com/v1beta/models/"
-            f"{settings.GEMINI_MODEL}:countTokens"
+            f"{config.model}:countTokens"
         )
         headers = {"Content-Type": _JSON_MEDIA_TYPE}
         async with httpx.AsyncClient() as client:
@@ -327,7 +338,7 @@ async def _check_gemini_reachable() -> bool:
                 gemini_url,
                 json={"contents": [{"parts": [{"text": "ping"}]}]},
                 headers=headers,
-                params={"key": GOOGLE_API_KEY},
+                params={"key": config.api_key},
             )
             return response.status_code == 200
     except httpx.HTTPError:
@@ -351,16 +362,17 @@ def llm_health() -> dict[str, Any]:
         "error": None,
     }
 
-    if USE_OLLAMA:
+    config = get_llm_config()
+    if config.provider in ("ollama", "ollama_cloud"):
         result["llm_provider"] = "ollama"
-        if not OLLAMA_MODEL:
-            result["error"] = "OLLAMA_MODEL is not set."
+        if not config.model:
+            result["error"] = "Ollama model is not configured."
             return result
         result["llm_configured"] = True
         result["llm_reachable"] = asyncio.run(_check_ollama_reachable())
         if not result["llm_reachable"]:
             result["error"] = "Ollama server is not reachable."
-    elif GOOGLE_API_KEY:
+    elif config.provider == "gemini" and config.api_key:
         result["llm_provider"] = "gemini"
         result["llm_configured"] = True
         result["llm_reachable"] = asyncio.run(_check_gemini_reachable())
@@ -368,8 +380,8 @@ def llm_health() -> dict[str, Any]:
             result["error"] = "Gemini API is not reachable."
     else:
         result["error"] = (
-            "No LLM provider configured. Either set USE_OLLAMA=true with a "
-            "running Ollama instance, or set GOOGLE_API_KEY for Gemini."
+            "No LLM provider configured. Configure one via the admin LLM "
+            "configuration page."
         )
 
     return result
@@ -392,70 +404,53 @@ def auth_status() -> dict[str, Any]:
     }
 
 
+@app.get("/setup/status", response_model=SetupStatusResponse)
+def setup_status() -> dict[str, Any]:
+    """Return first-run setup state (booleans only — never secrets).
+
+    Unauthenticated so the frontend wizard can gate the app; the payload
+    reveals only completion flags.
+    """
+    return get_setup_status()
+
+
 @app.post(
-    "/api-users/bootstrap",
-    response_model=BootstrapResponse,
+    "/setup/bootstrap",
+    response_model=SetupBootstrapResponse,
     responses={
         400: {"description": "Invalid username or API key"},
-        403: {"description": "ADMIN_API_KEY missing or invalid"},
-        409: {"description": "API users already exist"},
+        409: {"description": "Setup already completed"},
     },
 )
-def api_users_bootstrap(
-    request: BootstrapRequest,
-    http_request: Request,
-) -> dict[str, Any]:
-    """Create the first API user and enable authentication.
+def setup_bootstrap(request: SetupBootstrapRequest) -> dict[str, Any]:
+    """Atomically create the first admin API user and complete setup.
 
-    This is a one-time setup endpoint protected by the ``ADMIN_API_KEY``
-    deployment secret (sent via the ``X-Admin-Key`` header).  It only
-    succeeds when:
-
-    - ``ADMIN_API_KEY`` is set in the backend environment.
-    - The supplied ``X-Admin-Key`` header matches.
-    - No API users exist yet (bootstrap is one-time only).
-
-    On success, creates the user with the admin-supplied username and
-    key, enables ``API_KEY_ENABLED``, and returns the user dict.
+    Replaces the retired ``POST /api-users/bootstrap`` (which required a
+    preset ``ADMIN_API_KEY``).  The guard is a conditional insert inside
+    a ``BEGIN IMMEDIATE`` transaction, so simultaneous first-run requests
+    cannot both succeed — the loser receives 409.
 
     Raises:
-        HTTPException: 403 when the admin key is missing or mismatched.
-        HTTPException: 409 when users already exist (bootstrap expired).
+        HTTPException: 400 when the username/key is invalid.
+        HTTPException: 409 when setup has already completed.
     """
-    if not settings.ADMIN_API_KEY:
-        raise HTTPException(
-            status_code=403,
-            detail="ADMIN_API_KEY is not set on the backend. "
-            "Configure it in the backend .env to use bootstrap.",
-        )
-    supplied_key: str | None = http_request.headers.get("X-Admin-Key")
-    if not supplied_key or supplied_key != settings.ADMIN_API_KEY:
-        raise HTTPException(
-            status_code=403,
-            detail="Invalid or missing admin key.",
-        )
-
-    if has_any_users():
-        raise HTTPException(
-            status_code=409,
-            detail="API users already exist — bootstrap is no longer available.",
-        )
-
     try:
-        user: dict[str, Any] = create_first_user(
+        user: dict[str, Any] = run_bootstrap(
             username=request.username,
             api_key=request.api_key,
         )
+    except SetupAlreadyCompleteError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     set_api_key_enabled(True)
     logger.info(
-        "API auth enabled by bootstrap. User '%s' created.",
+        "API auth enabled by setup bootstrap. Admin user '%s' created.",
         request.username,
     )
 
-    return {"user": user, "auth_enabled": True}
+    return {"user": user, "setup_complete": True}
 
 
 # ── File Upload & Analysis ────────────────────────────────────────────────────
@@ -956,6 +951,93 @@ def api_users_rotate(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     return {"user_id": user_id, "api_key": plaintext_key}
+
+
+# ── Model Registry (admin) ────────────────────────────────────────────────────
+
+
+@app.get("/models", response_model=ModelsResponse)
+def models_list(
+    _user: Annotated[dict, Depends(require_admin_api_key)],
+) -> dict[str, Any]:
+    """List all forecasting models with their enabled state."""
+    return {"models": registry.list_model_states()}
+
+
+@app.put(
+    "/models/{name}",
+    response_model=ModelsResponse,
+    responses={
+        400: {"description": "Unknown model or last-model disable attempt"},
+    },
+)
+def models_update(
+    name: str,
+    request: ModelUpdateRequest,
+    _user: Annotated[dict, Depends(require_admin_api_key)],
+) -> dict[str, Any]:
+    """Enable or disable a forecasting model.
+
+    Rejects with 400 when the change would leave zero models enabled.
+    """
+    try:
+        registry.set_model_enabled(name, request.enabled)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"models": registry.list_model_states()}
+
+
+# ── LLM Configuration (admin) ────────────────────────────────────────────────
+
+
+@app.get("/config/llm", response_model=LLMConfigResponse)
+def llm_config_get(
+    _user: Annotated[dict, Depends(require_admin_api_key)],
+) -> dict[str, Any]:
+    """Return the LLM configuration with the API key masked.
+
+    The response model structurally excludes the key — only
+    ``api_key_set`` reveals whether one is stored.
+    """
+    config = get_llm_config()
+    return {
+        "provider": config.provider,
+        "model": config.model,
+        "base_url": config.base_url,
+        "temperature": config.temperature,
+        "api_key_set": config.api_key is not None,
+        "configured": is_configured(),
+    }
+
+
+@app.put(
+    "/config/llm",
+    response_model=LLMConfigResponse,
+    responses={400: {"description": "Unknown provider"}},
+)
+def llm_config_put(
+    request: LLMConfigUpdateRequest,
+    _user: Annotated[dict, Depends(require_admin_api_key)],
+) -> dict[str, Any]:
+    """Update the LLM configuration (one-way write for the API key).
+
+    The key is accepted as a ``SecretStr``, encrypted immediately, and
+    never logged or returned.  Omitting ``api_key`` preserves the stored
+    key.
+    """
+    try:
+        put_llm_config(
+            provider=request.provider,
+            model=request.model,
+            base_url=request.base_url,
+            api_key=(
+                request.api_key.get_secret_value() if request.api_key else None
+            ),
+            temperature=request.temperature,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return llm_config_get(_user)
 
 
 @app.post(
