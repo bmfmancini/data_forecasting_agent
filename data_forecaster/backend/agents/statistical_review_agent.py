@@ -196,7 +196,9 @@ def _check_explanation_mismatch(
     """
     explanation_lower = model_selection.explanation.lower()
     other_models = [
-        m for m in ("ARIMA", "SARIMA", "Holt-Winters", "EWMA") if m != selected
+        m
+        for m in ("ARIMA", "SARIMA", "Holt-Winters", "EWMA", "Prophet")
+        if m != selected
     ]
     mentioned_models = [m for m in other_models if m.lower() in explanation_lower[:200]]
     # Only flag if another model is mentioned prominently in the first 200

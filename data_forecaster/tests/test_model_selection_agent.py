@@ -378,3 +378,130 @@ class TestBusinessModelExplanations:
         assert "plain ARIMA ignores seasonality" in result.arima_rejected_reason
         assert result.ewma_rejected_reason is not None
         assert "does not explicitly model seasonality" in result.ewma_rejected_reason
+
+
+# ── Prophet awareness tests ───────────────────────────────────────────────────
+
+
+class TestProphetAwareness:
+    """Tests asserting the model-selection agent is aware of Prophet."""
+
+    def test_parses_plain_text_prophet(
+        self,
+        seasonal_stat_result: StatisticalResult,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Plain text 'Selected model: Prophet' should parse to Prophet."""
+        response = SimpleNamespace(
+            content=(
+                "Selected model: Prophet\n\n"
+                "## Why this model was chosen\n"
+                "Prophet models trend and seasonality natively."
+            ),
+            usage_metadata={
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "total_tokens": 150,
+            },
+        )
+        _patch_llm(monkeypatch, response)
+
+        result = run_model_selection_agent(seasonal_stat_result)
+        assert result.selected_model == "Prophet"
+
+    def test_parses_meta_prophet_variant(
+        self,
+        seasonal_stat_result: StatisticalResult,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """'Meta-Prophet' (unicode hyphen) normalizes to the Prophet model."""
+        response = SimpleNamespace(
+            content=(
+                "**Selected model:** Meta‑Prophet\n\n"
+                "## Why this model was chosen\n"
+                "Meta-Prophet handles the seasonal cycle and changepoints."
+            ),
+            usage_metadata={
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "total_tokens": 150,
+            },
+        )
+        _patch_llm(monkeypatch, response)
+
+        result = run_model_selection_agent(seasonal_stat_result)
+        assert result.selected_model == "Prophet"
+
+    def test_prophet_in_models_registry(self) -> None:
+        """Prophet is a candidate model in the module's registry."""
+        from agents.model_selection_agent import _MODELS
+
+        assert "Prophet" in _MODELS
+
+    def test_deterministic_override_selects_prophet_on_best_metrics(
+        self,
+        seasonal_stat_result: StatisticalResult,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Prophet with the lowest MASE is selected by the deterministic override."""
+        response = SimpleNamespace(
+            content="Selected model: Holt-Winters\n",
+            usage_metadata={
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "total_tokens": 150,
+            },
+        )
+        _patch_llm(monkeypatch, response)
+
+        all_metrics = {
+            "Holt-Winters": {"RMSE": 0.12, "MAE": 0.10, "MAPE": 0.9, "MASE": 1.2},
+            "ARIMA": {"RMSE": 0.10, "MAE": 0.08, "MAPE": 0.7, "MASE": 1.0},
+            "SARIMA": {"RMSE": 0.09, "MAE": 0.07, "MAPE": 0.7, "MASE": 0.8},
+            "Prophet": {"RMSE": 0.07, "MAE": 0.05, "MAPE": 0.5, "MASE": 0.5},
+        }
+        result = run_model_selection_agent(
+            seasonal_stat_result,
+            review_feedback="Previous selection was suboptimal.",
+            exclude_model="Holt-Winters",
+            all_metrics=all_metrics,
+        )
+        # Prophet has the lowest MASE and is not excluded
+        assert result.selected_model == "Prophet"
+        assert result.prophet_rejected_reason is None
+        # Other models get a rejection reason
+        assert result.arima_rejected_reason is not None
+        assert "Higher forecast error" in result.arima_rejected_reason
+
+    def test_heuristic_fallback_provides_prophet_rejection_reason(
+        self,
+        seasonal_stat_result: StatisticalResult,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Heuristic fallback on a seasonal series rejects Prophet with a reason."""
+        monkeypatch.setattr(
+            "agents.model_selection_agent.get_llm",
+            lambda temperature=0: SimpleNamespace(),
+        )
+        monkeypatch.setattr(
+            "agents.model_selection_agent.MODEL_SELECTION_PROMPT",
+            _FailingPrompt(),
+        )
+
+        result = run_model_selection_agent(seasonal_stat_result)
+
+        # SARIMA is the heuristic pick for a seasonal series; Prophet is not.
+        assert result.selected_model == "SARIMA"
+        assert result.prophet_rejected_reason is not None
+        assert "lighter to fit than Prophet" in result.prophet_rejected_reason
+
+    def test_suitability_summary_includes_prophet_assessment(
+        self,
+        seasonal_stat_result: StatisticalResult,
+    ) -> None:
+        """The suitability summary built for the LLM includes a Prophet section."""
+        from agents.model_selection_agent import _build_suitability_summary
+
+        summary = _build_suitability_summary(seasonal_stat_result)
+        assert "Prophet Assessment:" in summary
+        assert "Prophet models seasonality" in summary

@@ -10,7 +10,7 @@ MODEL_SELECTION_PROMPT = ChatPromptTemplate.from_messages(
     [
         (
             "system",
-            "You are a Senior Time Series Forecasting Analyst specializing in model selection between ARIMA, SARIMA, Holt-Winters, and EWMA. "
+            "You are a Senior Time Series Forecasting Analyst specializing in model selection between ARIMA, SARIMA, Holt-Winters, EWMA, and Prophet (Meta Prophet). "
             "Your role is to select the most appropriate model strictly based on statistical evidence provided. "
             "You must not assume missing metrics or invent model behavior.",
         ),
@@ -35,12 +35,14 @@ MODEL_SELECTION_PROMPT = ChatPromptTemplate.from_messages(
             "- ARIMA: <evidence-based assessment only>\n"
             "- SARIMA: <evidence-based assessment only>\n"
             "- Holt-Winters: <evidence-based assessment only>\n"
-            "- EWMA: <evidence-based assessment only>\n\n"
+            "- EWMA: <evidence-based assessment only>\n"
+            "- Prophet: <evidence-based assessment only>\n\n"
             "## Why alternatives were not selected\n"
             "- ARIMA: <only if evidence supports rejection>\n"
             "- SARIMA: <only if evidence supports rejection>\n"
             "- Holt-Winters: <only if evidence supports rejection>\n"
-            "- EWMA: <only if evidence supports rejection>\n\n"
+            "- EWMA: <only if evidence supports rejection>\n"
+            "- Prophet: <only if evidence supports rejection>\n\n"
             "### FINAL CONSTRAINTS ###\n"
             "- Every claim must be traceable to the provided evidence.\n"
             "- If evidence is insufficient, explicitly state uncertainty.\n"

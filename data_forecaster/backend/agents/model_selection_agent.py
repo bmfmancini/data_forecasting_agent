@@ -19,7 +19,7 @@ from utils.token_tracking import estimate_input_text, extract_token_usage
 
 logger = get_logger(__name__)
 
-_MODELS = ("ARIMA", "SARIMA", "Holt-Winters", "EWMA")
+_MODELS = ("ARIMA", "SARIMA", "Holt-Winters", "EWMA", "Prophet")
 _METRIC_PRIORITY = ("MASE", "WAPE", "RMSE", "MAE", "MAPE")
 
 # Unicode hyphen characters that the LLM may emit instead of ASCII '-'.
@@ -175,6 +175,46 @@ def _ewma_suitability(stat_result: StatisticalResult) -> str:
     return "EWMA Assessment:\n" + "\n".join(f"- {p}" for p in points)
 
 
+def _prophet_suitability(stat_result: StatisticalResult) -> str:
+    """Build the Prophet (Meta Prophet) suitability assessment string.
+
+    Args:
+        stat_result: Output of the statistical analysis agent.
+
+    Returns:
+        A multi-line bullet list describing Prophet suitability.
+    """
+    points: list[str] = []
+    sp = stat_result.seasonal_period
+    if sp and sp > 1:
+        points.append(
+            f"Seasonal period {sp} detected — Prophet models seasonality "
+            "natively via Fourier terms and can combine multiple seasonalities."
+        )
+    else:
+        points.append(
+            "No strong seasonal period — Prophet still fits a piecewise trend "
+            "and may capture seasonalities the statistical tests missed."
+        )
+    if stat_result.has_trend:
+        points.append(
+            f"Trend detected (slope={stat_result.trend_slope:.4f}) — Prophet "
+            "models trend automatically with changepoint detection."
+        )
+    if stat_result.outlier_ratio > 0.05:
+        points.append(
+            f"High outlier ratio ({stat_result.outlier_ratio:.1%}) — Prophet "
+            "is robust to outliers and missing observations."
+        )
+    else:
+        points.append("Low outlier count — Prophet will be stable.")
+    points.append(
+        "Prophet needs at least 2 observations and performs best with "
+        "substantial history; it is heavier to fit than the other models."
+    )
+    return "Prophet Assessment:\n" + "\n".join(f"- {p}" for p in points)
+
+
 def _build_suitability_summary(stat_result: StatisticalResult) -> str:
     """Combine all four model suitability assessments into one summary.
 
@@ -182,13 +222,14 @@ def _build_suitability_summary(stat_result: StatisticalResult) -> str:
         stat_result: Output of the statistical analysis agent.
 
     Returns:
-        A single string containing all four assessments separated by blank lines.
+        A single string containing all five assessments separated by blank lines.
     """
     sections = [
         _hw_suitability(stat_result),
         _arima_suitability(stat_result),
         _sarima_suitability(stat_result),
         _ewma_suitability(stat_result),
+        _prophet_suitability(stat_result),
     ]
     if stat_result.disabled_tests:
         sections.append(
@@ -220,6 +261,7 @@ def _heuristic_fallback(
         "ARIMA": None,
         "SARIMA": None,
         "EWMA": None,
+        "Prophet": None,
     }
     for m in preference[1:]:
         reasoning[m] = _heuristic_rejection_reason(stat_result, m)
@@ -241,12 +283,12 @@ def _heuristic_preference(stat_result: StatisticalResult) -> list[str]:
     """
     sp = stat_result.seasonal_period or 1
     if sp > 1:
-        return ["SARIMA", "Holt-Winters", "ARIMA", "EWMA"]
+        return ["SARIMA", "Prophet", "Holt-Winters", "ARIMA", "EWMA"]
     if stat_result.has_trend and abs(stat_result.trend_slope) > 0.1:
-        return ["Holt-Winters", "ARIMA", "SARIMA", "EWMA"]
+        return ["Holt-Winters", "Prophet", "ARIMA", "SARIMA", "EWMA"]
     if stat_result.is_white_noise:
-        return ["EWMA", "ARIMA", "Holt-Winters", "SARIMA"]
-    return ["ARIMA", "Holt-Winters", "SARIMA", "EWMA"]
+        return ["EWMA", "ARIMA", "Holt-Winters", "SARIMA", "Prophet"]
+    return ["ARIMA", "Prophet", "Holt-Winters", "SARIMA", "EWMA"]
 
 
 def _heuristic_rejection_reason(
@@ -270,24 +312,40 @@ def _heuristic_rejection_reason(
             ),
             "ARIMA": "Seasonal pattern detected; plain ARIMA ignores seasonality.",
             "EWMA": "Seasonal patterns present; EWMA does not capture seasonality.",
+            "Prophet": (
+                "Seasonality detected; SARIMA models it more explicitly and "
+                "is lighter to fit than Prophet for this case."
+            ),
         }
     elif stat_result.has_trend and abs(stat_result.trend_slope) > 0.1:
         reasons = {
             "ARIMA": "Trend present but Holt-Winters handles it more naturally.",
             "SARIMA": "No strong seasonality confirmed; SARIMA may overfit.",
             "EWMA": "Strong trend present; EWMA will lag behind trend changes.",
+            "Prophet": (
+                "Trend present; Holt-Winters handles it more lightly than "
+                "Prophet for a non-seasonal series."
+            ),
         }
     elif stat_result.is_white_noise:
         reasons = {
             "Holt-Winters": "Series appears random; simple EWMA may suffice.",
             "ARIMA": "Series is random noise; complex models may overfit.",
             "SARIMA": "No patterns detected; SARIMA would overfit.",
+            "Prophet": (
+                "Series is random noise; Prophet is heavier than the data "
+                "structure warrants and would overfit."
+            ),
         }
     else:
         reasons = {
             "Holt-Winters": "No clear seasonal pattern or strong trend detected.",
             "SARIMA": "No seasonal period confirmed; SARIMA would overfit.",
             "EWMA": "Series has patterns that ARIMA can better capture.",
+            "Prophet": (
+                "No strong seasonal pattern or trend confirmed; ARIMA is "
+                "lighter and captures the autocorrelation more directly."
+            ),
         }
     return reasons.get(model, "Not selected based on heuristic reasoning.")
 
@@ -551,6 +609,30 @@ def _statistical_fit_reason(
         return (
             "EWMA is simple and stable, but it can miss autocorrelation that a "
             "time-series model can use for more accurate forecasts."
+        )
+    if model == "Prophet":
+        if has_seasonality or has_trend:
+            if selected:
+                return (
+                    "Prophet is a strong general-purpose choice because it "
+                    "models trend (with changepoints) and seasonality together "
+                    "and is robust to outliers and missing values."
+                )
+            return (
+                "Prophet can model trend and seasonality, but it is heavier to "
+                "fit than the selected model and offered weaker validation "
+                "evidence here."
+            )
+        if selected:
+            return (
+                "Prophet was selected for its robust trend modeling, although "
+                "limited seasonality or trend means simpler models may be "
+                "competitive."
+            )
+        return (
+            "Prophet was rejected because the series lacks strong trend or "
+            "seasonality, so its extra complexity and fit cost are not "
+            "justified for this case."
         )
     return (
         "Selected for the best balance of validation accuracy, assumptions, "
@@ -824,6 +906,7 @@ def run_model_selection_agent(
                 arima_rejected_reason=reasons["ARIMA"],
                 sarima_rejected_reason=reasons["SARIMA"],
                 ewma_rejected_reason=reasons["EWMA"],
+                prophet_rejected_reason=reasons["Prophet"],
                 reasoning_steps=[
                     {
                         "thought": (
@@ -862,6 +945,7 @@ def run_model_selection_agent(
         arima_rejected_reason=reasons["ARIMA"],
         sarima_rejected_reason=reasons["SARIMA"],
         ewma_rejected_reason=reasons["EWMA"],
+        prophet_rejected_reason=reasons["Prophet"],
         reasoning_steps=[
             {
                 "thought": "Assessing suitability metrics for all models...",
@@ -908,6 +992,7 @@ def _build_heuristic_result(
         arima_rejected_reason=reasons["ARIMA"],
         sarima_rejected_reason=reasons["SARIMA"],
         ewma_rejected_reason=reasons["EWMA"],
+        prophet_rejected_reason=reasons["Prophet"],
         reasoning_steps=[
             {
                 "thought": "Model selection agent failed; using heuristic.",

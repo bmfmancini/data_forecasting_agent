@@ -136,6 +136,7 @@ class ModelSelectionResult(BaseModel):
     arima_rejected_reason: str | None = None
     sarima_rejected_reason: str | None = None
     ewma_rejected_reason: str | None = None
+    prophet_rejected_reason: str | None = None
     reasoning_steps: list[dict[str, Any]] = Field(default_factory=list)
     token_usage: dict[str, Any] = Field(default_factory=dict)
 

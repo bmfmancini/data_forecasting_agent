@@ -12,6 +12,7 @@ from core.logging_config import get_logger
 from forecasting.arima_model import fit_arima
 from forecasting.ewma_model import fit_ewma
 from forecasting.holt_winters import fit_holt_winters
+from forecasting.prophet_model import fit_prophet
 from forecasting.sarima_model import fit_sarima
 from prompts.forecasting_prompt import FORECASTING_PROMPT
 from schemas import ForecastResult, ModelSelectionResult, StatisticalResult
@@ -95,6 +96,7 @@ def run_forecasting_agent(
         ("ARIMA", fit_arima, {}),
         ("SARIMA", fit_sarima, {"seasonal_period": seasonal_period}),
         ("EWMA", fit_ewma, {}),
+        ("Prophet", fit_prophet, {"freq": freq}),
     ]:
         try:
             results_store[name] = fn(series, forecast_horizon, **kwargs)
@@ -148,7 +150,7 @@ def run_forecasting_agent(
         )
         reasoning_steps = [
             {
-                "thought": "Fitting Holt-Winters, ARIMA, and SARIMA in Python...",
+                "thought": "Fitting Holt-Winters, ARIMA, SARIMA, EWMA, and Prophet in Python...",
                 "observation": comparison_summary,
             },
             {
@@ -174,6 +176,10 @@ def run_forecasting_agent(
                 results_store[selected] = fit_holt_winters(series, forecast_horizon)
             elif selected == "ARIMA":
                 results_store[selected] = fit_arima(series, forecast_horizon)
+            elif selected == "Prophet":
+                results_store[selected] = fit_prophet(
+                    series, forecast_horizon, freq=freq
+                )
             else:
                 results_store[selected] = fit_sarima(
                     series, forecast_horizon, seasonal_period
