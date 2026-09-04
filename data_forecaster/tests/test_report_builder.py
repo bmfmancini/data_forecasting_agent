@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from forecasting.contracts import ForecastFitStatus
 from report.builder import ExecutiveReportBuilder
 from report.models import (
     DashboardItem,
@@ -82,6 +83,7 @@ def sample_forecast() -> ForecastResult:
     """A forecast result with 12 periods and prediction intervals."""
     return ForecastResult(
         model_used="SARIMA",
+        status=ForecastFitStatus.OK,
         forecast=[
             400.0,
             410.0,
@@ -263,6 +265,18 @@ class TestExecutiveReportBuilder:
             assert pi.upper_ci == round(sample_forecast.upper_ci[i], 4)
             assert pi.confidence_level == "95%"
 
+    def test_unavailable_intervals_do_not_fabricate_zero_bounds(
+        self, sample_forecast: ForecastResult
+    ) -> None:
+        forecast = sample_forecast.model_copy(
+            update={"lower_ci": [], "upper_ci": [], "interval_label": "unavailable"}
+        )
+
+        metrics = ExecutiveReportBuilder()._build_forecast_metrics(forecast)
+
+        assert metrics.interval_label == "unavailable"
+        assert metrics.prediction_intervals == []
+
     def test_model_comparison_entries(
         self,
         built_report: ExecutiveReport,
@@ -343,6 +357,7 @@ class TestConfidenceScoreDeductions:
     ) -> None:
         forecast = ForecastResult(
             model_used="SARIMA",
+            status=ForecastFitStatus.OK,
             forecast=[400.0, 410.0],
             lower_ci=[380.0, 390.0],
             upper_ci=[420.0, 430.0],
@@ -453,6 +468,7 @@ class TestConfidenceScoreDeductions:
         )
         forecast = ForecastResult(
             model_used="SARIMA",
+            status=ForecastFitStatus.OK,
             forecast=[400.0, 410.0],
             lower_ci=[380.0, 390.0],
             upper_ci=[420.0, 430.0],

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from html import escape
 
-from report.models import ExecutiveReport
+from report.models import ExecutiveReport, format_metric
 from report.rules import DASHBOARD_STATUS_COLORS
 
 
@@ -172,14 +172,43 @@ class HTMLRenderer:
         f = report.forecast_outlook
         m = f.metrics
         narrative = f"<p>{escape(f.narrative)}</p>" if f.narrative else ""
+        final_rmse = f.metrics.final_test_metrics.get("rmse")
+        final_mae = f.metrics.final_test_metrics.get("mae")
+        provenance = (
+            "<p class='small text-muted'>Model selection used rolling-origin "
+            "metrics. Untouched final-test metrics were not used for ranking: "
+            f"RMSE {format_metric(final_rmse)}, MAE {format_metric(final_mae)}.</p>"
+        )
+        holdout_assessment = (
+            "<p><strong>Recent Holdout Assessment:</strong> "
+            f"{escape(m.final_test_assessment)}</p>"
+            if m.final_test_assessment
+            else ""
+        )
+        peak_context = ""
+        if m.peak_value is not None:
+            peak_date = f" on {escape(m.peak_date)}" if m.peak_date else ""
+            peak_context = (
+                f"<p><strong>Seasonal Peak:</strong> {m.peak_value}{peak_date} "
+                f"({format_metric(m.peak_change_pct, '+.1f')}% versus the first "
+                "forecast period).</p>"
+            )
+        if not m.prediction_intervals:
+            figure_label = "Point Forecast (prediction intervals unavailable)"
+        elif m.interval_label == "experimental":
+            figure_label = "Forecast with Estimated Prediction Intervals"
+        else:
+            figure_label = "Forecast with Model-Based Prediction Intervals"
         return (
             '<section class="report-forecast-outlook mb-3">'
             "<h5>Future Growth & Forecast Outlook</h5>"
-            f"<p><strong>Projected Change:</strong> {m.pct_change:+.1f}% over {m.horizon} periods.</p>"
-            f"{narrative}"
-            '<p class="mt-3"><strong>Figure: Forecast with Prediction Intervals</strong></p>'
+            f"<p><strong>Endpoint Change:</strong> {m.pct_change:+.1f}% "
+            f"({escape(m.endpoint_direction)}) over {m.horizon} periods.</p>"
+            f"<p><strong>Forecast Pattern:</strong> {escape(m.forecast_pattern)}.</p>"
+            f"{peak_context}"
+            f"{provenance}{holdout_assessment}{narrative}"
+            f'<p class="mt-3"><strong>Figure: {escape(figure_label)}</strong></p>'
             "<p>[VISUAL:FORECAST]</p>"
-            f"{narrative}"
             "</section>"
         )
 
@@ -191,11 +220,11 @@ class HTMLRenderer:
         # Ensure wape and mase have fallbacks for rendering
         rows = "".join(
             f"<tr><td>{escape(e.model)}</td>"
-            f"<td>{e.rmse:.4f}</td>"
-            f"<td>{e.mae:.4f}</td>"
-            f"<td>{e.mape:.2f}%</td>"
-            f"<td>{e.wape or 0.0:.2f}%</td>"
-            f"<td>{e.mase or 0.0:.4f}</td>"
+            f"<td>{format_metric(e.rmse)}</td>"
+            f"<td>{format_metric(e.mae)}</td>"
+            f"<td>{format_metric(e.mape, '.2f')}%</td>"
+            f"<td>{format_metric(e.wape, '.2f')}%</td>"
+            f"<td>{format_metric(e.mase)}</td>"
             f"<td>{'✓' if e.selected else ''}</td></tr>"
             for e in mc.entries
         )
@@ -304,10 +333,23 @@ class HTMLRenderer:
 
     def _render_prediction_intervals(self, report: ExecutiveReport) -> str:
         """Render prediction intervals as an HTML table."""
-        intervals = report.forecast_outlook.metrics.prediction_intervals
+        metrics = report.forecast_outlook.metrics
+        intervals = metrics.prediction_intervals
         if not intervals:
-            return ""
+            return (
+                '<section class="report-prediction-intervals mb-3">'
+                "<h5>Prediction Intervals Unavailable</h5>"
+                "<p>The forecasting model did not produce usable interval bounds; "
+                "no 95% planning range is shown.</p>"
+                "</section>"
+            )
         confidence_level = intervals[0].confidence_level
+        nominal_level = confidence_level.split(" ", maxsplit=1)[0]
+        interval_heading = (
+            f"Estimated Prediction Intervals ({nominal_level}; coverage not evaluated)"
+            if intervals[0].interval_label == "experimental"
+            else f"Model-Based Prediction Intervals ({confidence_level})"
+        )
         rows = "".join(
             f"<tr><td>{escape(pi.date)}</td>"
             f"<td>{pi.forecast}</td>"
@@ -317,7 +359,7 @@ class HTMLRenderer:
         )
         return (
             '<section class="report-prediction-intervals mb-3">'
-            f"<h5>Prediction Intervals ({escape(confidence_level)})</h5>"
+            f"<h5>{escape(interval_heading)}</h5>"
             '<table class="table table-sm table-striped">'
             "<thead><tr><th>Date</th><th>Forecast</th>"
             "<th>Lower Bound</th><th>Upper Bound</th></tr></thead>"

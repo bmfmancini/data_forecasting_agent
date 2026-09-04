@@ -18,9 +18,31 @@ Design principles:
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from pydantic import BaseModel, Field
+
+# ── Metric formatting helpers ────────────────────────────────────────────────
+
+_NOT_AVAILABLE = "not available"
+
+
+def format_metric(value: float | None, fmt: str = ".4f") -> str:
+    """Format a nullable metric, returning 'not available' when unavailable.
+
+    Args:
+        value: Metric value or ``None``.
+        fmt: Format spec string (default ``.4f``).
+
+    Returns:
+        Formatted string, or ``"not available"`` when value is ``None``,
+        NaN, or infinite.
+    """
+    if value is None or not math.isfinite(value):
+        return _NOT_AVAILABLE
+    return format(value, fmt)
+
 
 # ── Dashboard ────────────────────────────────────────────────────────────────
 
@@ -122,6 +144,9 @@ class PredictionInterval(BaseModel):
         lower_ci:         Lower bound of the prediction interval.
         upper_ci:         Upper bound of the prediction interval.
         confidence_level: Confidence level label (e.g. "95%").
+        interval_label:   Technical provenance label. Report-facing prose uses
+                          model-based/estimated language unless empirical
+                          calibration evidence is also displayed.
     """
 
     date: str
@@ -129,6 +154,7 @@ class PredictionInterval(BaseModel):
     lower_ci: float
     upper_ci: float
     confidence_level: str
+    interval_label: str = "prediction_interval"
 
 
 class ForecastMetrics(BaseModel):
@@ -147,6 +173,8 @@ class ForecastMetrics(BaseModel):
         mape:          Mean absolute percentage error (validation).
         wape:          Weighted absolute percentage error (validation).
         mase:          Mean absolute scaled error (validation).
+        interval_label: Provenance/status for the interval rows; ``unavailable``
+                        means the forecast produced no usable bounds.
         prediction_intervals: Per-period prediction intervals.
     """
 
@@ -157,12 +185,21 @@ class ForecastMetrics(BaseModel):
     first_value: float
     last_value: float
     pct_change: float
-    rmse: float
-    mae: float
-    mape: float
+    endpoint_direction: str = "Flat"
+    forecast_pattern: str = "Flat"
+    peak_value: float | None = None
+    peak_date: str | None = None
+    peak_change_pct: float | None = None
+    rmse: float | None = None
+    mae: float | None = None
+    mape: float | None = None
     wape: float | None = None
     mase: float | None = None
+    interval_label: str = "prediction_interval"
     prediction_intervals: list[PredictionInterval] = Field(default_factory=list)
+    selection_metrics: dict[str, float | None] = Field(default_factory=dict)
+    final_test_metrics: dict[str, object] = Field(default_factory=dict)
+    final_test_assessment: str | None = None
 
 
 # ── Model Comparison ─────────────────────────────────────────────────────────
@@ -183,9 +220,9 @@ class ModelComparisonEntry(BaseModel):
     """
 
     model: str
-    rmse: float
-    mae: float
-    mape: float
+    rmse: float | None = None
+    mae: float | None = None
+    mape: float | None = None
     wape: float | None = None
     mase: float | None = None
     selected: bool

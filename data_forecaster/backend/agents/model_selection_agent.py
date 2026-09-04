@@ -715,6 +715,29 @@ def _business_selection_reasons(
     return reasons
 
 
+def build_model_rejection_reasons(
+    selected_model: str,
+    stat_result: StatisticalResult,
+    all_metrics: dict[str, dict[str, float]] | None = None,
+    excluded_models: list[str] | None = None,
+) -> dict[str, str | None]:
+    """Build final rejection reasons aligned to the production selection.
+
+    This public helper keeps retry paths consistent with the initial model
+    selection, including administrator-disabled and review-excluded models.
+    """
+    reasons = _business_selection_reasons(selected_model, stat_result, all_metrics)
+    for excluded_model in excluded_models or []:
+        if excluded_model in reasons and excluded_model != selected_model:
+            reasons[excluded_model] = (
+                "Excluded following statistical review; its validation metrics "
+                "remain visible for transparency but it was not eligible during "
+                "this retry."
+            )
+    reasons[selected_model] = None
+    return reasons
+
+
 # ── LLM invocation ───────────────────────────────────────────────────────────
 
 
@@ -876,6 +899,7 @@ def run_model_selection_agent(
     review_feedback: str | None = None,
     exclude_model: str | None = None,
     all_metrics: dict[str, dict[str, float]] | None = None,
+    loss_preference: str = "mase",
 ) -> ModelSelectionResult:
     """Use the LLM to reason over statistical findings and select the best model.
 
@@ -919,8 +943,10 @@ def run_model_selection_agent(
                 best_model,
             )
             metrics_text = _format_metrics_text(all_metrics)
+            evidence_scope = "eligible " if exclude_model else ""
             explanation = (
-                "Model re-selected based on empirical validation metrics. "
+                "Model re-selected based on "
+                f"{evidence_scope}empirical validation metrics. "
                 + _build_selection_explanation(
                     best_model, stat_result, all_metrics, review_feedback
                 )
@@ -928,7 +954,12 @@ def run_model_selection_agent(
                 + metrics_text
                 + f"\n\n[Statistical Review Feedback]: {review_feedback or 'N/A'}"
             )
-            reasons = _business_selection_reasons(best_model, stat_result, all_metrics)
+            reasons = build_model_rejection_reasons(
+                best_model,
+                stat_result,
+                all_metrics,
+                [exclude_model] if exclude_model else None,
+            )
             return ModelSelectionResult(
                 selected_model=best_model,
                 explanation=explanation,
@@ -947,6 +978,11 @@ def run_model_selection_agent(
                     },
                 ],
                 token_usage={},
+                selection_method="deterministic",
+                selection_evidence={
+                    "excluded_model": exclude_model,
+                    "loss_preference": loss_preference,
+                },
             )
 
     suitability_input = _build_suitability_input(

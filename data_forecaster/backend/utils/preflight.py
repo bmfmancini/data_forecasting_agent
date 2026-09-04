@@ -8,14 +8,10 @@ import pandas as pd
 
 from schemas import PreflightDecision, PreflightResponse
 from utils.data_cleaning import (
-    audit_series,
     detect_outliers_iqr,
-    impute_missing,
     reindex_series,
     resolve_duplicates,
-    smooth_series,
-    treat_outliers,
-    validate_schema,
+    time_index_quality,
 )
 
 AGGREGATION_OPTIONS = ["Let AI Decide", "sum", "mean", "latest"]
@@ -67,17 +63,15 @@ def run_preflight_checks(
     """
     selected = _selected_frame(df, date_col, value_col)
     series = selected.set_index(date_col)[value_col]
-    diffs = series.index.to_series().diff().dropna()
-    mode_diff = diffs.mode()[0] if len(diffs) > 0 else None
+    detected_frequency = _infer_frequency(selected.set_index(date_col))
 
     duplicate_ts = int(selected[date_col].duplicated().sum())
     missing_values = int(series.isna().sum())
-    missing_ts = int((diffs > mode_diff * 1.5).sum()) if mode_diff is not None else 0
-    is_regular = bool(diffs.nunique() == 1) if len(diffs) > 0 else True
-    detected_frequency = _infer_frequency(selected.set_index(date_col))
+    missing_ts, is_regular, _ = time_index_quality(
+        series.index, detected_frequency
+    )
     usable_observations = int(series.dropna().shape[0])
 
-    audit_info = audit_series(series)
     outlier_info = detect_outliers_iqr(series.dropna())
 
     issues: list[str] = []
@@ -90,6 +84,14 @@ def run_preflight_checks(
         "data_domain": "Skip / Let AI Guess",
         "outlier_strategy": "Let AI Decide",
         "continue_short_series": "continue",
+        "loss_metric": "auto",
+        "units": "Unspecified",
+        "interventions": "None known",
+        "censoring_or_stockouts": "None known",
+        "known_future_covariates": "None",
+        "aggregation": "As provided",
+        "minimum_value": None,
+        "maximum_value": None,
     }
 
     if duplicate_ts:
@@ -138,6 +140,53 @@ def run_preflight_checks(
             required=True,
             allow_custom=True,
         )
+    )
+    decisions.extend(
+        [
+            PreflightDecision(
+                key="loss_metric",
+                label="Decision loss",
+                message=(
+                    "What kind of forecast error matters most? Auto lets the "
+                    "forecasting assistant recommend an objective from your "
+                    "business context; model ranking remains deterministic."
+                ),
+                options=["auto", "rmse", "mae", "wape", "mase"],
+                default="auto",
+            ),
+            PreflightDecision(
+                key="units",
+                label="Target units",
+                message="What units does the forecast target use?",
+                options=["Unspecified", "Count", "Currency", "Rate", "Other"],
+                default="Unspecified",
+                allow_custom=True,
+            ),
+            PreflightDecision(
+                key="interventions",
+                label="Known interventions",
+                message="List promotions, outages, policy changes, or other interventions.",
+                options=["None known", "Known events"],
+                default="None known",
+                allow_custom=True,
+            ),
+            PreflightDecision(
+                key="censoring_or_stockouts",
+                label="Censoring or stockouts",
+                message="Can recorded values be capped, censored, or limited by stockouts?",
+                options=["None known", "Possible", "Confirmed"],
+                default="None known",
+                allow_custom=True,
+            ),
+            PreflightDecision(
+                key="known_future_covariates",
+                label="Future information",
+                message="Are future holidays, prices, schedules, or covariates known?",
+                options=["None", "Available"],
+                default="None",
+                allow_custom=True,
+            ),
+        ]
     )
 
     if outlier_info["count"] > 0:
@@ -211,11 +260,8 @@ def prepare_series_frame(
     1. Resolve automatic (``"Let AI Decide"``) user selections to defaults.
     2. Aggregate or drop duplicate timestamps.
     3. Reindex the series onto a canonical frequency grid.
-    4. Apply the chosen outlier treatment (clip, winsorize, remove or
-       z-score clip).
-    5. Impute missing values via forward-fill, time interpolation or
-       seasonal decomposition.
-    6. Optionally apply smoothing (EWMA or Savitzky–Golay).
+    4. Preserve missing values and model-affecting preprocessing choices for
+       training-window fitting during rolling-origin evaluation.
 
     Args:
         df: Source DataFrame containing the time series.
@@ -252,26 +298,15 @@ def prepare_series_frame(
 
     outlier_strategy = options.get("outlier_strategy", "None")
     if outlier_strategy == "Let AI Decide":
-        outlier_strategy = "clip"
-    if outlier_strategy != "None":
-        # Convert UI-friendly names to internal strategy names
-        strategy_map = {
-            "Clip (Winsorize)": "clip",
-            "Remove": "remove",
-            "Z-Score Clip": "zscore_clip",
-        }
-        internal_strategy = strategy_map.get(
-            outlier_strategy, outlier_strategy.lower().replace(" ", "_")
-        )
-        series = treat_outliers(series, internal_strategy)
-
-    if missing_strategy != "drop":
-        series = impute_missing(series, missing_strategy)
-    series = series.dropna()
-
-    smoothing = options.get("smoothing", "none")
-    if smoothing != "none":
-        series = smooth_series(series, smoothing)
+        # Diagnostics may flag anomalies, but automatic full-series clipping
+        # would leak future distributional information into backtests.
+        outlier_strategy = "None"
+    # Model-affecting preprocessing is intentionally deferred. Rolling-origin
+    # evaluation fits imputation, clipping, and smoothing independently within
+    # each training window; the production refit applies them to full history
+    # only after deterministic selection.
+    if missing_strategy == "drop":
+        series = series.dropna()
 
     prepared = series.rename(value_col).reset_index()
     prepared.columns = [date_col, value_col]

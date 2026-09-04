@@ -17,6 +17,8 @@ Rules are organised into the following groups:
 
 from __future__ import annotations
 
+import math
+
 from utils.env_helpers import env_float, env_int
 
 # ── Confidence Score Deductions ──────────────────────────────────────────────
@@ -34,7 +36,44 @@ CONFIDENCE_DEDUCTIONS: dict[str, int] = {
     "review_warn": env_int("CONF_DEDUCT_REVIEW_WARN", 10),
     "review_fail": env_int("CONF_DEDUCT_REVIEW_FAIL", 20),
     "structural_breaks": env_int("CONF_DEDUCT_STRUCTURAL_BREAKS", 5),
+    "recent_holdout_degradation": env_int(
+        "CONF_DEDUCT_RECENT_HOLDOUT_DEGRADATION", 10
+    ),
 }
+
+# The latest untouched holdout is considered materially weaker when its RMSE
+# is at least 1.25 times the pooled rolling-origin RMSE.  The report assessment,
+# confidence score, and monitoring recommendation all use this same threshold.
+RECENT_HOLDOUT_RMSE_RATIO_THRESHOLD: float = env_float(
+    "RECENT_HOLDOUT_RMSE_RATIO_THRESHOLD", 1.25
+)
+
+
+def recent_holdout_rmse_ratio(
+    final_test_rmse: object,
+    pooled_rolling_rmse: object,
+) -> float | None:
+    """Return the latest-holdout/rolling-origin RMSE ratio when valid."""
+    if isinstance(final_test_rmse, bool) or isinstance(pooled_rolling_rmse, bool):
+        return None
+    if not isinstance(final_test_rmse, (int, float)) or not isinstance(
+        pooled_rolling_rmse, (int, float)
+    ):
+        return None
+    if (
+        not math.isfinite(final_test_rmse)
+        or not math.isfinite(pooled_rolling_rmse)
+        or pooled_rolling_rmse <= 0
+    ):
+        return None
+    return float(final_test_rmse / pooled_rolling_rmse)
+
+# Anomaly screening is reported separately from the collection-quality rating.
+# Crossing this threshold triggers explicit anomaly-risk language but does not
+# by itself imply missing, duplicated, or irregular observations.
+OUTLIER_REVIEW_RATIO_THRESHOLD: float = env_float(
+    "OUTLIER_REVIEW_RATIO_THRESHOLD", 0.05
+)
 
 # ── Confidence Labels ────────────────────────────────────────────────────────
 # Score boundaries for High / Medium / Low labels.
@@ -186,6 +225,7 @@ def data_quality_rating(
     gaps: int,
     issues_count: int,
     is_regular: bool,
+    outlier_ratio: float = 0.0,
 ) -> str:
     """Determine the data quality rating from validation counts.
 
@@ -195,6 +235,8 @@ def data_quality_rating(
         gaps:          Number of missing timestamps (gaps).
         issues_count:  Number of validation issues.
         is_regular:    Whether the series has regular intervals.
+        outlier_ratio: Detected anomaly ratio. A ratio above the configured
+            review threshold limits an otherwise Good rating to Fair.
 
     Returns:
         "Good", "Fair", or "Poor".
@@ -208,7 +250,11 @@ def data_quality_rating(
         and issues_count <= good["max_issues"]
         and is_regular
     ):
-        return "Good"
+        return (
+            "Fair"
+            if outlier_ratio > OUTLIER_REVIEW_RATIO_THRESHOLD
+            else "Good"
+        )
     if (
         missing <= fair["max_missing"]
         and duplicates <= fair["max_duplicates"]

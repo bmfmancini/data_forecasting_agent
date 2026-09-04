@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import pytest
-
 from report.rules import (
     CONFIDENCE_DEDUCTIONS,
     CONFIDENCE_LABELS,
+    OUTLIER_REVIEW_RATIO_THRESHOLD,
     confidence_label,
     data_quality_rating,
     mape_quality,
@@ -41,6 +40,20 @@ class TestDataQualityRating:
 
     def test_good_rating(self) -> None:
         assert data_quality_rating(0, 0, 0, 0, True) == "Good"
+
+    def test_anomaly_threshold_limits_good_rating_to_fair(self) -> None:
+        assert (
+            data_quality_rating(
+                0, 0, 0, 0, True, OUTLIER_REVIEW_RATIO_THRESHOLD
+            )
+            == "Good"
+        )
+        assert (
+            data_quality_rating(
+                0, 0, 0, 0, True, OUTLIER_REVIEW_RATIO_THRESHOLD + 0.001
+            )
+            == "Fair"
+        )
 
     def test_good_requires_regular(self) -> None:
         assert data_quality_rating(0, 0, 0, 0, False) != "Good"
@@ -96,6 +109,7 @@ class TestConfidenceDeductions:
             "review_warn",
             "review_fail",
             "structural_breaks",
+            "recent_holdout_degradation",
         ]
         for key in expected_keys:
             assert key in CONFIDENCE_DEDUCTIONS

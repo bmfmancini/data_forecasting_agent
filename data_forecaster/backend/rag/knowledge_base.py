@@ -11,13 +11,13 @@ import chromadb
 from chromadb.config import Settings
 from sentence_transformers import SentenceTransformer
 
+from core.config import EMBED_MODEL
 from core.logging_config import get_logger
 
 logger = get_logger(__name__)
 
 DOCS_DIR = Path(__file__).parent / "docs"
 COLLECTION_NAME = "forecasting_methodology"
-EMBED_MODEL = "all-MiniLM-L6-v2"
 CHUNK_SIZE = 400  # characters per chunk
 CHUNK_OVERLAP = 80  # characters overlapping between consecutive chunks
 

@@ -311,9 +311,10 @@ def model() -> str:
             "Holt-Winters": model_sel.get("holt_winters_rejected_reason", ""),
             "ARIMA": model_sel.get("arima_rejected_reason", ""),
             "SARIMA": model_sel.get("sarima_rejected_reason", ""),
+            "EWMA": model_sel.get("ewma_rejected_reason", ""),
             "Prophet": model_sel.get("prophet_rejected_reason", ""),
         }.items()
-        if v
+        if v and k != model_sel.get("selected_model")
     }
     return render_template(
         "main/model.html",

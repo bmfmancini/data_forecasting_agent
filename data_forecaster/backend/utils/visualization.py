@@ -107,11 +107,34 @@ def plot_acf_pacf(acf_values: list, pacf_values: list, lags: list) -> str:
 
 
 def plot_forecast(series: pd.Series, forecast_result: ForecastResult) -> dict[str, Any]:
-    """Historical series + forecast line + 95% CI ribbon."""
+    """Historical series + forecast line + prediction-interval ribbon.
+
+    The ribbon uses conservative model-based/estimated language and identifies
+    experimental intervals whose empirical coverage was not evaluated.
+    """
     hist_dates = _index_to_str(series)
     fc_dates = forecast_result.forecast_dates or [
         str(i) for i in range(len(forecast_result.forecast))
     ]
+
+    # Choose the ribbon label from the adapter's interval label. Do not add a
+    # ribbon when the adapter produced no complete, finite set of bounds.
+    interval_label = getattr(forecast_result, "interval_label", "prediction_interval")
+    bounds_available = (
+        interval_label != "unavailable"
+        and bool(fc_dates)
+        and len(forecast_result.lower_ci) == len(fc_dates)
+        and len(forecast_result.upper_ci) == len(fc_dates)
+        and all(
+            np.isfinite(float(value))
+            for value in forecast_result.lower_ci + forecast_result.upper_ci
+        )
+    )
+    ribbon_name = (
+        "Estimated 95% prediction interval (coverage not evaluated)"
+        if interval_label == "experimental"
+        else "Model-based 95% prediction interval"
+    )
 
     fig = go.Figure()
 
@@ -126,18 +149,19 @@ def plot_forecast(series: pd.Series, forecast_result: ForecastResult) -> dict[st
         )
     )
 
-    # Confidence interval ribbon
-    fig.add_trace(
-        go.Scatter(
-            x=fc_dates + fc_dates[::-1],
-            y=forecast_result.upper_ci + forecast_result.lower_ci[::-1],
-            fill="toself",
-            fillcolor="rgba(220,38,38,0.15)",
-            line={"color": "rgba(255,255,255,0)"},
-            name="95% CI",
-            showlegend=True,
+    # Prediction interval ribbon
+    if bounds_available:
+        fig.add_trace(
+            go.Scatter(
+                x=fc_dates + fc_dates[::-1],
+                y=forecast_result.upper_ci + forecast_result.lower_ci[::-1],
+                fill="toself",
+                fillcolor="rgba(220,38,38,0.15)",
+                line={"color": "rgba(255,255,255,0)"},
+                name=ribbon_name,
+                showlegend=True,
+            )
         )
-    )
 
     # Forecast line
     fig.add_trace(
@@ -150,9 +174,19 @@ def plot_forecast(series: pd.Series, forecast_result: ForecastResult) -> dict[st
         )
     )
 
+    mape_str = (
+        f"{forecast_result.mape:.2f}%"
+        if forecast_result.mape is not None
+        else "not available"
+    )
+    rmse_str = (
+        f"{forecast_result.rmse:.2f}"
+        if forecast_result.rmse is not None
+        else "not available"
+    )
     fig.update_layout(
         title=f"Forecast — {forecast_result.model_used} "
-        f"(MAPE={forecast_result.mape:.2f}%, RMSE={forecast_result.rmse:.2f})",
+        f"(MAPE={mape_str}, RMSE={rmse_str})",
         xaxis_title="Date",
         yaxis_title="Value",
         template="plotly_white",
@@ -178,7 +212,14 @@ def plot_model_comparison(all_metrics: dict[str, dict[str, float]]) -> dict[str,
 
     fig = go.Figure()
     for metric, color in zip(metrics, colors):
-        values = [all_metrics[m].get(metric, 0) for m in models]
+        values = [
+            (
+                all_metrics[m].get(metric)
+                if all_metrics[m].get(metric) is not None
+                else float("nan")
+            )
+            for m in models
+        ]
         fig.add_trace(go.Bar(name=metric, x=models, y=values, marker_color=color))
 
     fig.update_layout(

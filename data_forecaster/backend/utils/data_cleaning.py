@@ -24,6 +24,7 @@ logger: logging.Logger = get_logger(__name__)
 
 __all__ = [
     "audit_series",
+    "time_index_quality",
     "reindex_series",
     "impute_missing",
     "detect_outliers_iqr",
@@ -35,6 +36,30 @@ __all__ = [
     "smooth_series",
     "validate_schema",
 ]
+
+
+def time_index_quality(
+    index: pd.DatetimeIndex,
+    freq: str | None = None,
+) -> tuple[int, bool, str | None]:
+    """Return missing-period count and regularity for a calendar time index."""
+    if not isinstance(index, pd.DatetimeIndex):
+        raise ValueError("Index must be a pandas DatetimeIndex.")
+    unique = pd.DatetimeIndex(index.dropna().unique()).sort_values()
+    if len(unique) < 2:
+        return 0, True, freq
+    inferred = pd.infer_freq(unique) if len(unique) >= 3 else None
+    effective_freq = inferred or freq
+    if effective_freq:
+        try:
+            expected = pd.date_range(unique[0], unique[-1], freq=effective_freq)
+            missing = len(expected.difference(unique))
+            unexpected = len(unique.difference(expected))
+            return missing, missing == 0 and unexpected == 0, effective_freq
+        except (TypeError, ValueError):
+            pass
+    diffs = unique.to_series().diff().dropna()
+    return 0, bool(diffs.nunique() <= 1), None
 
 
 def audit_series(series: pd.Series) -> dict[str, Any]:
@@ -62,10 +87,8 @@ def audit_series(series: pd.Series) -> dict[str, Any]:
     missing = int(series.isna().sum())
     duplicate_timestamps = int(series.index.duplicated().sum())
 
-    diffs = series.index.to_series().diff().dropna()
-    mode_diff = diffs.mode()[0] if not diffs.empty else None
-    irregular = bool(diffs.nunique() > 1) if mode_diff is not None else False
-    freq = pd.infer_freq(series.index)
+    _, is_regular, freq = time_index_quality(series.index)
+    irregular = not is_regular
 
     outlier_counts = {
         "iqr": int(detect_outliers_iqr(series.dropna())["count"]),

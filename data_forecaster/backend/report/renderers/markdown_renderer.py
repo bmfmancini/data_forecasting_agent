@@ -11,15 +11,7 @@ the pre-computed structured fields and LLM-generated narrative strings.
 
 from __future__ import annotations
 
-import math
-
-from report.models import (
-    ExecutiveReport,
-    HealthIndicator,
-    PredictionInterval,
-    Recommendation,
-    Risk,
-)
+from report.models import ExecutiveReport, format_metric
 
 
 def _sanitize_cell(value: str) -> str:
@@ -35,11 +27,6 @@ def _sanitize_cell(value: str) -> str:
         Sanitised cell text safe for Markdown table insertion.
     """
     return value.replace("|", "\\|").replace("\n", " ").replace("\r", " ")
-
-
-def _finite_or_zero(value: float | None) -> float:
-    """Return finite metric values, replacing unavailable values with zero."""
-    return value if value is not None and math.isfinite(value) else 0.0
 
 
 class MarkdownRenderer:
@@ -90,7 +77,7 @@ class MarkdownRenderer:
         lines = ["## 2. Executive Summary", ""]
         lines.append(f"**Strategic Outlook:** {s.strategic_outlook}")
         lines.append("")
-        lines.append(f"**Expected Growth:** {s.expected_growth}")
+        lines.append(f"**Forecast Endpoint Change:** {s.expected_growth}")
         lines.append("")
         lines.append(f"**Confidence Level:** {s.confidence_level}")
         lines.append("")
@@ -170,14 +157,52 @@ class MarkdownRenderer:
         lines.append(
             f"**Forecast Horizon:** {m.horizon} periods ({m.first_date} → {m.last_date})"
         )
-        lines.append(f"**Projected Change:** {m.pct_change:+.1f}%")
+        lines.append(f"**Endpoint Change:** {m.pct_change:+.1f}%")
+        lines.append(f"**Endpoint Direction:** {m.endpoint_direction}")
+        lines.append(f"**Forecast Pattern:** {m.forecast_pattern}")
+        if m.peak_value is not None:
+            peak_context = f" on {m.peak_date}" if m.peak_date else ""
+            lines.append(
+                f"**Seasonal Peak:** {m.peak_value}{peak_context} "
+                f"({format_metric(m.peak_change_pct, '+.1f')}% versus the first forecast period)"
+            )
         lines.append(f"**Start Value:** {m.first_value}")
         lines.append(f"**End Value:** {m.last_value}")
+        lines.append(
+            "**Metric Provenance:** Model selection used rolling-origin metrics; "
+            "the untouched final-test metrics below were not used for ranking."
+        )
+        final_rmse = m.final_test_metrics.get("rmse")
+        final_mae = m.final_test_metrics.get("mae")
+        lines.append(
+            f"**Untouched Final Test:** RMSE {format_metric(final_rmse)}, "
+            f"MAE {format_metric(final_mae)}"
+        )
+        if m.final_test_assessment:
+            lines.append(f"**Recent Holdout Assessment:** {m.final_test_assessment}")
         if report.forecast_outlook.narrative:
             lines.append("")
             lines.append(report.forecast_outlook.narrative)
         lines.append("")
-        lines.append("### Prediction Intervals (95%)")
+        interval_label = m.interval_label
+        if not m.prediction_intervals:
+            lines.append("### Prediction Intervals Unavailable")
+            lines.append("")
+            lines.append(
+                "The forecasting model did not produce usable prediction-interval "
+                "bounds; no 95% planning range is shown."
+            )
+            lines.append("")
+            lines.append("**Figure: Point Forecast**")
+            lines.append("")
+            lines.append("[VISUAL:FORECAST]")
+            return "\n".join(lines)
+        interval_heading = (
+            "Estimated 95% Prediction Intervals (coverage not evaluated)"
+            if interval_label == "experimental"
+            else "Model-Based 95% Prediction Intervals"
+        )
+        lines.append(f"### {interval_heading}")
         lines.append("")
         lines.append("| Date | Forecast | Lower Bound | Upper Bound |")
         lines.append("|------|----------|-------------|-------------|")
@@ -186,8 +211,18 @@ class MarkdownRenderer:
                 f"| {pi.date} | {pi.forecast} | {pi.lower_ci} | {pi.upper_ci} |"
             )
         lines.append("")
-        lines.append("**Figure: Forecast with Prediction Intervals**")
-        lines.append("The projected values with 95% prediction range for planning.")
+        figure_label = (
+            "Forecast with Estimated Prediction Intervals"
+            if interval_label == "experimental"
+            else "Forecast with Model-Based Prediction Intervals"
+        )
+        lines.append(f"**Figure: {figure_label}**")
+        lines.append(
+            "The projected values with an estimated 95% planning range; empirical "
+            "coverage was not evaluated."
+            if interval_label == "experimental"
+            else "The projected values with a model-based 95% planning range."
+        )
         lines.append("")
         lines.append("[VISUAL:FORECAST]")
         return "\n".join(lines)
@@ -212,12 +247,12 @@ class MarkdownRenderer:
         for entry in mc.entries:
             selected = "✓" if entry.selected else ""
             rejected = _sanitize_cell(entry.rejected_reason or "")
-            wape = _finite_or_zero(entry.wape)
-            mase = _finite_or_zero(entry.mase)
             lines.append(
-                f"| {entry.model} | {entry.rmse:.4f} | {entry.mae:.4f} | "
-                f"{entry.mape:.2f}% | "
-                f"{wape:.2f}% | {mase:.4f} | {selected} | {rejected} |"
+                f"| {entry.model} | {format_metric(entry.rmse)} | "
+                f"{format_metric(entry.mae)} | "
+                f"{format_metric(entry.mape, '.2f')}% | "
+                f"{format_metric(entry.wape, '.2f')}% | "
+                f"{format_metric(entry.mase)} | {selected} | {rejected} |"
             )
         lines.append("")
         lines.append("[VISUAL:ACF_PACF]")
