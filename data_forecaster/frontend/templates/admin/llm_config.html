@@ -68,6 +68,9 @@
                     {% if llm_test_result.response %}
                     <div class="small mt-2"><strong>LLM response:</strong> <span class="font-monospace">{{ llm_test_result.response }}</span></div>
                     {% endif %}
+                    {% if llm_test_result.diagnostic %}
+                    <div class="small mt-2"><strong>Provider diagnostic:</strong> <span class="font-monospace text-break">{{ llm_test_result.diagnostic }}</span></div>
+                    {% endif %}
                 </div>
                 {% endif %}
                 <form method="post" novalidate>

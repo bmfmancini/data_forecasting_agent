@@ -11,6 +11,9 @@
         <li>URL and API key valid: {{ 'Yes' if llm_test_result.credentials_valid else 'No' }}</li>
         <li>LLM responded: {{ 'Yes' if llm_test_result.llm_responded else 'No' }}</li>
     </ul>
+    {% if llm_test_result.diagnostic %}
+    <div class="small mt-2"><strong>Provider diagnostic:</strong> <span class="font-monospace text-break">{{ llm_test_result.diagnostic }}</span></div>
+    {% endif %}
 </div>
 {% endif %}
 <form method="post" novalidate>

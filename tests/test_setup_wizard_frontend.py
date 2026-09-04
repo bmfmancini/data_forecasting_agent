@@ -482,6 +482,7 @@ class TestAdminConfigPages:
             "llm_responded": False,
             "message": "The LLM URL could not be reached.",
             "response": None,
+            "diagnostic": "HTTP 404: model 'candidate-model' not found",
         }
 
         resp = admin_client.post(
@@ -498,6 +499,8 @@ class TestAdminConfigPages:
 
         assert resp.status_code == 200
         assert b"The LLM URL could not be reached." in resp.data
+        assert b"Provider diagnostic:" in resp.data
+        assert b"HTTP 404: model &#39;candidate-model&#39; not found" in resp.data
         assert backend_state["llm_config"]["model"] == "gemini-1.5-flash"
 
     def test_models_page_renders(self, admin_client) -> None:

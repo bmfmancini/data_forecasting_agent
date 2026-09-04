@@ -16,6 +16,8 @@ import httpx
 _GEMINI_BASE_URL = "https://generativelanguage.googleapis.com"
 _PING_PROMPT = "Connection test. Reply with exactly: pong"
 _RESPONSE_PREVIEW_LIMIT = 500
+_DIAGNOSTIC_PREVIEW_LIMIT = 500
+_PING_MAX_OUTPUT_TOKENS = 64
 
 
 @dataclass(frozen=True)
@@ -28,6 +30,7 @@ class LLMValidationResult:
     llm_responded: bool = False
     message: str = ""
     response: str | None = None
+    diagnostic: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serialisable representation."""
@@ -39,13 +42,51 @@ def _failed(
     *,
     url_reachable: bool = False,
     credentials_valid: bool = False,
+    diagnostic: str | None = None,
 ) -> LLMValidationResult:
-    """Build a failed validation result without provider response details."""
+    """Build a failed validation result with a safe provider diagnostic."""
     return LLMValidationResult(
         url_reachable=url_reachable,
         credentials_valid=credentials_valid,
         message=message,
+        diagnostic=diagnostic,
     )
+
+
+def _provider_error_diagnostic(response: httpx.Response) -> str:
+    """Return the useful, non-sensitive portion of a provider error response.
+
+    Providers use a few common shapes for errors.  Only known diagnostic
+    fields are returned rather than echoing the complete body, which could
+    include request data or credentials on a non-conforming provider.
+    """
+    detail = ""
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = None
+
+    if isinstance(payload, dict):
+        error = payload.get("error")
+        if isinstance(error, dict):
+            for field in ("message", "detail", "status", "type", "code"):
+                value = error.get(field)
+                if isinstance(value, (str, int, float)) and str(value).strip():
+                    detail = str(value).strip()
+                    break
+        elif isinstance(error, (str, int, float)) and str(error).strip():
+            detail = str(error).strip()
+        if not detail:
+            for field in ("message", "detail"):
+                value = payload.get(field)
+                if isinstance(value, (str, int, float)) and str(value).strip():
+                    detail = str(value).strip()
+                    break
+
+    status = f"HTTP {response.status_code}"
+    if detail:
+        return f"{status}: {detail[:_DIAGNOSTIC_PREVIEW_LIMIT]}"
+    return status
 
 
 def _extract_gemini_text(payload: dict[str, Any]) -> str:
@@ -79,8 +120,8 @@ async def validate_llm_configuration(
 ) -> LLMValidationResult:
     """Run reachability, authentication, and generation checks in order.
 
-    The candidate settings are used in-memory only. Provider error bodies are
-    intentionally excluded from the result because they can echo request data.
+    The candidate settings are used in-memory only.  Failure results include a
+    bounded diagnostic drawn only from standard provider error fields.
     """
     if provider not in {"gemini", "ollama", "ollama_cloud"}:
         return _failed("The selected LLM provider is not supported.")
@@ -131,6 +172,7 @@ async def validate_llm_configuration(
             return _failed(
                 "The LLM URL or API key was rejected. Check both values.",
                 url_reachable=True,
+                diagnostic=_provider_error_diagnostic(credential_response),
             )
 
         safe_model = quote(model.strip(), safe="")
@@ -146,7 +188,9 @@ async def validate_llm_configuration(
                         "contents": [
                             {"parts": [{"text": _PING_PROMPT}]}
                         ],
-                        "generationConfig": {"maxOutputTokens": 20},
+                        "generationConfig": {
+                            "maxOutputTokens": _PING_MAX_OUTPUT_TOKENS
+                        },
                     },
                 )
             else:
@@ -159,7 +203,12 @@ async def validate_llm_configuration(
                             {"role": "user", "content": _PING_PROMPT}
                         ],
                         "stream": False,
-                        "options": {"num_predict": 20},
+                        # Reasoning models such as gpt-oss can consume a very
+                        # small generation budget entirely in hidden thinking,
+                        # leaving ``message.content`` empty.  A connection
+                        # probe needs a visible response, so turn thinking off.
+                        "think": False,
+                        "options": {"num_predict": _PING_MAX_OUTPUT_TOKENS},
                     },
                 )
         except httpx.RequestError:
@@ -170,10 +219,21 @@ async def validate_llm_configuration(
             )
 
         if not ping_response.is_success:
+            # A 403 can mean that the otherwise valid credential is not allowed
+            # to use this particular model.  Only 401 conclusively invalidates
+            # the credential-validation stage.
+            credentials_rejected = ping_response.status_code == 401
             return _failed(
-                "Credentials were accepted, but the selected model rejected the ping.",
+                (
+                    "The LLM rejected the credentials while prompting the selected "
+                    "model."
+                    if credentials_rejected
+                    else "Credentials were accepted, but the selected model rejected "
+                    "the ping."
+                ),
                 url_reachable=True,
-                credentials_valid=True,
+                credentials_valid=not credentials_rejected,
+                diagnostic=_provider_error_diagnostic(ping_response),
             )
 
         try:

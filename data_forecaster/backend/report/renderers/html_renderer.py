@@ -434,6 +434,15 @@ class HTMLRenderer:
     def _render_metadata(self, report: ExecutiveReport) -> str:
         """Render report metadata as a small table."""
         m = report.metadata
+        narrative_source = "LLM-generated"
+        if m.llm_narrative_fallback:
+            sections = ", ".join(
+                section.replace("_", " ") for section in m.llm_fallback_sections
+            )
+            narrative_source = (
+                "Deterministic fallback used"
+                + (f" ({sections})" if sections else "")
+            )
         return (
             '<section class="report-metadata mt-4">'
             "<h6>Report Metadata</h6>"
@@ -445,6 +454,7 @@ class HTMLRenderer:
             f"<tr><td>Dataset Frequency</td><td>{escape(m.dataset_frequency)}</td></tr>"
             f"<tr><td>Data Quality</td><td>{escape(m.data_quality_rating)}</td></tr>"
             f"<tr><td>Row Count</td><td>{m.row_count}</td></tr>"
+            f"<tr><td>Narrative Generation</td><td>{escape(narrative_source)}</td></tr>"
             "</table>"
             "</section>"
         )

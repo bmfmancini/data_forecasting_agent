@@ -9,6 +9,7 @@ import pytest
 from jinja2 import Environment, FileSystemLoader
 
 from forecasting.contracts import ForecastFitStatus
+import report.narrative as narrative
 from report.builder import ExecutiveReportBuilder
 from report.renderers import HTMLRenderer, MarkdownRenderer
 from schemas import (
@@ -198,6 +199,22 @@ class TestMarkdownRenderer:
         assert "Generated At" in md
         assert "Forecast Horizon" in md
 
+    def test_metadata_identifies_deterministic_narrative_fallback(
+        self, sample_report: "object"
+    ) -> None:
+        report = sample_report.model_copy(deep=True)
+        report.metadata.llm_narrative_fallback = True
+        report.metadata.llm_fallback_sections = [
+            "historical_analysis",
+            "forecast_outlook",
+        ]
+
+        md = MarkdownRenderer().render(report)
+
+        assert "Narrative Generation" in md
+        assert "Deterministic fallback used" in md
+        assert "historical analysis, forecast outlook" in md
+
     def test_no_fabricated_financials(self, sample_report: "object") -> None:
         """Fallback narratives should not contain fabricated financials."""
         renderer = MarkdownRenderer()
@@ -211,6 +228,44 @@ class TestMarkdownRenderer:
         assert not financial_pattern.search(
             md
         ), "Rendered markdown contains fabricated financial figures."
+
+
+def test_narrative_generation_records_section_fallbacks(
+    sample_report: "object", monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Section-level fallbacks must propagate to the report-level status."""
+    monkeypatch.setattr(narrative, "get_llm", lambda **_kwargs: object())
+    monkeypatch.setattr(
+        narrative, "get_llm_config", lambda: SimpleNamespace(temperature=0.0)
+    )
+
+    def always_fallback(
+        _llm: object,
+        _prompt: object,
+        _section: object,
+        section_name: str,
+        _total_usage: dict[str, int],
+        _extra_instructions: str,
+        fallback_sections: list[str],
+    ) -> str:
+        fallback_sections.append(section_name)
+        return f"Fallback for {section_name}"
+
+    monkeypatch.setattr(narrative, "_generate_section", always_fallback)
+
+    report, _ = narrative.generate_narratives(sample_report)
+
+    assert report.metadata.llm_narrative_fallback is True
+    assert report.metadata.llm_fallback_sections == [
+        "executive_summary",
+        "data_quality",
+        "historical_analysis",
+        "forecast_outlook",
+        "model_comparison",
+        "statistical_audit",
+        "explainability",
+        *["recommendation"] * len(report.recommendations),
+    ]
 
 
 # ── HTML Renderer Tests ──────────────────────────────────────────────────────
@@ -370,3 +425,15 @@ class TestHTMLRenderer:
         html = renderer.render(sample_report)
         assert "Report Metadata" in html
         assert "Engine Version" in html
+
+    def test_metadata_identifies_deterministic_narrative_fallback(
+        self, sample_report: "object"
+    ) -> None:
+        report = sample_report.model_copy(deep=True)
+        report.metadata.llm_narrative_fallback = True
+        report.metadata.llm_fallback_sections = ["forecast_outlook"]
+
+        html = HTMLRenderer().render(report)
+
+        assert "Narrative Generation" in html
+        assert "Deterministic fallback used (forecast outlook)" in html

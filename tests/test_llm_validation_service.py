@@ -78,6 +78,8 @@ async def test_ollama_validation_runs_all_three_stages(monkeypatch: Any) -> None
         "https://ollama.example/api/chat",
     ]
     assert client.calls[1][2]["headers"]["Authorization"] == "Bearer secret-key"
+    assert client.calls[2][2]["json"]["think"] is False
+    assert client.calls[2][2]["json"]["options"]["num_predict"] == 64
 
 
 @pytest.mark.asyncio
@@ -115,3 +117,49 @@ async def test_unreachable_url_stops_before_credentials(monkeypatch: Any) -> Non
     assert result.ok is False
     assert result.url_reachable is False
     assert len(client.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_model_rejection_returns_safe_provider_diagnostic(
+    monkeypatch: Any,
+) -> None:
+    client = _FakeClient(
+        [
+            _Response(200, {}),
+            _Response(200, {"models": []}),
+            _Response(404, {"error": "model 'missing-model' not found"}),
+        ]
+    )
+    _install_client(monkeypatch, client)
+
+    result = await service.validate_llm_configuration(
+        provider="ollama",
+        model="missing-model",
+        base_url="https://ollama.example",
+        api_key=None,
+    )
+
+    assert result.credentials_valid is True
+    assert result.diagnostic == "HTTP 404: model 'missing-model' not found"
+
+
+@pytest.mark.asyncio
+async def test_ping_auth_rejection_marks_credentials_invalid(monkeypatch: Any) -> None:
+    client = _FakeClient(
+        [
+            _Response(200, {}),
+            _Response(200, {"models": []}),
+            _Response(401, {"error": {"message": "invalid API key"}}),
+        ]
+    )
+    _install_client(monkeypatch, client)
+
+    result = await service.validate_llm_configuration(
+        provider="ollama_cloud",
+        model="llama-test",
+        base_url="https://ollama.example",
+        api_key="invalid-key",
+    )
+
+    assert result.credentials_valid is False
+    assert result.diagnostic == "HTTP 401: invalid API key"

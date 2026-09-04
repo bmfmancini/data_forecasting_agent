@@ -65,7 +65,13 @@ def get_llm(temperature: float = 0.0) -> BaseChatModel:
             model=config.model,
             base_url=config.base_url,
             temperature=temperature,
-            headers={"Authorization": f"Bearer {config.api_key}"},
+            # ChatOllama passes HTTP settings through ``client_kwargs``.
+            # A top-level ``headers`` argument is ignored by current
+            # langchain-ollama releases, which results in a 401 from Ollama
+            # Cloud despite a successful direct connection test.
+            client_kwargs={
+                "headers": {"Authorization": f"Bearer {config.api_key}"}
+            },
         )
 
     if config.provider == "ollama":
@@ -78,8 +84,8 @@ def get_llm(temperature: float = 0.0) -> BaseChatModel:
             model=config.model,
             base_url=config.base_url,
             temperature=temperature,
-            headers=(
-                {"Authorization": f"Bearer {config.api_key}"}
+            client_kwargs=(
+                {"headers": {"Authorization": f"Bearer {config.api_key}"}}
                 if config.api_key
                 else None
             ),

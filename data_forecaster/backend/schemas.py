@@ -535,3 +535,4 @@ class LLMConfigTestResponse(BaseModel):
     llm_responded: bool
     message: str
     response: str | None = None
+    diagnostic: str | None = None

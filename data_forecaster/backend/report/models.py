@@ -458,6 +458,10 @@ class ReportMetadata(BaseModel):
         dataset_frequency:   Frequency of the input dataset.
         data_quality_rating: Overall data quality rating.
         row_count:           Number of rows in the input dataset.
+        llm_narrative_fallback: Whether deterministic narrative templates
+            replaced one or more LLM-generated sections.
+        llm_fallback_sections: Narrative sections that used deterministic
+            templates, if any.
     """
 
     engine_version: str
@@ -468,6 +472,8 @@ class ReportMetadata(BaseModel):
     dataset_frequency: str
     data_quality_rating: str
     row_count: int
+    llm_narrative_fallback: bool = False
+    llm_fallback_sections: list[str] = Field(default_factory=list)
 
 
 class Appendix(BaseModel):
