@@ -90,7 +90,7 @@ Drop your `server.crt` and `server.key` into the `certs/frontend/` or `certs/bac
 
 ### Changing the domain
 
-Set `SSL_DOMAIN` in your shell or Compose project `.env` to match your hostname:
+Set `SSL_DOMAIN` in your shell when starting Compose to match your hostname:
 
 ```bash
 SSL_DOMAIN=forecaster.example.com
@@ -115,10 +115,7 @@ when the backend uses a CA-signed certificate.
 | `FRONTEND_HTTPS_PORT` | nginx-frontend | `443` | Frontend HTTPS port |
 | `BACKEND_HTTPS_PORT` | nginx-backend | `8443` | Backend HTTPS port |
 | `CORS_ALLOWED_ORIGINS` | backend | `http://localhost:5000,...` | Comma-separated allowed origins |
-| `FRONTEND_API_USERNAME` | backend | `frontend` | Optional backend bootstrap service-account username |
-| `FRONTEND_API_KEY` | backend | `frontend` | Optional backend bootstrap service-account key |
-| `SECRET_KEY` | frontend | (random) | Flask session secret |
-| `FLASK_ENCRYPTION_KEY` | frontend | (random) | Fernet key for encrypting stored API credentials |
+| `FLASK_ENV` | frontend | `production` in Compose | Flask runtime mode |
 
 The frontend stores the active backend URL, SSL verification setting,
 username, and encrypted key in its SQLite database via **Admin → API Config**.
@@ -153,7 +150,7 @@ username, and encrypted key in its SQLite database via **Admin → API Config**.
 
 **Backend healthcheck fails on startup** — The backend takes ~25 seconds to initialize (ChromaDB + LLM setup). The healthcheck has a 40-second start period, but if your machine is slow, increase `start_period` in `docker-compose.yml`.
 
-**Stale database after changing backend bootstrap credentials** — The backend DB lives in a Docker volume and a bind mount. If you change `FRONTEND_API_KEY` in `backend/.env` and the old user still exists, the backend won't recreate it. Rotate or create the backend API user from **Admin → API Keys**, then update **Admin → API Config**. For a full reset:
+**Stale database after changing backend credentials** — Rotate or create the backend API user from **Admin → API Keys**, then update **Admin → API Config**. For a full reset:
 
 ```bash
 docker compose down -v

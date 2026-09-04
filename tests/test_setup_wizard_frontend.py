@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from cryptography.fernet import Fernet
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BACKEND_ROOT = REPO_ROOT / "data_forecaster" / "backend"
@@ -150,9 +149,8 @@ def mock_backend(
 
 
 @pytest.fixture
-def app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def app(tmp_path: Path):
     """Create a testing Flask app with an isolated database."""
-    monkeypatch.setenv("FLASK_ENCRYPTION_KEY", Fernet.generate_key().decode())
     monkeypatch.setattr(
         "config.TestingConfig.DATABASE", str(tmp_path / "frontend.db")
     )

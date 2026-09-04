@@ -25,11 +25,6 @@ The easiest way to run this is with Docker. You'll need Docker and Docker Compos
 git clone <repository-url>
 cd data_forecasting_agent/data_forecaster
 
-# Copy the service-specific env examples, then edit backend/.env
-# to add your LLM API key.
-cp backend/.env.example backend/.env
-cp frontend/.env.example frontend/.env
-
 # Build and start everything (single-machine mode)
 ./scripts/build_containers.sh --single
 ```
@@ -43,30 +38,11 @@ That's it. Four containers come up:
 | `nginx-backend` | TLS termination for the API | `https://localhost:8443` |
 | `backend` | FastAPI + forecasting engine | internal only |
 
-Open `https://localhost` in your browser. On first run you'll be redirected to the **setup wizard** (`/setup`), which walks you through: backend connection → LLM provider and credentials → enabling API auth → choosing forecasting models → creating the first admin account. No `.env` secrets are needed — keys are generated and stored encrypted at setup time (see [docs/secrets-management.md](docs/secrets-management.md)).
-
-> **Existing deployments** (database already has API users) migrate automatically on startup: setup is marked complete and your current env-based LLM config is kept as the initial database values. You can change everything afterwards from the admin panel.
+Open `https://localhost` in your browser. On first run you'll be redirected to the **setup wizard** (`/setup`), which walks you through: backend connection → LLM provider and credentials → enabling API auth → choosing forecasting models → creating the first admin account. No `.env` secrets are needed — keys are generated and stored encrypted at setup time.
 
 ## LLM setup
 
 The agents need an LLM to do their analysis. You can use either Google Gemini or Ollama — configured in the setup wizard or later under **Admin → LLM Config** (keys are stored encrypted in the backend database, never in the frontend).
-
-The values in `backend/.env` are only a **pre-setup fallback** for fresh installs that haven't run the wizard yet:
-
-**Gemini** (easiest — just add your key):
-```bash
-# In backend/.env (pre-setup fallback only)
-GOOGLE_API_KEY=your_key_here
-USE_OLLAMA=false
-```
-
-**Ollama** (runs locally or via Ollama Cloud):
-```bash
-# In backend/.env (pre-setup fallback only)
-USE_OLLAMA=true
-OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=llama3
-```
 
 If you're running Ollama locally, pull the model first: `ollama pull llama3`.
 
