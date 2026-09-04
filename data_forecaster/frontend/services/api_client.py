@@ -9,10 +9,11 @@ variable fallback) so all callers remain decoupled from configuration details.
 
 from __future__ import annotations
 
-import base64
+import sqlite3
 from typing import Any
 
 import requests
+from cryptography.fernet import InvalidToken
 from flask import current_app
 
 from db.crypto import decrypt
@@ -587,6 +588,47 @@ class BackendAPIClient:
         )
 
 
+def resolve_backend_connection() -> tuple[str, bool]:
+    """Resolve the backend base URL and TLS preference for this request.
+
+    The stored ``api_credentials`` row (label ``'default'``) is the source
+    of truth so every gunicorn worker observes the same connection
+    settings.  Values fall back to the application config when the row is
+    absent or incomplete — for example during first-run setup before the
+    wizard's backend step has saved anything.
+
+    Returns:
+        A ``(base_url, verify_ssl)`` tuple.  ``base_url`` may be an empty
+        string when nothing is configured anywhere.
+    """
+    base_url: str = current_app.config.get("BACKEND_URL", "")
+    verify_ssl: bool = bool(current_app.config.get("API_VERIFY_SSL", False))
+
+    try:
+        row = query_db(
+            """
+            SELECT base_url, verify_ssl
+            FROM api_credentials
+            WHERE label = 'default'
+            LIMIT 1
+            """,
+            one=True,
+        )
+    except sqlite3.Error:
+        # The gate may run before the DB is seeded (e.g. fresh volume);
+        # fall back to config-only resolution instead of failing hard.
+        return base_url, verify_ssl
+
+    if row and isinstance(row, dict):
+        stored_url = str(row.get("base_url", "") or "")
+        if stored_url:
+            base_url = stored_url
+        db_verify = row.get("verify_ssl")
+        if db_verify is not None:
+            verify_ssl = bool(db_verify)
+    return base_url, verify_ssl
+
+
 def get_api_client() -> BackendAPIClient:
     """Construct a :class:`BackendAPIClient` for the current request.
 
@@ -598,8 +640,7 @@ def get_api_client() -> BackendAPIClient:
     Returns:
         A configured :class:`BackendAPIClient` instance.
     """
-    base_url: str = current_app.config.get("BACKEND_URL", "")
-    verify_ssl: bool = current_app.config.get("API_VERIFY_SSL", False)
+    base_url, verify_ssl = resolve_backend_connection()
     api_username: str | None = None
     api_key: str | None = None
 
@@ -628,7 +669,9 @@ def get_api_client() -> BackendAPIClient:
             try:
                 api_username = decrypt(str(enc_user))
                 api_key = decrypt(str(enc_pass))
-            except Exception:
+            except (InvalidToken, ValueError, TypeError):
+                # Corrupt credentials (e.g. key rotated) must not break the
+                # client — treat as unauthenticated instead.
                 api_username = None
                 api_key = None
 

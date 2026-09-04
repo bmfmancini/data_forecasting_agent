@@ -149,7 +149,7 @@ def mock_backend(
 
 
 @pytest.fixture
-def app(tmp_path: Path):
+def app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Create a testing Flask app with an isolated database."""
     monkeypatch.setattr(
         "config.TestingConfig.DATABASE", str(tmp_path / "frontend.db")
@@ -201,6 +201,99 @@ class TestSetupGating:
         resp = client.get("/setup/")
         assert resp.status_code == 302
         assert "/auth/login" in resp.headers["Location"]
+
+
+class TestSetupGateWorkerConsistency:
+    """The gate must resolve the backend URL from the DB, not just config.
+
+    Gunicorn runs multiple workers; only the worker that handled the
+    wizard's backend step has ``BACKEND_URL`` in its in-process config.
+    Reading config alone made workers disagree about setup state, which
+    caused the wizard/login redirect loop.
+    """
+
+    def test_gate_uses_db_url_when_config_is_stale(
+        self, app, client, backend_state
+    ) -> None:
+        """A worker with empty in-memory config must still honour the DB URL."""
+        client.post("/setup/backend", data={"base_url": _BACKEND_URL})
+
+        # Simulate another gunicorn worker: in-process config is stale.
+        app.config["BACKEND_URL"] = ""
+        backend_state["setup_complete"] = True
+
+        resp = client.get("/")
+        assert resp.status_code == 302
+        assert not resp.headers["Location"].startswith("/setup")
+
+    def test_wizard_exits_when_db_url_set_and_backend_complete(
+        self, app, client, backend_state
+    ) -> None:
+        """With the URL in the DB, every worker must agree setup is done."""
+        client.post("/setup/backend", data={"base_url": _BACKEND_URL})
+
+        app.config["BACKEND_URL"] = ""
+        backend_state["setup_complete"] = True
+
+        resp = client.get("/setup/")
+        assert resp.status_code == 302
+        assert "/auth/login" in resp.headers["Location"]
+
+    def test_wizard_backend_step_prefills_db_url_on_stale_worker(
+        self, app, client
+    ) -> None:
+        """Step 1 must pre-fill the URL from the DB on every worker."""
+        client.post("/setup/backend", data={"base_url": _BACKEND_URL})
+
+        app.config["BACKEND_URL"] = ""
+
+        resp = client.get("/setup/backend")
+        assert resp.status_code == 200
+        assert _BACKEND_URL.encode() in resp.data
+
+    def test_admin_step_preserves_db_base_url_on_stale_worker(
+        self, app, client
+    ) -> None:
+        """Step 5 must not wipe the stored base_url on a worker without config.
+
+        Previously step 5 read ``BACKEND_URL`` from in-process config; on a
+        worker that had not handled step 1 that value was empty, so saving
+        credentials overwrote the DB's ``base_url`` with an empty string and
+        the wizard looped after every restart.
+        """
+        client.post("/setup/backend", data={"base_url": _BACKEND_URL})
+        client.post(
+            "/setup/llm",
+            data={
+                "provider": "gemini",
+                "model": "gemini-1.5-flash",
+                "temperature": "0.1",
+            },
+        )
+        client.post("/setup/auth", data={"confirm": "y"})
+        client.post(
+            "/setup/models",
+            data={"model_enabled": [m["name"] for m in _MODELS]},
+        )
+
+        # Simulate another gunicorn worker handling the final step.
+        app.config["BACKEND_URL"] = ""
+        app.config["API_VERIFY_SSL"] = False
+
+        resp = client.post(
+            "/setup/admin",
+            data={"username": "frontend", "api_key": "test-secret-key-123"},
+        )
+        assert resp.status_code == 302
+        assert "/setup/done" in resp.headers["Location"]
+
+        with app.app_context():
+            row = query_db(
+                "SELECT base_url FROM api_credentials WHERE label = 'default'",
+                one=True,
+            )
+        assert row is not None
+        assert row["base_url"] == _BACKEND_URL
 
 
 class TestSetupWizard:

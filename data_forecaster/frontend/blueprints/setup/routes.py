@@ -45,7 +45,11 @@ from blueprints.setup.forms import (
     ModelsForm,
 )
 from db.crypto import encrypt
-from services.api_client import BackendAPIClient, get_api_client
+from services.api_client import (
+    BackendAPIClient,
+    get_api_client,
+    resolve_backend_connection,
+)
 from services.connection_errors import sanitize_connection_error
 from services.credentials_service import save_api_credentials
 
@@ -101,8 +105,11 @@ def backend() -> str | tuple[str, int] | Response:
 
     form = BackendConnectionForm()
     if request.method == "GET":
-        form.base_url.data = current_app.config.get("BACKEND_URL", "")
-        form.verify_ssl.data = bool(current_app.config.get("API_VERIFY_SSL", False))
+        # Resolve from the DB first so every worker pre-fills the same
+        # URL (a different worker may have verified the connection).
+        base_url, verify_ssl = resolve_backend_connection()
+        form.base_url.data = base_url
+        form.verify_ssl.data = verify_ssl
         return _render(_TEMPLATE_BACKEND, form=form)
 
     if not form.validate_on_submit():
@@ -405,10 +412,21 @@ def admin() -> str | tuple[str, int] | Response:
         return _render(_TEMPLATE_ADMIN, 200, form=form)
 
     try:
+        # Resolve from the DB (not in-process config): a different
+        # gunicorn worker may have handled step 1, leaving this worker's
+        # config empty.  Using config here would wipe the stored base_url.
+        base_url, verify_ssl = resolve_backend_connection()
+        if not base_url:
+            flash(
+                "Backend URL is missing — complete the connection step "
+                "again before creating the admin user.",
+                "danger",
+            )
+            return _render(_TEMPLATE_ADMIN, 200, form=form)
         save_api_credentials(
-            str(current_app.config.get("BACKEND_URL", "")),
+            base_url,
             _DEFAULT_TIMEOUT,
-            int(bool(current_app.config.get("API_VERIFY_SSL", False))),
+            int(verify_ssl),
             encrypt(username),
             encrypt(api_key),
         )
