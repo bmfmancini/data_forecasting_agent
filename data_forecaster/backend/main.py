@@ -69,6 +69,7 @@ from schemas import (
     ModelsResponse,
     ModelUpdateRequest,
     LLMConfigResponse,
+    LLMConfigTestResponse,
     LLMConfigUpdateRequest,
     UploadResponse,
 )
@@ -94,6 +95,7 @@ from services.job_service import (
     list_recent_jobs,
     update_job_settings,
 )
+from services.llm_validation_service import validate_llm_configuration
 from utils.data_parser import parse_upload, parse_upload_from_path
 from utils.preflight import run_preflight_checks
 
@@ -1008,6 +1010,32 @@ def llm_config_get(
         "api_key_set": config.api_key is not None,
         "configured": is_configured(),
     }
+
+
+@app.post("/config/llm/test", response_model=LLMConfigTestResponse)
+async def llm_config_test(
+    request: LLMConfigUpdateRequest,
+    _user: Annotated[dict, Depends(require_admin_api_key)],
+) -> dict[str, Any]:
+    """Test candidate LLM settings without persisting them.
+
+    When the write-only API key is omitted, the currently stored key is
+    tested. This lets an administrator retest or edit non-secret settings
+    without exposing or re-entering the saved credential.
+    """
+    current = get_llm_config()
+    api_key = (
+        request.api_key.get_secret_value()
+        if request.api_key is not None
+        else current.api_key
+    )
+    result = await validate_llm_configuration(
+        provider=request.provider,
+        model=request.model,
+        base_url=request.base_url,
+        api_key=api_key,
+    )
+    return result.to_dict()
 
 
 @app.put(

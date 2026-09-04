@@ -3,6 +3,16 @@
 {% block content %}
 <h5 class="mb-1">Step 2 — LLM provider</h5>
 <p class="small text-muted mb-3">Configure the language model provider. The API key is sent to the backend and is never stored by this frontend.</p>
+{% if llm_test_result %}
+<div class="alert alert-danger" role="alert">
+    <div class="fw-semibold">{{ llm_test_result.message }}</div>
+    <ul class="small mb-0 mt-2">
+        <li>URL reachable: {{ 'Yes' if llm_test_result.url_reachable else 'No' }}</li>
+        <li>URL and API key valid: {{ 'Yes' if llm_test_result.credentials_valid else 'No' }}</li>
+        <li>LLM responded: {{ 'Yes' if llm_test_result.llm_responded else 'No' }}</li>
+    </ul>
+</div>
+{% endif %}
 <form method="post" novalidate>
     {{ form.hidden_tag() }}
     <div class="mb-3">
@@ -36,7 +46,7 @@
         {% for error in form.temperature.errors %}<small class="text-danger d-block">{{ error }}</small>{% endfor %}
     </div>
     <div class="d-grid">
-        {{ form.submit(class="btn btn-primary") }}
+        {{ form.submit(class="btn btn-primary", value="Test, Save & Continue") }}
     </div>
 </form>
 {% endblock %}

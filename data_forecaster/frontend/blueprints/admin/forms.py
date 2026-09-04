@@ -187,6 +187,7 @@ class LLMConfigForm(FlaskForm):  # type: ignore[misc]
         "Temperature",
         validators=[DataRequired(), NumberRange(min=0.0, max=2.0)],
     )
+    test_llm = SubmitField("Test LLM")
     submit = SubmitField("Save LLM Configuration")
 
 

@@ -162,7 +162,7 @@ def _prefill_llm_form(form: LLMProviderForm) -> None:
 
 
 def _submit_llm_config(form: LLMProviderForm) -> str | tuple[str, int] | None:
-    """Forward the validated LLM configuration to the backend.
+    """Validate and then forward the LLM configuration to the backend.
 
     Args:
         form: The validated LLM provider form.
@@ -182,8 +182,9 @@ def _submit_llm_config(form: LLMProviderForm) -> str | tuple[str, int] | None:
     if api_key:
         payload["api_key"] = api_key
 
+    client = get_api_client()
     try:
-        resp = get_api_client().put_llm_config(payload)
+        test_resp = client.test_llm_config(payload)
     except requests.RequestException as exc:
         flash(
             f"Could not connect to backend: "
@@ -192,10 +193,43 @@ def _submit_llm_config(form: LLMProviderForm) -> str | tuple[str, int] | None:
         )
         return _render(_TEMPLATE_LLM, 200, form=form)
 
+    if test_resp.status_code != 200:
+        flash(
+            f"Could not test LLM configuration (HTTP {test_resp.status_code}): "
+            f"{_response_detail(test_resp)}",
+            "danger",
+        )
+        return _render(_TEMPLATE_LLM, 200, form=form)
+    try:
+        test_result: dict[str, Any] = test_resp.json()
+    except ValueError:
+        flash("Backend returned an invalid LLM test response.", "danger")
+        return _render(_TEMPLATE_LLM, 200, form=form)
+    if not test_result.get("ok"):
+        flash(
+            str(test_result.get("message", "LLM connection test failed.")),
+            "danger",
+        )
+        return _render(
+            _TEMPLATE_LLM,
+            200,
+            form=form,
+            llm_test_result=test_result,
+        )
+
+    try:
+        resp = client.put_llm_config(payload)
+    except requests.RequestException as exc:
+        flash(
+            f"LLM test passed, but the configuration could not be saved: "
+            f"{sanitize_connection_error(str(exc))}",
+            "danger",
+        )
+        return _render(_TEMPLATE_LLM, 200, form=form)
     if resp.status_code != 200:
         flash(
-            f"Could not save LLM configuration (HTTP {resp.status_code}): "
-            f"{_response_detail(resp)}",
+            f"LLM test passed, but the configuration could not be saved "
+            f"(HTTP {resp.status_code}): {_response_detail(resp)}",
             "danger",
         )
         return _render(_TEMPLATE_LLM, 200, form=form)
@@ -228,7 +262,7 @@ def llm() -> str | tuple[str, int] | Response:
         return error
 
     session["setup_llm_ok"] = True
-    flash("LLM configuration saved.", "success")
+    flash("LLM connection verified and configuration saved.", "success")
     return redirect(url_for("setup.auth"))
 
 

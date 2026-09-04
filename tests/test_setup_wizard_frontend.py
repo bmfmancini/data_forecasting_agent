@@ -73,6 +73,14 @@ def backend_state() -> dict[str, Any]:
             "configured": False,
         },
         "last_model_error": False,
+        "llm_test": {
+            "ok": True,
+            "url_reachable": True,
+            "credentials_valid": True,
+            "llm_responded": True,
+            "message": "LLM connection test passed.",
+            "response": "pong",
+        },
     }
 
 
@@ -105,6 +113,8 @@ def mock_backend(
     def fake_post(
         url: str, json: dict[str, Any] | None = None, **kwargs: Any
     ) -> _FakeResponse:
+        if url.endswith("/config/llm/test"):
+            return _FakeResponse(200, backend_state["llm_test"])
         if url.endswith("/setup/bootstrap"):
             if backend_state["bootstrapped"]:
                 return _FakeResponse(409, {"detail": "Setup already completed."})
@@ -386,6 +396,36 @@ class TestSetupWizard:
         # The key was forwarded to the backend instead.
         assert backend_state["llm_config"]["api_key_set"] is True
 
+    def test_llm_step_blocks_progress_when_validation_fails(
+        self, client, backend_state
+    ) -> None:
+        client.post("/setup/backend", data={"base_url": _BACKEND_URL})
+        backend_state["llm_test"] = {
+            "ok": False,
+            "url_reachable": True,
+            "credentials_valid": False,
+            "llm_responded": False,
+            "message": "The LLM URL or API key was rejected. Check both values.",
+            "response": None,
+        }
+
+        resp = client.post(
+            "/setup/llm",
+            data={
+                "provider": "gemini",
+                "model": "gemini-1.5-flash",
+                "api_key": "invalid-key",
+                "temperature": "0.1",
+            },
+        )
+
+        assert resp.status_code == 200
+        assert b"URL reachable: Yes" in resp.data
+        assert b"URL and API key valid: No" in resp.data
+        assert backend_state["llm_config"]["configured"] is False
+        with client.session_transaction() as sess:
+            assert "setup_llm_ok" not in sess
+
     def test_models_step_rejects_unchecking_all(self, client) -> None:
         client.post("/setup/backend", data={"base_url": _BACKEND_URL})
         client.post(
@@ -411,6 +451,54 @@ class TestAdminConfigPages:
         assert b"gemini-1.5-flash" in resp.data
         assert b"Not set" in resp.data
         assert b"leave blank to keep current" in resp.data
+        assert b"Test LLM" in resp.data
+
+    def test_llm_test_displays_response_without_saving(
+        self, admin_client, backend_state
+    ) -> None:
+        resp = admin_client.post(
+            "/admin/llm-config",
+            data={
+                "provider": "gemini",
+                "model": "candidate-model",
+                "api_key": "candidate-key",
+                "temperature": "0.1",
+                "test_llm": "Test LLM",
+            },
+        )
+
+        assert resp.status_code == 200
+        assert b"LLM response:" in resp.data
+        assert b"pong" in resp.data
+        assert backend_state["llm_config"]["model"] == "gemini-1.5-flash"
+
+    def test_llm_save_is_blocked_when_validation_fails(
+        self, admin_client, backend_state
+    ) -> None:
+        backend_state["llm_test"] = {
+            "ok": False,
+            "url_reachable": False,
+            "credentials_valid": False,
+            "llm_responded": False,
+            "message": "The LLM URL could not be reached.",
+            "response": None,
+        }
+
+        resp = admin_client.post(
+            "/admin/llm-config",
+            data={
+                "provider": "ollama_cloud",
+                "model": "candidate-model",
+                "base_url": "https://unreachable.example",
+                "api_key": "candidate-key",
+                "temperature": "0.1",
+                "submit": "Save LLM Configuration",
+            },
+        )
+
+        assert resp.status_code == 200
+        assert b"The LLM URL could not be reached." in resp.data
+        assert backend_state["llm_config"]["model"] == "gemini-1.5-flash"
 
     def test_models_page_renders(self, admin_client) -> None:
         resp = admin_client.get("/admin/models")

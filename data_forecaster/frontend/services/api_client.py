@@ -554,6 +554,20 @@ class BackendAPIClient:
             verify=self._verify,
         )
 
+    def test_llm_config(self, payload: dict[str, Any]) -> requests.Response:
+        """Test candidate LLM settings without saving them.
+
+        The backend checks provider reachability, credentials, and a real
+        model response in sequence.
+        """
+        return requests.post(
+            f"{self._base_url}/config/llm/test",
+            json=payload,
+            headers=self._headers(),
+            timeout=CHAT_TIMEOUT,
+            verify=self._verify,
+        )
+
     def get_models(self) -> requests.Response:
         """List all forecasting models with their enabled state.
 

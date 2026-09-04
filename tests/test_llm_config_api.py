@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -10,7 +11,9 @@ from fastapi.testclient import TestClient
 import core.config as settings
 from core import secret_store
 from core.database import init_database
+import main
 from main import app
+from services.llm_validation_service import LLMValidationResult
 
 
 @pytest.fixture(autouse=True)
@@ -99,3 +102,65 @@ class TestLLMConfigWrite:
         )
         assert "top-secret" not in repr(request)
         assert "top-secret" not in str(request)
+
+
+class TestLLMConfigValidation:
+    """POST /config/llm/test validates candidates without saving them."""
+
+    def test_candidate_is_tested_without_being_persisted(
+        self, client: TestClient, monkeypatch: Any
+    ) -> None:
+        validator = AsyncMock(
+            return_value=LLMValidationResult(
+                ok=True,
+                url_reachable=True,
+                credentials_valid=True,
+                llm_responded=True,
+                message="LLM connection test passed.",
+                response="pong",
+            )
+        )
+        monkeypatch.setattr(main, "validate_llm_configuration", validator)
+
+        response = client.post(
+            "/config/llm/test",
+            json={
+                "provider": "ollama_cloud",
+                "model": "test-model",
+                "base_url": "https://ollama.example",
+                "api_key": "candidate-secret",
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["response"] == "pong"
+        validator.assert_awaited_once_with(
+            provider="ollama_cloud",
+            model="test-model",
+            base_url="https://ollama.example",
+            api_key="candidate-secret",
+        )
+        assert client.get("/config/llm").json()["configured"] is False
+
+    def test_omitted_key_uses_stored_secret(
+        self, client: TestClient, monkeypatch: Any
+    ) -> None:
+        client.put(
+            "/config/llm",
+            json={
+                "provider": "gemini",
+                "model": "stored-model",
+                "api_key": "stored-secret",
+            },
+        )
+        validator = AsyncMock(
+            return_value=LLMValidationResult(message="failed")
+        )
+        monkeypatch.setattr(main, "validate_llm_configuration", validator)
+
+        client.post(
+            "/config/llm/test",
+            json={"provider": "gemini", "model": "candidate-model"},
+        )
+
+        assert validator.await_args.kwargs["api_key"] == "stored-secret"

@@ -57,6 +57,19 @@
 
         <div class="card">
             <div class="card-body">
+                {% if llm_test_result %}
+                <div class="alert {{ 'alert-success' if llm_test_result.ok else 'alert-danger' }}" role="alert">
+                    <div class="fw-semibold">{{ llm_test_result.message }}</div>
+                    <ul class="small mb-0 mt-2">
+                        <li>URL reachable: {{ 'Yes' if llm_test_result.url_reachable else 'No' }}</li>
+                        <li>URL and API key valid: {{ 'Yes' if llm_test_result.credentials_valid else 'No' }}</li>
+                        <li>LLM responded: {{ 'Yes' if llm_test_result.llm_responded else 'No' }}</li>
+                    </ul>
+                    {% if llm_test_result.response %}
+                    <div class="small mt-2"><strong>LLM response:</strong> <span class="font-monospace">{{ llm_test_result.response }}</span></div>
+                    {% endif %}
+                </div>
+                {% endif %}
                 <form method="post" novalidate>
                     {{ form.hidden_tag() }}
                     <div class="mb-3">{{ form.provider.label(class="form-label") }}{{ form.provider(class="form-select") }}</div>
@@ -74,7 +87,8 @@
                     <div class="mb-3">{{ form.temperature.label(class="form-label") }}{{ form.temperature(class="form-control", step="0.1", min="0", max="2") }}
                         {% for error in form.temperature.errors %}<small class="text-danger d-block">{{ error }}</small>{% endfor %}
                     </div>
-                    <div class="d-flex justify-content-end">
+                    <div class="d-flex justify-content-end gap-2">
+                        {{ form.test_llm(class="btn btn-outline-info btn-sm") }}
                         {{ form.submit(class="btn btn-primary btn-sm") }}
                     </div>
                 </form>

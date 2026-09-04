@@ -422,3 +422,14 @@ class LLMConfigUpdateRequest(BaseModel):
     base_url: str | None = None
     api_key: SecretStr | None = None
     temperature: float = 0.1
+
+
+class LLMConfigTestResponse(BaseModel):
+    """Result of testing candidate LLM settings without saving them."""
+
+    ok: bool
+    url_reachable: bool
+    credentials_valid: bool
+    llm_responded: bool
+    message: str
+    response: str | None = None

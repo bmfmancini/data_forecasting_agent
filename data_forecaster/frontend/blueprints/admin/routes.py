@@ -934,7 +934,7 @@ def _llm_config_payload(form: LLMConfigForm) -> dict[str, Any]:
 
 def _submit_llm_config_update(
     client: BackendAPIClient, payload: dict[str, Any]
-) -> None:
+) -> bool:
     """PUT the LLM configuration to the backend, flashing the outcome."""
     try:
         resp = client.put_llm_config(payload)
@@ -944,15 +944,49 @@ def _submit_llm_config_update(
             f"{_sanitise_connection_error(str(exc))}",
             "danger",
         )
-        return
+        return False
     if resp.status_code == 200:
         flash("LLM configuration saved.", "success")
+        return True
     else:
         flash(
             f"Could not save LLM configuration (HTTP {resp.status_code}): "
             f"{_backend_error_detail(resp)}",
             "danger",
         )
+        return False
+
+
+def _test_llm_config_update(
+    client: BackendAPIClient, payload: dict[str, Any]
+) -> dict[str, Any]:
+    """Test candidate LLM settings and return a safe result for the UI."""
+    try:
+        resp = client.test_llm_config(payload)
+    except requests.RequestException as exc:
+        return {
+            "ok": False,
+            "message": (
+                "Could not connect to backend: "
+                f"{_sanitise_connection_error(str(exc))}"
+            ),
+        }
+    if resp.status_code != 200:
+        return {
+            "ok": False,
+            "message": (
+                f"Could not test LLM configuration (HTTP {resp.status_code}): "
+                f"{_backend_error_detail(resp)}"
+            ),
+        }
+    try:
+        result: dict[str, Any] = resp.json()
+        return result
+    except ValueError:
+        return {
+            "ok": False,
+            "message": "Backend returned an invalid LLM test response.",
+        }
 
 
 def _fetch_llm_config(client: BackendAPIClient) -> dict[str, Any] | None:
@@ -996,8 +1030,31 @@ def llm_config() -> str | Response:
     client = get_api_client()
 
     if form.validate_on_submit():
-        _submit_llm_config_update(client, _llm_config_payload(form))
-        return redirect(url_for(_ADMIN_LLM_CONFIG_ENDPOINT))
+        payload = _llm_config_payload(form)
+        test_result = _test_llm_config_update(client, payload)
+        if form.test_llm.data:
+            return render_template(
+                "admin/llm_config.html",
+                form=form,
+                llm_config=_fetch_llm_config(client),
+                llm_test_result=test_result,
+            )
+        if not test_result.get("ok"):
+            flash(str(test_result.get("message", "LLM connection test failed.")), "danger")
+            return render_template(
+                "admin/llm_config.html",
+                form=form,
+                llm_config=_fetch_llm_config(client),
+                llm_test_result=test_result,
+            )
+        if _submit_llm_config_update(client, payload):
+            return redirect(url_for(_ADMIN_LLM_CONFIG_ENDPOINT))
+        return render_template(
+            "admin/llm_config.html",
+            form=form,
+            llm_config=_fetch_llm_config(client),
+            llm_test_result=test_result,
+        )
 
     config = _fetch_llm_config(client)
     if config:
@@ -1010,6 +1067,7 @@ def llm_config() -> str | Response:
         "admin/llm_config.html",
         form=form,
         llm_config=config,
+        llm_test_result=None,
     )
 
 
