@@ -345,6 +345,52 @@ def test_no_business_context_leaves_prompts_unchanged(
         assert "BUSINESS CONTEXT" not in extra
 
 
+def test_structured_known_context_threaded_into_prompts(
+    sample_report: "object", monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Holidays, custom events, and covariates render as a nested context block."""
+    monkeypatch.setattr(narrative, "get_llm", lambda **_kwargs: object())
+    monkeypatch.setattr(
+        narrative, "get_llm_config", lambda: SimpleNamespace(temperature=0.0)
+    )
+    report = sample_report.model_copy(deep=True)
+    report.metadata.business_context = {
+        "domain": "Retail sales",
+        "known_context": {
+            "holidays_country": "US",
+            "events_by_type": {"spike": 1, "lull": 1},
+            "event_count": 2,
+            "covariates": ["price"],
+        },
+    }
+
+    captured: list[str] = []
+
+    def capture(
+        _llm: object,
+        _prompt: object,
+        _section: object,
+        _section_name: str,
+        _total_usage: dict[str, int],
+        extra_instructions: str,
+        _fallback_sections: list[str],
+    ) -> str:
+        captured.append(extra_instructions)
+        return "narrative"
+
+    monkeypatch.setattr(narrative, "_generate_section", capture)
+    narrative.generate_narratives(report)
+
+    assert captured
+    for extra in captured:
+        assert "BUSINESS CONTEXT" in extra
+        assert "known context" in extra
+        assert "holiday calendar: US" in extra
+        assert "1 spike" in extra
+        assert "1 lull" in extra
+        assert "declared covariates: price" in extra
+
+
 def test_narrative_generation_records_section_fallbacks(
     sample_report: "object", monkeypatch: pytest.MonkeyPatch
 ) -> None:

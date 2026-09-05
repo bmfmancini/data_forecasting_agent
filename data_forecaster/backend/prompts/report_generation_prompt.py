@@ -258,7 +258,10 @@ ASSUMPTION_NARRATIVE_PROMPT = apply_token_budget(
                 "of it being false — do not use 'Assumption:' or "
                 "'Consequence:' labels. Do not introduce conditions, "
                 "interventions, or covariates that the context does not "
-                "mention.\n\n"
+                "mention. When the business context declares a holiday "
+                "calendar, custom events, or covariates, cite them by type as "
+                "listed — do not invent dates or counts beyond what is "
+                "provided.\n\n"
                 "STRUCTURED CONTEXT:\n{section_json}",
             ),
         ]

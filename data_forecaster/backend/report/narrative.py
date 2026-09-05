@@ -42,13 +42,39 @@ logger = get_logger(__name__)
 def _business_context_block(report: ExecutiveReport) -> str:
     """Format ``metadata.business_context`` as a prompt appendix.
 
+    Scalar context values (domain, units, interventions, …) are listed as
+    ``- key: value`` lines. The structured ``known_context`` summary
+    (holidays country, custom events by type, covariate names) is rendered as
+    a nested block so the LLM can cite declared events without fabricating
+    dates.
+
     Returns an empty string when no usable business context was distilled, so
     prompts stay unchanged for runs without preflight context.
     """
     context = report.metadata.business_context or {}
     if not context:
         return ""
-    lines = [f"- {key}: {value}" for key, value in context.items()]
+    lines: list[str] = []
+    for key, value in context.items():
+        if key == "known_context" and isinstance(value, dict):
+            sub: list[str] = []
+            country = value.get("holidays_country")
+            if country:
+                sub.append(f"holiday calendar: {country}")
+            events_by_type = value.get("events_by_type") or {}
+            if events_by_type:
+                parts = [f"{count} {kind}" for kind, count in events_by_type.items()]
+                sub.append("custom events: " + ", ".join(parts))
+            covariates = value.get("covariates") or []
+            if covariates:
+                sub.append("declared covariates: " + ", ".join(covariates))
+            if sub:
+                lines.append("- known context:")
+                lines.extend("    - " + item for item in sub)
+            continue
+        lines.append(f"- {key}: {value}")
+    if not lines:
+        return ""
     return "\n\nBUSINESS CONTEXT (user-supplied; cite only when relevant):\n" + "\n".join(
         lines
     )

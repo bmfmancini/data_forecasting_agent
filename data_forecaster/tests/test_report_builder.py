@@ -706,3 +706,113 @@ class TestBusinessContextAndConditionalSections:
             preflight_options={"data_domain": "retail sales"},
         )
         assert "retail sales" in report.assumptions[0].assumption.lower()
+
+    def test_holiday_calendar_assumption_when_country_declared(
+        self,
+        sample_validation: ValidationResult,
+        sample_statistical: StatisticalResult,
+        sample_model_selection: ModelSelectionResult,
+        sample_forecast: ForecastResult,
+        sample_review: StatisticalReviewResult,
+        sample_all_metrics: dict[str, dict[str, float]],
+    ) -> None:
+        report = self._build(
+            sample_validation,
+            sample_statistical,
+            sample_model_selection,
+            sample_forecast,
+            sample_review,
+            sample_all_metrics,
+            preflight_options={
+                "holidays_country": "US",
+                "known_events": [],
+                "known_covariates": {},
+            },
+        )
+        joined = " ".join(a.assumption for a in report.assumptions)
+        assert "United States" in joined
+        assert "holiday calendar" in joined.lower()
+        # The structured context is threaded into business_context for narration.
+        assert "known_context" in report.metadata.business_context
+        assert report.metadata.business_context["known_context"]["holidays_country"] == "US"
+
+    def test_custom_events_assumption_when_declared(
+        self,
+        sample_validation: ValidationResult,
+        sample_statistical: StatisticalResult,
+        sample_model_selection: ModelSelectionResult,
+        sample_forecast: ForecastResult,
+        sample_review: StatisticalReviewResult,
+        sample_all_metrics: dict[str, dict[str, float]],
+    ) -> None:
+        report = self._build(
+            sample_validation,
+            sample_statistical,
+            sample_model_selection,
+            sample_forecast,
+            sample_review,
+            sample_all_metrics,
+            preflight_options={
+                "known_events": [
+                    {"type": "spike", "date": "2024-11-29", "label": "Black Friday"},
+                    {"type": "lull", "date": "2024-12-25", "label": "Christmas lull"},
+                ],
+            },
+        )
+        joined = " ".join(a.assumption for a in report.assumptions).lower()
+        assert "spike" in joined and "lull" in joined
+
+    def test_exog_unsupported_model_emits_context_not_ingested_risk(
+        self,
+        sample_validation: ValidationResult,
+        sample_statistical: StatisticalResult,
+        sample_model_selection: ModelSelectionResult,
+        sample_forecast: ForecastResult,
+        sample_review: StatisticalReviewResult,
+        sample_all_metrics: dict[str, dict[str, float]],
+    ) -> None:
+        # SARIMA (the fixture model_used) is univariate and cannot ingest exog.
+        report = self._build(
+            sample_validation,
+            sample_statistical,
+            sample_model_selection,
+            sample_forecast,
+            sample_review,
+            sample_all_metrics,
+            preflight_options={
+                "holidays_country": "US",
+                "known_events": [
+                    {"type": "spike", "date": "2024-11-29", "label": "Black Friday"}
+                ],
+                "known_covariates": {"price": {"2024-01-01": 9.0}},
+            },
+        )
+        risk_text = " ".join(r.description for r in report.risks).lower()
+        assert "cannot ingest" in risk_text
+        assert "sarima" in risk_text
+
+    def test_exog_capable_model_emits_no_context_not_ingested_risk(
+        self,
+        sample_validation: ValidationResult,
+        sample_statistical: StatisticalResult,
+        sample_model_selection: ModelSelectionResult,
+        sample_forecast: ForecastResult,
+        sample_review: StatisticalReviewResult,
+        sample_all_metrics: dict[str, dict[str, float]],
+    ) -> None:
+        # Dynamic Regression can ingest exog; no "cannot ingest" risk should fire.
+        exog_forecast = sample_forecast.model_copy(update={"model_used": "Dynamic Regression"})
+        report = self._build(
+            sample_validation,
+            sample_statistical,
+            sample_model_selection,
+            exog_forecast,
+            sample_review,
+            sample_all_metrics,
+            preflight_options={
+                "holidays_country": "US",
+                "known_covariates": {"price": {"2024-01-01": 9.0}},
+            },
+        )
+        risk_text = " ".join(r.description for r in report.risks).lower()
+        assert "cannot ingest" not in risk_text

@@ -23,6 +23,7 @@ from forecasting.residual_diagnostics import (
 from forecasting.selection_policy import CandidateEvidence, select_model_deterministic
 from forecasting.backtesting import evaluate_final_candidate
 from forecasting.engine import BASELINES, ForecastEngine, backtest_config
+from forecasting.known_context import prepare_exog_options
 from prompts.forecasting_prompt import FORECASTING_PROMPT
 from schemas import (
     ForecastCandidateResult,
@@ -134,6 +135,10 @@ def run_forecasting_agent(
         options["demand_pattern"] = "intermittent"
     if str(loss_preference).lower() == "pinball":
         options["point_quantile"] = options.get("forecast_quantile", 0.5)
+    # Expand declared business context (holidays, events, covariates) into the
+    # model-ready exogenous inputs the engine options carry. No-op when the
+    # user declared nothing.
+    options = prepare_exog_options(options, series, forecast_horizon, freq)
     engine = ForecastEngine(freq, options)
     config = backtest_config(len(series), forecast_horizon, freq, options)
     excluded = set(exclude_models or [])

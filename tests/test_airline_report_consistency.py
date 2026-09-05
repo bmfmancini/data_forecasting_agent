@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -715,3 +716,67 @@ def test_frontend_interval_labels_are_conservative() -> None:
     assert "Estimated 95% prediction-interval bounds" in forecast_template
     assert "Prediction-interval bounds are unavailable" in forecast_template
     assert "Lower CI" not in forecast_template
+
+
+def test_airline_dynamic_regression_ingests_declared_context() -> None:
+    """Dynamic Regression must ingest declared holidays + events + covariates.
+
+    Declares a US holiday calendar, a custom spike event, and a fully-covered
+    price covariate on the airline series, then asserts the fitted Dynamic
+    Regression procedure reports ``ingested_exog`` with the regressor names.
+    """
+    from forecasting.engine import ForecastEngine
+    from forecasting.known_context import prepare_exog_options
+
+    frame = _airline_frame()
+    series = frame.set_index("Month")["Passengers"].astype(float)
+    horizon = 12
+    future = pd.date_range(series.index[-1], periods=horizon + 1, freq="MS")[1:]
+    full_index = series.index.append(future)
+    # A non-collinear price covariate covering every historical + future date.
+    rng = np.random.default_rng(11)
+    price = {
+        str(d.date()): float(100 + np.cumsum(rng.normal(0, 0.5, len(full_index)))[i])
+        for i, d in enumerate(full_index)
+    }
+    options = prepare_exog_options(
+        {
+            "holidays_country": "US",
+            "known_events": [
+                {"type": "spike", "date": "1958-07-01", "label": "summer spike"},
+            ],
+            "known_covariates": {"price": price},
+        },
+        series,
+        horizon,
+        "MS",
+    )
+    engine = ForecastEngine("MS", options)
+    result = engine.candidates["Dynamic Regression"].fit(series, horizon)
+    cfg = result.fitted_configuration
+    assert cfg["ingested_exog"] is True
+    regressors = cfg["regressors"]
+    assert "event_holiday" in regressors
+    assert "event_spike" in regressors
+    assert "price" in regressors
+
+
+def test_airline_prophet_ingests_declared_holidays() -> None:
+    """Prophet must ingest declared holidays and report ``ingested_exog``."""
+    from forecasting.engine import ForecastEngine
+    from forecasting.known_context import prepare_exog_options
+
+    frame = _airline_frame()
+    series = frame.set_index("Month")["Passengers"].astype(float)
+    horizon = 12
+    options = prepare_exog_options(
+        {"holidays_country": "US"},
+        series,
+        horizon,
+        "MS",
+    )
+    engine = ForecastEngine("MS", options)
+    result = engine.candidates["Prophet"].fit(series, horizon)
+    cfg = result.fitted_configuration
+    assert cfg["ingested_exog"] is True
+    assert cfg["holidays"] is True

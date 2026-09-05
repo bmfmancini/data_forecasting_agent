@@ -70,6 +70,22 @@ def _future_frame(
     return pd.DataFrame({"ds": future_dates})
 
 
+def _align_regressor(values: dict, ds: pd.Series) -> np.ndarray:
+    """Align a ``{date: value}`` regressor dict onto the ``ds`` timestamps.
+
+    Prophet requires a finite regressor value at every timestamp in both the
+    history and future frames.  Event-type indicator covariates produced by
+    :mod:`forecasting.known_context` are already 0.0-filled; user-supplied
+    covariates may have gaps, which are forward- then back-filled (and finally
+    zero-filled) so Prophet never sees a missing regressor value.
+    """
+    ser = pd.Series(values, dtype=float)
+    ser.index = pd.to_datetime(ser.index)
+    aligned = ser.reindex(pd.DatetimeIndex(ds))
+    aligned = aligned.ffill().bfill().fillna(0.0)
+    return aligned.to_numpy()
+
+
 def prophet_predictive_samples(model, future: pd.DataFrame) -> np.ndarray:
     """Reproducible Prophet marginal draws without leaking random state."""
     with _PREDICTION_LOCK:

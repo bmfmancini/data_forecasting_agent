@@ -158,7 +158,8 @@ class ForecastProcedure:
             fitter = registry.MODELS[self.base_name]["window_fn"]
             extra = (
                 {"options": self.engine.options}
-                if self.base_name in {"Dynamic Regression", "Intermittent Demand"}
+                if self.base_name
+                in {"Dynamic Regression", "Intermittent Demand", "Prophet"}
                 else {}
             )
             result = fitter(

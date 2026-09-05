@@ -471,10 +471,12 @@ class ReportMetadata(BaseModel):
         llm_fallback_sections: Narrative sections that used deterministic
             templates, if any.
         business_context: Distilled user-supplied preflight context
-            (domain, units, interventions, stockouts, covariates) that is
-            threaded into every narrative prompt. Sentinel/placeholder
-            answers ("Let AI Guess", "Unspecified", "None known", …) are
-            excluded, so an empty dict means no usable context was given.
+            (domain, units, interventions, stockouts, covariates, and the
+            structured known-event summary: holidays country, custom events
+            by type, covariate names) that is threaded into every narrative
+            prompt. Sentinel/placeholder answers ("Let AI Guess",
+            "Unspecified", "None known", …) are excluded, so an empty dict
+            means no usable context was given.
     """
 
     engine_version: str
@@ -487,7 +489,7 @@ class ReportMetadata(BaseModel):
     row_count: int
     llm_narrative_fallback: bool = False
     llm_fallback_sections: list[str] = Field(default_factory=list)
-    business_context: dict[str, str] = Field(default_factory=dict)
+    business_context: dict[str, Any] = Field(default_factory=dict)
 
 
 class Appendix(BaseModel):

@@ -60,6 +60,10 @@ from schemas import (
     StatisticalReviewResult,
     ValidationResult,
 )
+from forecasting.known_context import (
+    country_name as _country_name,
+    summarize_context as _summarize_known_context,
+)
 
 _ENGINE_VERSION = "1.0.0"
 _CONFIDENCE_LEVEL = "95%"
@@ -97,7 +101,7 @@ _PREFLIGHT_CONTEXT_KEYS: tuple[tuple[str, str], ...] = (
 
 def _distill_business_context(
     preflight_options: dict[str, Any] | None,
-) -> dict[str, str]:
+) -> dict[str, Any]:
     """Distill user-supplied preflight answers into a narrative context dict.
 
     Only the business-relevant keys (domain, units, interventions, stockouts,
@@ -122,6 +126,12 @@ def _distill_business_context(
         value = str(raw).strip()
         if value.lower() not in _PREFLIGHT_SENTINELS:
             context[context_key] = value
+    # Structured known-context summary (holidays country, custom events by
+    # type, covariate names). Surfaced so §10–12 narratives can reference the
+    # actual declared events even when the selected model cannot ingest them.
+    known = _summarize_known_context(preflight_options)
+    if known.get("holidays_country") or known.get("event_count") or known.get("covariates"):
+        context["known_context"] = known  # type: ignore[assignment]
     return context
 
 
@@ -261,6 +271,7 @@ class ExecutiveReportBuilder:
             statistical_review,
             data_quality,
             has_structural_breaks,
+            business_context,
         )
         assumptions = self._build_assumptions(
             statistical, validation, forecast, business_context
@@ -1170,6 +1181,7 @@ class ExecutiveReportBuilder:
         review: StatisticalReviewResult | None,
         data_quality: DataQualitySection,
         has_structural_breaks: bool = False,
+        business_context: dict[str, Any] | None = None,
     ) -> list[Risk]:
         """Build strategic risks from statistical signals and review flags.
 
@@ -1180,6 +1192,9 @@ class ExecutiveReportBuilder:
             data_quality:         Data quality section.
             has_structural_breaks: Precomputed flag indicating structural
                 breaks were detected.
+            business_context:     Distilled preflight context; used to flag when
+                declared exogenous context could not be ingested by the
+                selected model.
 
         Returns:
             List of :class:`Risk` objects.
@@ -1324,6 +1339,49 @@ class ExecutiveReportBuilder:
             )
         )
 
+        # Risk: Declared exogenous context not ingested by the selected model.
+        # Models that accept exog: Prophet (holidays + regressors) and Dynamic
+        # Regression (covariates). All others are univariate and ignore the
+        # declared context, which is then only reflected in this report.
+        known = (business_context or {}).get("known_context")
+        if isinstance(known, dict) and (known.get("covariates") or known.get("holidays_country") or known.get("event_count")):
+            model_name = forecast.model_used or ""
+            exog_capable = model_name in {"Prophet", "Dynamic Regression"}
+            if not exog_capable:
+                declared: list[str] = []
+                if known.get("holidays_country"):
+                    declared.append("a holiday calendar")
+                if known.get("event_count"):
+                    declared.append(f"{known['event_count']} known event(s)")
+                if known.get("covariates"):
+                    declared.append(f"{len(known['covariates'])} covariate(s)")
+                what = " and ".join(declared) or "exogenous context"
+                risks.append(
+                    Risk(
+                        category="Model",
+                        description=(
+                            f"The selected {model_name} model cannot ingest "
+                            f"{what} as inputs; the forecast ignores that context."
+                        ),
+                        potential_impact=(
+                            "Known future drivers (holidays, events, covariates) "
+                            "are not reflected in the numbers, so the forecast may "
+                            "deviate around the affected dates."
+                        ),
+                        mitigation=(
+                            "Re-run with a model that accepts exogenous regressors "
+                            "(Prophet or Dynamic Regression), or treat the declared "
+                            "context as a qualitative overlay when interpreting the "
+                            "forecast."
+                        ),
+                        evidence=[
+                            f"Selected model: {model_name}",
+                            "Declared context not ingested by this model class.",
+                        ],
+                        severity="Medium",
+                    )
+                )
+
         return risks
 
     # ── Assumptions ───────────────────────────────────────────────────────
@@ -1333,7 +1391,7 @@ class ExecutiveReportBuilder:
         statistical: StatisticalResult,
         validation: ValidationResult,
         forecast: ForecastResult,
-        business_context: dict[str, str] | None = None,
+        business_context: dict[str, Any] | None = None,
     ) -> list[Assumption]:
         """Build critical business assumptions from statistical properties.
 
@@ -1342,7 +1400,8 @@ class ExecutiveReportBuilder:
             validation:       Validation result.
             forecast:         Forecast result.
             business_context: Distilled preflight context (domain, units,
-                interventions, stockouts, covariates).
+                interventions, stockouts, covariates) plus a ``known_context``
+                summary of declared holidays, custom events, and covariates.
 
         Returns:
             List of :class:`Assumption` objects.
@@ -1385,6 +1444,45 @@ class ExecutiveReportBuilder:
                     consequence_if_false=(
                         "An unrecorded or recurring intervention would shift the "
                         "forecast path away from the projected baseline."
+                    ),
+                )
+            )
+
+        # Assumption: Holiday calendar persists (only when a country is declared).
+        known = context.get("known_context") or {}
+        country = known.get("holidays_country") if isinstance(known, dict) else None
+        if country:
+            display = _country_name(country) or country
+            assumptions.append(
+                Assumption(
+                    assumption=(
+                        f"The {display} holiday calendar is assumed to persist "
+                        "over the forecast horizon; recurring public holidays "
+                        "produce the same dated effects as in the historical record."
+                    ),
+                    consequence_if_false=(
+                        "A change in the holiday calendar (new, moved, or removed "
+                        "public holidays) would shift demand around those dates."
+                    ),
+                )
+            )
+
+        # Assumption: Custom events recur or are one-off as declared (only when
+        # the user added spikes/lulls/promotions/outages/etc.).
+        events_by_type = known.get("events_by_type") if isinstance(known, dict) else {}
+        if events_by_type:
+            parts = [f"{count} {kind}" for kind, count in events_by_type.items()]
+            summary = ", ".join(parts)
+            assumptions.append(
+                Assumption(
+                    assumption=(
+                        f"The declared events ({summary}) are assumed to recur "
+                        "or resolve as stated; their dated effects are already "
+                        "embedded in the historical pattern used for fitting."
+                    ),
+                    consequence_if_false=(
+                        "An undeclared or shifted event would produce a local "
+                        "deviation the forecast does not anticipate."
                     ),
                 )
             )
@@ -1449,8 +1547,33 @@ class ExecutiveReportBuilder:
                 )
             )
 
-        # Assumption: No exogenous drivers — only when the user supplied no covariates.
-        if not context.get("covariates"):
+        # Assumption: exogenous drivers — shape depends on what the user declared.
+        covariate_names = known.get("covariates") if isinstance(known, dict) else []
+        covariate_gate = context.get("covariates")
+        if covariate_names or covariate_gate:
+            if covariate_names:
+                listed = ", ".join(covariate_names)
+                assumption_text = (
+                    f"The declared covariates ({listed}) are assumed to remain "
+                    "valid and known-ahead at every historical and forecast "
+                    "timestamp; the selected model ingests them where supported."
+                )
+            else:
+                assumption_text = (
+                    "Declared future-known covariates are assumed to remain valid "
+                    "and known-ahead at every historical and forecast timestamp."
+                )
+            assumptions.append(
+                Assumption(
+                    assumption=assumption_text,
+                    consequence_if_false=(
+                        "If a covariate is mis-specified, missing at a future "
+                        "timestamp, or its relationship to the target changes, "
+                        "the forecast would inherit that error."
+                    ),
+                )
+            )
+        else:
             assumptions.append(
                 Assumption(
                     assumption=(
@@ -1803,7 +1926,7 @@ class ExecutiveReportBuilder:
         model_selection: ModelSelectionResult,
         all_metrics: dict[str, dict[str, float]],
         data_quality: DataQualitySection,
-        business_context: dict[str, str] | None = None,
+        business_context: dict[str, Any] | None = None,
     ) -> ReportMetadata:
         """Build report metadata.
 

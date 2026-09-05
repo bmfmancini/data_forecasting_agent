@@ -36,6 +36,13 @@ class PreflightDecision(BaseModel):
     default: Any
     required: bool = False
     allow_custom: bool = False
+    # Rendering hint for the frontend. ``select`` (default) renders the
+    # standard dropdown. ``country`` renders a dropdown whose ``options`` are
+    # ISO codes and ``option_labels`` are display names. ``dates`` renders a
+    # textarea of ``YYYY-MM-DD[, label]`` lines. ``covariates`` renders a
+    # repeatable name + date:value row builder.
+    kind: str = "select"
+    option_labels: list[str] = Field(default_factory=list)
 
 
 class PreflightResponse(BaseModel):

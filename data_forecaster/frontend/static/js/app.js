@@ -97,29 +97,111 @@
     status.innerHTML = '<div class="alert alert-' + tone + '"><strong>' + title + "</strong>" +
       (result.detected_frequency ? '<p class="mb-0 mt-2 small">Detected frequency: <strong>' + escapeHtml(result.detected_frequency) + "</strong></p>" : "") +
       (messages.length ? "<ul class=\"mb-0 mt-2\">" + messages.map(function (message) { return "<li>" + escapeHtml(message) + "</li>"; }).join("") + "</ul>" : "") + "</div>";
-    decisions.innerHTML = (result.decisions || []).map(function (decision) {
-      var current = preflightOptions[decision.key] || decision.default || "";
-      var lossLabels = {
-        auto: "Auto — forecasting assistant recommends",
-        rmse: "Avoid occasional large errors (RMSE)",
-        mae: "Minimize the typical absolute error (MAE)",
-        wape: "Control error relative to total volume (WAPE)",
-        mase: "Compare accuracy against a naive forecast (MASE)",
-        pinball: "Choose a quantile for unequal error costs (pinball loss)"
-      };
-      var options = (decision.options || []).map(function (option) {
-        var label = decision.key === "loss_metric" ? lossLabels[option] || option : option;
-        return '<option value="' + escapeHtml(option) + '"' + (option === current ? " selected" : "") + ">" + escapeHtml(label) + "</option>";
-      }).join("");
-      return '<div class="card mb-3"><div class="card-body"><label class="form-label" for="pf-' + escapeHtml(decision.key) + '">' + escapeHtml(decision.label) + "</label>" +
-        '<p class="small text-muted">' + escapeHtml(decision.message) + '</p><select class="form-select preflight-choice" id="pf-' + escapeHtml(decision.key) + '" data-key="' + escapeHtml(decision.key) + '">' + options + "</select></div></div>";
-    }).join("");
+    decisions.innerHTML = (result.decisions || []).map(renderDecision).join("");
     updatePreflightContinue();
+  }
+
+  var _LOSS_LABELS = {
+    auto: "Auto — forecasting assistant recommends",
+    rmse: "Avoid occasional large errors (RMSE)",
+    mae: "Minimize the typical absolute error (MAE)",
+    wape: "Control error relative to total volume (WAPE)",
+    mase: "Compare accuracy against a naive forecast (MASE)",
+    pinball: "Choose a quantile for unequal error costs (pinball loss)"
+  };
+
+  var _DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+  function decisionLabel(decision, option) {
+    if (decision.key === "loss_metric") return _LOSS_LABELS[option] || option;
+    if (decision.kind === "country") {
+      var idx = (decision.options || []).indexOf(option);
+      return (decision.option_labels && idx >= 0) ? decision.option_labels[idx] : option;
+    }
+    return option;
+  }
+
+  // Custom structured inputs are parsed into JSON at submit time (below); the
+  // plain <select> for kind=="select"/"country" is read directly by value.
+  function renderDecision(decision) {
+    var current = preflightOptions[decision.key] !== undefined ? preflightOptions[decision.key] : decision.default;
+    var id = "pf-" + decision.key;
+    var head = '<div class="card mb-3"><div class="card-body"><label class="form-label" for="' + escapeHtml(id) + '">' + escapeHtml(decision.label) + "</label>" +
+      '<p class="small text-muted">' + escapeHtml(decision.message) + "</p>";
+    var tail = "</div></div>";
+    if (decision.kind === "dates") {
+      return head + '<textarea class="form-control preflight-dates" id="' + escapeHtml(id) + '" data-key="' + escapeHtml(decision.key) + '" rows="4" placeholder="2024-11-29, spike, Black Friday&#10;2025-01-01, holiday, New Year">' + escapeHtml(formatEvents(current)) + "</textarea>" + tail;
+    }
+    if (decision.kind === "covariates") {
+      return head + '<textarea class="form-control preflight-covariates" id="' + escapeHtml(id) + '" data-key="' + escapeHtml(decision.key) + '" rows="4" placeholder="price: 2024-01-01=9.99, 2024-02-01=9.99&#10;promo: 2024-11-29=1, 2024-12-01=0">' + escapeHtml(formatCovariates(current)) + "</textarea>" + tail;
+    }
+    // kind == "select" or "country": a plain dropdown (country codes carry labels).
+    var options = (decision.options || []).map(function (option) {
+      return '<option value="' + escapeHtml(option) + '"' + (option === current ? " selected" : "") + ">" + escapeHtml(decisionLabel(decision, option)) + "</option>";
+    }).join("");
+    var placeholder = decision.kind === "country" ? '<option value=""' + (current === "" || current === undefined ? " selected" : "") + ">No holiday calendar</option>" : "";
+    return head + '<select class="form-select preflight-choice" id="' + escapeHtml(id) + '" data-key="' + escapeHtml(decision.key) + '">' + placeholder + options + "</select>" + tail;
+  }
+
+  function formatEvents(value) {
+    if (!Array.isArray(value) || !value.length) return "";
+    return value.map(function (event) {
+      if (!event || !event.date) return "";
+      var line = event.date + ", " + (event.type || "intervention");
+      if (event.label && event.label !== event.type) line += ", " + event.label;
+      return line;
+    }).filter(Boolean).join("\n");
+  }
+
+  function parseEvents(text) {
+    var events = [];
+    (text || "").split(/\n+/).forEach(function (raw) {
+      var line = raw.trim();
+      if (!line) return;
+      var parts = line.split(",").map(function (p) { return p.trim(); });
+      if (!_DATE_RE.test(parts[0] || "")) return;
+      var type = (parts[1] || "intervention").toLowerCase() || "intervention";
+      var label = parts.slice(2).join(",").trim() || type;
+      events.push({ type: type, date: parts[0], label: label });
+    });
+    return events;
+  }
+
+  function formatCovariates(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return "";
+    return Object.keys(value).map(function (name) {
+      var series = value[name] || {};
+      var pairs = Object.keys(series).map(function (date) { return date + "=" + series[date]; }).join(", ");
+      return name + ": " + pairs;
+    }).join("\n");
+  }
+
+  function parseCovariates(text) {
+    var covariates = {};
+    (text || "").split(/\n+/).forEach(function (raw) {
+      var line = raw.trim();
+      if (!line || line.indexOf(":") === -1) return;
+      var split = line.split(/:(.*)/);
+      var name = split[0].trim();
+      var rest = split[1] || "";
+      if (!name) return;
+      var series = {};
+      rest.split(",").forEach(function (pair) {
+        var kv = pair.split("=");
+        var date = (kv[0] || "").trim();
+        var val = parseFloat((kv[1] || "").trim());
+        if (_DATE_RE.test(date) && isFinite(val)) series[date] = val;
+      });
+      if (Object.keys(series).length) covariates[name] = series;
+    });
+    return covariates;
   }
 
   function currentPreflightChoices() {
     var choices = {};
     document.querySelectorAll(".preflight-choice").forEach(function (select) { choices[select.dataset.key] = select.value; });
+    document.querySelectorAll(".preflight-dates").forEach(function (area) { choices[area.dataset.key] = parseEvents(area.value); });
+    document.querySelectorAll(".preflight-covariates").forEach(function (area) { choices[area.dataset.key] = parseCovariates(area.value); });
     return choices;
   }
 

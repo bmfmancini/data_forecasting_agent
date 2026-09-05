@@ -124,6 +124,7 @@ def fit_dynamic_window(train, horizon, *, seasonal_period=1, freq=None, options=
     point, bounds = np.asarray(point), np.asarray(bounds)
     sigma = (bounds[:, 1] - bounds[:, 0]) / (2 * norm.ppf(0.975))
     samples = point + np.random.default_rng(42).normal(size=(2000, horizon)) * sigma
+    ingested = [n for n in names if n.startswith("input_")]
     return _result(
         "Dynamic Regression",
         point,
@@ -137,6 +138,8 @@ def fit_dynamic_window(train, horizon, *, seasonal_period=1, freq=None, options=
             "ar_ma_order": model.order[0] + model.order[2],
             "selection_criterion": "aicc",
             "predictor_uncertainty_included": False,
+            "ingested_exog": bool(ingested),
+            "regressors": [n[len("input_"):] for n in ingested],
         },
         samples,
     )
