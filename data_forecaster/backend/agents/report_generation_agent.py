@@ -60,7 +60,6 @@ def run_report_agent(
         token_usage).
     """
     del rag_kb  # RAG context not needed for per-section narrative prompts.
-    del preflight_options  # Preflight options handled by the builder inputs.
 
     reasoning_steps: list[dict[str, Any]] = [
         {
@@ -78,6 +77,7 @@ def run_report_agent(
         forecast=forecast,
         statistical_review=statistical_review,
         all_metrics=all_metrics or {},
+        preflight_options=preflight_options,
     )
     reasoning_steps.append(
         {
@@ -143,6 +143,8 @@ def run_report_agent(
             "statistical_audit",
             "explainability",
             *["recommendation"] * len(report.recommendations),
+            *["risk"] * len(report.risks),
+            *["assumption"] * len(report.assumptions),
         ]
         # Ensure all narrative fields have a fallback value
         report.executive_summary.narrative = _fallback_narrative(
@@ -171,6 +173,18 @@ def run_report_agent(
                 update={"narrative": _fallback_narrative(rec, "recommendation")}
             )
             for rec in report.recommendations
+        ]
+        report.risks = [
+            risk.model_copy(
+                update={"narrative": _fallback_narrative(risk, "risk")}
+            )
+            for risk in report.risks
+        ]
+        report.assumptions = [
+            assumption.model_copy(
+                update={"narrative": _fallback_narrative(assumption, "assumption")}
+            )
+            for assumption in report.assumptions
         ]
 
     # ── Visual strategy (retained for pipeline compatibility) ─────────────

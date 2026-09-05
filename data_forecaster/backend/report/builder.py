@@ -65,6 +65,65 @@ _ENGINE_VERSION = "1.0.0"
 _CONFIDENCE_LEVEL = "95%"
 _REVIEW_CRITICAL_MSG = "Statistical review identified critical issues"
 
+# Sentinel preflight answers that carry no usable business context. When a
+# preflight option equals one of these (case-insensitively), it is treated as
+# "the user declined to specify" and excluded from the distilled
+# ``business_context`` dict that is threaded into every narrative prompt.
+_PREFLIGHT_SENTINELS: frozenset[str] = frozenset(
+    {
+        "let ai decide",
+        "let ai guess",
+        "skip / let ai guess",
+        "skip",
+        "unspecified",
+        "none known",
+        "none",
+        "as provided",
+        "auto",
+        "",
+    }
+)
+
+# Maps preflight option keys to the business_context keys the narrative
+# prompts consume. Only non-sentinel values are kept.
+_PREFLIGHT_CONTEXT_KEYS: tuple[tuple[str, str], ...] = (
+    ("data_domain", "domain"),
+    ("units", "units"),
+    ("interventions", "interventions"),
+    ("censoring_or_stockouts", "stockouts"),
+    ("known_future_covariates", "covariates"),
+)
+
+
+def _distill_business_context(
+    preflight_options: dict[str, Any] | None,
+) -> dict[str, str]:
+    """Distill user-supplied preflight answers into a narrative context dict.
+
+    Only the business-relevant keys (domain, units, interventions, stockouts,
+    covariates) are kept, and only when the user supplied a concrete value
+    rather than a "Let AI Guess" / "Unspecified" / "None known" sentinel. An
+    empty dict signals that no usable context was provided.
+
+    Args:
+        preflight_options: Raw preflight options dict (may be ``None``).
+
+    Returns:
+        A possibly-empty dict of business-context strings keyed by context
+        name (``domain``, ``units``, …).
+    """
+    if not preflight_options:
+        return {}
+    context: dict[str, str] = {}
+    for source_key, context_key in _PREFLIGHT_CONTEXT_KEYS:
+        raw = preflight_options.get(source_key)
+        if raw is None:
+            continue
+        value = str(raw).strip()
+        if value.lower() not in _PREFLIGHT_SENTINELS:
+            context[context_key] = value
+    return context
+
 
 def _recent_holdout_rmse_ratio(forecast: ForecastResult) -> float | None:
     """Return final-test RMSE divided by pooled rolling-origin RMSE."""
@@ -144,6 +203,7 @@ class ExecutiveReportBuilder:
         forecast: ForecastResult,
         statistical_review: StatisticalReviewResult | None,
         all_metrics: dict[str, dict[str, float]],
+        preflight_options: dict[str, Any] | None = None,
     ) -> ExecutiveReport:
         """Construct the full :class:`ExecutiveReport` model.
 
@@ -154,10 +214,15 @@ class ExecutiveReportBuilder:
             forecast:            Forecasting agent output.
             statistical_review:  Statistical review (QA) agent output (optional).
             all_metrics:         All model comparison metrics dict.
+            preflight_options:   Optional preflight configuration dict. Business
+                context (domain, units, interventions, stockouts, covariates)
+                is distilled from it and stored on ``metadata.business_context``
+                for the Stage 2 narrative prompts.
 
         Returns:
             A populated :class:`ExecutiveReport` with empty narrative fields.
         """
+        business_context = _distill_business_context(preflight_options)
         has_structural_breaks = (
             "change_point_analysis" in statistical.recommended_remediation
         )
@@ -197,7 +262,9 @@ class ExecutiveReportBuilder:
             data_quality,
             has_structural_breaks,
         )
-        assumptions = self._build_assumptions(statistical, validation, forecast)
+        assumptions = self._build_assumptions(
+            statistical, validation, forecast, business_context
+        )
         explainability = self._build_explainability(statistical, forecast, confidence)
         statistical_audit = self._build_statistical_audit(statistical_review)
         historical = self._build_historical_analysis(statistical)
@@ -225,6 +292,7 @@ class ExecutiveReportBuilder:
             model_selection,
             all_metrics,
             data_quality,
+            business_context,
         )
         appendix = self._build_appendix(forecast, all_metrics)
 
@@ -945,14 +1013,15 @@ class ExecutiveReportBuilder:
                 rationale=monitoring_rationale,
                 supporting_evidence=monitoring_evidence,
                 expected_outcome=(
-                    "Ongoing monitoring can show whether recent performance "
-                    "stabilizes or a model adjustment is warranted."
+                    "Tracking realized vs. forecast values quantifies whether "
+                    "error stays within the validated range or a refit is needed."
                 ),
             )
         )
 
         # Recommendation 2: Monitor structural breaks if detected
         if has_structural_breaks:
+            cp_count = statistical.change_point_count
             recs.append(
                 Recommendation(
                     priority="High",
@@ -963,19 +1032,25 @@ class ExecutiveReportBuilder:
                         "regime-specific models."
                     ),
                     rationale=(
-                        "Detected change points can reflect transient anomalies or "
-                        "persistent shifts; current evidence does not establish which."
+                        f"Change-point analysis flagged "
+                        f"{cp_count if cp_count else 'one or more'} candidate break(s) "
+                        "that could be transient anomalies or persistent regime shifts; "
+                        "the current evidence does not distinguish the two."
                     ),
                     supporting_evidence=[
                         EvidenceRef(
                             metric="Change Points",
-                            value="Candidates detected",
+                            value=(
+                                f"{cp_count} candidate(s)"
+                                if cp_count
+                                else "Candidates detected"
+                            ),
                             source_section="Statistical Analysis",
                         ),
                     ],
                     expected_outcome=(
-                        "The follow-up will determine whether a modelling adjustment "
-                        "is warranted and which option is supported by evidence."
+                        "Validation determines whether a modelling adjustment is "
+                        "warranted and which option the evidence supports."
                     ),
                 )
             )
@@ -989,6 +1064,11 @@ class ExecutiveReportBuilder:
             )
         ) or not data_quality.is_regular
         if has_collection_issue:
+            issue_count = (
+                data_quality.missing_values
+                + data_quality.duplicate_timestamps
+                + data_quality.missing_timestamps
+            )
             recs.append(
                 Recommendation(
                     priority="Medium",
@@ -999,8 +1079,9 @@ class ExecutiveReportBuilder:
                         f"and {data_quality.missing_timestamps} gaps."
                     ),
                     rationale=(
-                        "Data quality issues can materially influence "
-                        "forecast reliability."
+                        f"Completeness is {data_quality.completeness_pct:.1f}% across "
+                        f"{issue_count} collection issue(s); gaps and duplicates "
+                        "directly degrade the fitted pattern."
                     ),
                     supporting_evidence=[
                         EvidenceRef(
@@ -1015,8 +1096,8 @@ class ExecutiveReportBuilder:
                         ),
                     ],
                     expected_outcome=(
-                        "Future forecasts will benefit from a cleaner, "
-                        "more complete dataset."
+                        "Higher completeness tightens the fitted pattern and "
+                        "reduces imputation-driven distortion in the next forecast."
                     ),
                 )
             )
@@ -1033,8 +1114,8 @@ class ExecutiveReportBuilder:
                         f"for predictable peak and trough periods."
                     ),
                     rationale=(
-                        "A strong seasonal pattern was detected, creating "
-                        "predictable demand cycles."
+                        f"A seasonal cycle of {sp} periods was detected, producing "
+                        "predictable, recurring demand swings within each cycle."
                     ),
                     supporting_evidence=[
                         EvidenceRef(
@@ -1044,8 +1125,8 @@ class ExecutiveReportBuilder:
                         ),
                     ],
                     expected_outcome=(
-                        "Operational readiness is expected to improve during "
-                        "peak periods without over-provisioning during troughs."
+                        f"Planning to the {sp}-period cycle covers peaks without "
+                        "over-provisioning the intervening troughs."
                     ),
                 )
             )
@@ -1060,8 +1141,9 @@ class ExecutiveReportBuilder:
                     f"emerging shifts in the trend."
                 ),
                 rationale=(
-                    "Regular re-estimation keeps the model aligned with "
-                    "the latest data patterns."
+                    f"The fitted trend slope is {statistical.trend_slope:.6f} per "
+                    f"period; re-estimating on a {data_quality.frequency} cadence "
+                    "recaptures shifts before they compound across the horizon."
                 ),
                 supporting_evidence=[
                     EvidenceRef(
@@ -1071,8 +1153,8 @@ class ExecutiveReportBuilder:
                     ),
                 ],
                 expected_outcome=(
-                    "The forecast will adapt to evolving patterns, "
-                    "maintaining accuracy over time."
+                    f"A {data_quality.frequency} refit cadence keeps the model "
+                    "aligned with the latest pattern rather than a fixed historical fit."
                 ),
             )
         )
@@ -1109,32 +1191,28 @@ class ExecutiveReportBuilder:
             if not _has_usable_interval_bounds(forecast):
                 interval_mitigation = (
                     "Prediction-interval bounds are unavailable; review the "
-                    "untouched holdout and monitor performance against future "
-                    "actuals without inferring a 95% planning range."
+                    "untouched holdout and monitor against future actuals "
+                    "without inferring a 95% planning range."
                 )
             elif forecast.interval_label == "experimental":
                 interval_mitigation = (
                     "Use the estimated 95% prediction intervals (coverage not "
-                    "evaluated) for scenario planning, review the untouched holdout, "
-                    "and monitor performance against future actuals."
+                    "evaluated) for scenario planning and monitor future actuals."
                 )
             else:
                 interval_mitigation = (
-                    "Use the model-based 95% prediction intervals for conservative "
-                    "planning, review the untouched holdout, and monitor performance "
-                    "against future actuals."
+                    "Use the model-based 95% prediction intervals for "
+                    "conservative planning and monitor future actuals."
                 )
             risks.append(
                 Risk(
                     category="Model",
                     description=(
-                        f"Forecast validation error is high (MAPE "
-                        f"{forecast.mape:.1f}%), indicating significant "
-                        f"prediction uncertainty."
+                        f"Validation error is high (MAPE {forecast.mape:.1f}%)."
                     ),
                     potential_impact=(
-                        "Decisions based on this forecast carry a wider "
-                        "margin of error than is ideal for high-stakes planning."
+                        "Decisions carry a wider margin of error than is "
+                        "ideal for high-stakes planning."
                     ),
                     mitigation=interval_mitigation,
                     evidence=[
@@ -1147,24 +1225,30 @@ class ExecutiveReportBuilder:
 
         # Risk: Structural breaks
         if has_structural_breaks:
+            cp_count = statistical.change_point_count
+            count_text = f" ({cp_count} candidate break point(s))" if cp_count else ""
             risks.append(
                 Risk(
                     category="Data",
                     description=(
-                        "Change-point analysis identified candidate breaks that may "
-                        "indicate a structural shift."
+                        f"Change-point analysis identified candidate breaks"
+                        f"{count_text} that may indicate a structural shift."
                     ),
                     potential_impact=(
-                        "If a break is validated and persists, a model fitted across "
-                        "differing regimes may produce misleading projections."
+                        "A model fitted across differing regimes can produce "
+                        "misleading projections if a break is durable."
                     ),
                     mitigation=(
-                        "First validate the candidate break dates, effect sizes, and "
-                        "persistence. If confirmed, compare intervention terms, "
-                        "recency weighting, segmentation, and regime-specific models "
-                        "before selecting an adjustment."
+                        "Validate the candidate break dates, effect sizes, and "
+                        "persistence first. Only if confirmed, compare intervention "
+                        "terms, recency weighting, segmentation, or regime-specific "
+                        "models."
                     ),
-                    evidence=["Change-point analysis identified candidate breaks"],
+                    evidence=[
+                        f"Change-point count: {cp_count}"
+                        if cp_count
+                        else "Candidate breaks detected",
+                    ],
                     severity="Medium",
                 )
             )
@@ -1175,12 +1259,12 @@ class ExecutiveReportBuilder:
                 Risk(
                     category="Data",
                     description=(
-                        "Data quality is poor, with significant gaps, "
-                        "duplicates, or irregularities."
+                        "Data quality is poor — significant gaps, duplicates, "
+                        "or irregularities are present."
                     ),
                     potential_impact=(
-                        "Forecast reliability is compromised by the "
-                        "quality of the underlying data."
+                        "Forecast reliability is compromised by the quality "
+                        "of the underlying data."
                     ),
                     mitigation=(
                         "Address data collection issues and re-run the "
@@ -1201,8 +1285,8 @@ class ExecutiveReportBuilder:
                 Risk(
                     category="Model",
                     description=(
-                        "The independent statistical review identified "
-                        f"{len(concerns)} concern(s) about the analysis."
+                        f"The independent statistical review raised "
+                        f"{len(concerns)} concern(s)."
                     ),
                     potential_impact=(
                         "Some aspects of the forecast may not be fully "
@@ -1217,13 +1301,15 @@ class ExecutiveReportBuilder:
                 )
             )
 
-        # Risk: Horizon decay (always present)
+        # Risk: Horizon decay (always present, frequency-aware wording)
+        freq = data_quality.frequency or "the detected"
+        horizon = len(forecast.forecast)
         risks.append(
             Risk(
                 category="Model",
                 description=(
-                    "Forecast accuracy is expected to decline over longer "
-                    "horizons — short-term projections are more reliable."
+                    f"Accuracy is expected to decline over the {horizon}-period "
+                    f"({freq}) horizon — near-term projections are more reliable."
                 ),
                 potential_impact=(
                     "Long-term decisions based on distant forecast periods "
@@ -1233,9 +1319,7 @@ class ExecutiveReportBuilder:
                     "Weight near-term projections more heavily in planning "
                     "and re-forecast as new data arrives."
                 ),
-                evidence=[
-                    f"Forecast horizon: {len(forecast.forecast)} periods",
-                ],
+                evidence=[f"Forecast horizon: {horizon} periods"],
                 severity="Low",
             )
         )
@@ -1249,104 +1333,154 @@ class ExecutiveReportBuilder:
         statistical: StatisticalResult,
         validation: ValidationResult,
         forecast: ForecastResult,
+        business_context: dict[str, str] | None = None,
     ) -> list[Assumption]:
         """Build critical business assumptions from statistical properties.
 
         Args:
-            statistical: Statistical result.
-            validation:  Validation result.
+            statistical:      Statistical result.
+            validation:       Validation result.
+            forecast:         Forecast result.
+            business_context: Distilled preflight context (domain, units,
+                interventions, stockouts, covariates).
 
         Returns:
             List of :class:`Assumption` objects.
         """
+        context = business_context or {}
+        domain = context.get("domain")
         assumptions: list[Assumption] = []
 
+        # Assumption: Economic/operational drivers persist (domain-specific).
+        if domain:
+            driver_text = (
+                f"The economic and operational drivers of this {domain} series "
+                "are assumed to persist over the forecast horizon."
+            )
+        else:
+            driver_text = (
+                "The economic and operational drivers of the past are assumed "
+                "to persist over the forecast horizon."
+            )
         assumptions.append(
             Assumption(
-                assumption=(
-                    "The economic and operational drivers of the past will "
-                    "persist — abrupt market shifts or policy changes are "
-                    "not factored into this baseline."
-                ),
+                assumption=driver_text,
                 consequence_if_false=(
-                    "A material change in the business environment would "
-                    "render the current forecast obsolete."
+                    "An abrupt market shift or policy change would render the "
+                    "current baseline forecast obsolete."
                 ),
             )
         )
 
+        # Assumption: Known interventions are captured/stable (only when declared).
+        interventions = context.get("interventions")
+        if interventions:
+            assumptions.append(
+                Assumption(
+                    assumption=(
+                        f"The declared interventions ({interventions}) are "
+                        "assumed to be fully reflected in the historical record; "
+                        "no unrecorded interventions recur during the horizon."
+                    ),
+                    consequence_if_false=(
+                        "An unrecorded or recurring intervention would shift the "
+                        "forecast path away from the projected baseline."
+                    ),
+                )
+            )
+
+        # Assumption: Statistical stability (always relevant — core modelling premise).
         model = forecast.model_used.lower()
         if model in {"holt-winters", "holt winters", "ewma"}:
             stationarity_note = (
-                "The historical level, trend, and seasonal structure are assumed "
-                f"to remain sufficiently stable for {forecast.model_used}."
+                "The historical level, trend, and seasonal structure remain "
+                f"sufficiently stable for {forecast.model_used}."
             )
         elif model in {"arima", "sarima"}:
             stationarity_note = (
-                "The differenced dependence structure is assumed to remain "
-                f"sufficiently stable for {forecast.model_used}."
+                "The differenced dependence structure remains sufficiently "
+                f"stable for {forecast.model_used}."
             )
         elif statistical.is_stationary_adf and statistical.is_stationary_kpss:
             stationarity_note = "The observed statistical structure remains stable."
         else:
             stationarity_note = (
-                "The historical pattern is assumed to remain sufficiently stable "
-                "over the forecast horizon."
+                "The historical pattern remains sufficiently stable over the "
+                "forecast horizon."
             )
         assumptions.append(
             Assumption(
                 assumption=f"Statistical stability: {stationarity_note}",
                 consequence_if_false=(
                     "If the statistical structure changes, the model's "
-                    "underlying assumptions would no longer hold."
+                    "underlying assumptions no longer hold."
                 ),
             )
         )
 
+        # Assumption: Seasonal stability — only when seasonality was actually detected.
         sp = statistical.seasonal_period
         if sp and sp > 1:
-            seasonal_note = (
-                f"A seasonal cycle of {sp} periods is assumed to continue "
-                f"predictably."
+            assumptions.append(
+                Assumption(
+                    assumption=(
+                        f"Seasonal stability: a {sp}-period seasonal cycle "
+                        "continues predictably over the horizon."
+                    ),
+                    consequence_if_false=(
+                        "If seasonal patterns shift, the forecast would not "
+                        "capture the new cyclical behaviour."
+                    ),
+                )
             )
-        else:
-            seasonal_note = "No significant seasonality is assumed for this projection."
-        assumptions.append(
-            Assumption(
-                assumption=f"Seasonal stability: {seasonal_note}",
-                consequence_if_false=(
-                    "If seasonal patterns shift, the forecast would not "
-                    "capture the new cyclical behaviour."
-                ),
-            )
-        )
 
-        assumptions.append(
-            Assumption(
-                assumption=(
-                    f"Future data is assumed to arrive at the current "
-                    f"{validation.frequency or 'unknown'} frequency."
-                ),
-                consequence_if_false=(
-                    "A change in data frequency would require re-estimation "
-                    "of the model."
-                ),
+        # Assumption: Frequency stability — only when a frequency was actually detected.
+        freq = validation.frequency
+        if freq:
+            assumptions.append(
+                Assumption(
+                    assumption=(
+                        f"Future data arrives at the current {freq} frequency."
+                    ),
+                    consequence_if_false=(
+                        "A change in data frequency would require re-estimation "
+                        "of the model."
+                    ),
+                )
             )
-        )
 
-        assumptions.append(
-            Assumption(
-                assumption=(
-                    "The model operates solely on historical values; it "
-                    "does not account for exogenous variables like "
-                    "competitor activity or macro-economic indicators."
-                ),
-                consequence_if_false=(
-                    "External factors not captured in the data could "
-                    "materially alter the actual outcome."
-                ),
+        # Assumption: No exogenous drivers — only when the user supplied no covariates.
+        if not context.get("covariates"):
+            assumptions.append(
+                Assumption(
+                    assumption=(
+                        "The model operates solely on the series' own history; "
+                        "it does not incorporate exogenous variables such as "
+                        "competitor activity or macro-economic indicators."
+                    ),
+                    consequence_if_false=(
+                        "External factors not captured in the data could "
+                        "materially alter the actual outcome."
+                    ),
+                )
             )
-        )
+
+        # Assumption: Censoring/stockouts — only when the user flagged them.
+        stockouts = context.get("stockouts")
+        if stockouts:
+            assumptions.append(
+                Assumption(
+                    assumption=(
+                        f"Recorded values are not distorted by censoring or "
+                        f"stockouts ({stockouts}); the observed level reflects "
+                        "true demand."
+                    ),
+                    consequence_if_false=(
+                        "If recorded values are capped by stockouts or censoring, "
+                        "the fitted level understates true demand."
+                    ),
+                )
+            )
 
         return assumptions
 
@@ -1669,15 +1803,18 @@ class ExecutiveReportBuilder:
         model_selection: ModelSelectionResult,
         all_metrics: dict[str, dict[str, float]],
         data_quality: DataQualitySection,
+        business_context: dict[str, str] | None = None,
     ) -> ReportMetadata:
         """Build report metadata.
 
         Args:
-            validation:      Validation result.
-            forecast:        Forecast result.
-            model_selection: Model selection result.
-            all_metrics:     All model metrics.
-            data_quality:    Data quality section.
+            validation:       Validation result.
+            forecast:         Forecast result.
+            model_selection:  Model selection result.
+            all_metrics:      All model metrics.
+            data_quality:     Data quality section.
+            business_context: Distilled preflight business context, stored for
+                the Stage 2 narrative prompts.
 
         Returns:
             :class:`ReportMetadata`.
@@ -1692,6 +1829,7 @@ class ExecutiveReportBuilder:
             dataset_frequency=validation.frequency or "unknown",
             data_quality_rating=data_quality.rating,
             row_count=validation.row_count,
+            business_context=business_context or {},
         )
 
     # ── Appendix ──────────────────────────────────────────────────────────

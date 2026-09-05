@@ -189,7 +189,7 @@ class TestMarkdownRenderer:
         renderer = MarkdownRenderer()
         md = renderer.render(sample_report)
         assert "## 11. Executive Recommendations" in md
-        assert "Supporting Evidence" in md
+        assert "Evidence" in md
         assert "MAPE" in md
 
     def test_metadata_table(self, sample_report: "object") -> None:
@@ -230,6 +230,121 @@ class TestMarkdownRenderer:
         ), "Rendered markdown contains fabricated financial figures."
 
 
+# ── Section 10–12 flowing-prose / fallback tests ─────────────────────────────
+
+
+class TestSectionFallbackProse:
+    """Risks/Recommendations/Assumptions render as merged prose without labels."""
+
+    def test_risks_fallback_merges_seeds_without_labels(
+        self, sample_report: "object"
+    ) -> None:
+        md = MarkdownRenderer().render(sample_report)
+        assert "## 10. Strategic Risks" in md
+        # The horizon-decay risk is always present; its seeds merge into prose.
+        assert "Accuracy is expected to decline" in md
+        assert "Weight near-term projections" in md
+        # Old field labels must not appear.
+        assert "**Risk:**" not in md
+        assert "**Potential Impact:**" not in md
+        assert "**Mitigation:**" not in md
+
+    def test_recommendations_fallback_merges_seeds_without_labels(
+        self, sample_report: "object"
+    ) -> None:
+        md = MarkdownRenderer().render(sample_report)
+        assert "## 11. Executive Recommendations" in md
+        assert "**Action:**" not in md
+        assert "**Rationale:**" not in md
+        assert "**Expected Outcome:**" not in md
+        # Evidence bullets are still present.
+        assert "**Evidence:**" in md
+
+    def test_assumptions_fallback_merges_seeds_without_labels(
+        self, sample_report: "object"
+    ) -> None:
+        md = MarkdownRenderer().render(sample_report)
+        assert "## 12. Critical Business Assumptions" in md
+        assert "Consequence if false" not in md
+        # Numbered flowing sentences are rendered.
+        assert "1. " in md
+
+    def test_html_risks_recommendations_drop_labels(
+        self, sample_report: "object"
+    ) -> None:
+        html = HTMLRenderer().render(sample_report)
+        assert "<strong>Risk:</strong>" not in html
+        assert "<strong>Potential Impact:</strong>" not in html
+        assert "<strong>Mitigation:</strong>" not in html
+        assert "Expected outcome:" not in html
+        assert "Consequence if false" not in html
+
+
+def test_business_context_threaded_into_section_prompts(
+    sample_report: "object", monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Distilled business context is appended to every section prompt."""
+    monkeypatch.setattr(narrative, "get_llm", lambda **_kwargs: object())
+    monkeypatch.setattr(
+        narrative, "get_llm_config", lambda: SimpleNamespace(temperature=0.0)
+    )
+    report = sample_report.model_copy(deep=True)
+    report.metadata.business_context = {"domain": "Retail sales", "units": "USD"}
+
+    captured: list[str] = []
+
+    def capture(
+        _llm: object,
+        _prompt: object,
+        _section: object,
+        _section_name: str,
+        _total_usage: dict[str, int],
+        extra_instructions: str,
+        _fallback_sections: list[str],
+    ) -> str:
+        captured.append(extra_instructions)
+        return "narrative"
+
+    monkeypatch.setattr(narrative, "_generate_section", capture)
+    narrative.generate_narratives(report)
+
+    assert captured, "no section prompts were invoked"
+    for extra in captured:
+        assert "BUSINESS CONTEXT" in extra
+        assert "Retail sales" in extra
+        assert "USD" in extra
+
+
+def test_no_business_context_leaves_prompts_unchanged(
+    sample_report: "object", monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When no context was distilled, prompts carry no business-context block."""
+    monkeypatch.setattr(narrative, "get_llm", lambda **_kwargs: object())
+    monkeypatch.setattr(
+        narrative, "get_llm_config", lambda: SimpleNamespace(temperature=0.0)
+    )
+    captured: list[str] = []
+
+    def capture(
+        _llm: object,
+        _prompt: object,
+        _section: object,
+        _section_name: str,
+        _total_usage: dict[str, int],
+        extra_instructions: str,
+        _fallback_sections: list[str],
+    ) -> str:
+        captured.append(extra_instructions)
+        return "narrative"
+
+    monkeypatch.setattr(narrative, "_generate_section", capture)
+    narrative.generate_narratives(sample_report)
+
+    assert captured
+    for extra in captured:
+        assert "BUSINESS CONTEXT" not in extra
+
+
 def test_narrative_generation_records_section_fallbacks(
     sample_report: "object", monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -265,6 +380,8 @@ def test_narrative_generation_records_section_fallbacks(
         "statistical_audit",
         "explainability",
         *["recommendation"] * len(report.recommendations),
+        *["risk"] * len(report.risks),
+        *["assumption"] * len(report.assumptions),
     ]
 
 

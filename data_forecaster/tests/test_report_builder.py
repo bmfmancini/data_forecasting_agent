@@ -488,3 +488,221 @@ class TestConfidenceScoreDeductions:
         )
         assert report.confidence.score >= 75
         assert report.confidence.label == "High"
+
+
+# ── Business-context plumbing & conditional sections ─────────────────────────
+
+
+class TestBusinessContextAndConditionalSections:
+    """Phase 1/2: business-context distillation and conditional §12 emission."""
+
+    @staticmethod
+    def _build(
+        validation: ValidationResult,
+        statistical: StatisticalResult,
+        model_selection: ModelSelectionResult,
+        forecast: ForecastResult,
+        review: StatisticalReviewResult,
+        all_metrics: dict[str, dict[str, float]],
+        preflight_options: dict | None = None,
+    ) -> ExecutiveReport:
+        return ExecutiveReportBuilder().build(
+            validation=validation,
+            statistical=statistical,
+            model_selection=model_selection,
+            forecast=forecast,
+            statistical_review=review,
+            all_metrics=all_metrics,
+            preflight_options=preflight_options,
+        )
+
+    def test_distill_business_context_ignores_sentinels(
+        self,
+        sample_validation: ValidationResult,
+        sample_statistical: StatisticalResult,
+        sample_model_selection: ModelSelectionResult,
+        sample_forecast: ForecastResult,
+        sample_review: StatisticalReviewResult,
+        sample_all_metrics: dict[str, dict[str, float]],
+    ) -> None:
+        report = self._build(
+            sample_validation,
+            sample_statistical,
+            sample_model_selection,
+            sample_forecast,
+            sample_review,
+            sample_all_metrics,
+            preflight_options={
+                "data_domain": "Skip / Let AI Guess",
+                "units": "Unspecified",
+                "interventions": "None known",
+                "censoring_or_stockouts": "None known",
+                "known_future_covariates": "None",
+            },
+        )
+        assert report.metadata.business_context == {}
+
+    def test_distill_business_context_keeps_concrete_values(
+        self,
+        sample_validation: ValidationResult,
+        sample_statistical: StatisticalResult,
+        sample_model_selection: ModelSelectionResult,
+        sample_forecast: ForecastResult,
+        sample_review: StatisticalReviewResult,
+        sample_all_metrics: dict[str, dict[str, float]],
+    ) -> None:
+        report = self._build(
+            sample_validation,
+            sample_statistical,
+            sample_model_selection,
+            sample_forecast,
+            sample_review,
+            sample_all_metrics,
+            preflight_options={
+                "data_domain": "Retail sales",
+                "units": "USD",
+                "interventions": "Q1 promotion",
+                "censoring_or_stockouts": "Confirmed",
+                "known_future_covariates": "holidays, price index",
+            },
+        )
+        assert report.metadata.business_context == {
+            "domain": "Retail sales",
+            "units": "USD",
+            "interventions": "Q1 promotion",
+            "stockouts": "Confirmed",
+            "covariates": "holidays, price index",
+        }
+
+    def test_assumptions_baseline_without_context(
+        self,
+        sample_validation: ValidationResult,
+        sample_statistical: StatisticalResult,
+        sample_model_selection: ModelSelectionResult,
+        sample_forecast: ForecastResult,
+        sample_review: StatisticalReviewResult,
+        sample_all_metrics: dict[str, dict[str, float]],
+    ) -> None:
+        """No preflight context: seasonal/frequency/exogenous emit; interventions/stockouts do not."""
+        report = self._build(
+            sample_validation,
+            sample_statistical,
+            sample_model_selection,
+            sample_forecast,
+            sample_review,
+            sample_all_metrics,
+        )
+        text = " ".join(a.assumption for a in report.assumptions).lower()
+        assert "seasonal" in text  # sp=12 detected
+        assert "ms frequency" in text or "frequency" in text
+        assert "exogenous" in text  # no covariates supplied
+        assert "intervention" not in text  # none declared
+        assert "stockout" not in text and "censoring" not in text
+
+    def test_assumptions_interventions_only_when_declared(
+        self,
+        sample_validation: ValidationResult,
+        sample_statistical: StatisticalResult,
+        sample_model_selection: ModelSelectionResult,
+        sample_forecast: ForecastResult,
+        sample_review: StatisticalReviewResult,
+        sample_all_metrics: dict[str, dict[str, float]],
+    ) -> None:
+        report = self._build(
+            sample_validation,
+            sample_statistical,
+            sample_model_selection,
+            sample_forecast,
+            sample_review,
+            sample_all_metrics,
+            preflight_options={"interventions": "Q1 promotion"},
+        )
+        joined = [a.assumption for a in report.assumptions]
+        assert any("Q1 promotion" in a for a in joined)
+        # Exogenous assumption still emits because no covariates were supplied.
+        assert any("exogenous" in a.lower() for a in joined)
+
+    def test_assumptions_exogenous_suppressed_when_covariates_given(
+        self,
+        sample_validation: ValidationResult,
+        sample_statistical: StatisticalResult,
+        sample_model_selection: ModelSelectionResult,
+        sample_forecast: ForecastResult,
+        sample_review: StatisticalReviewResult,
+        sample_all_metrics: dict[str, dict[str, float]],
+    ) -> None:
+        report = self._build(
+            sample_validation,
+            sample_statistical,
+            sample_model_selection,
+            sample_forecast,
+            sample_review,
+            sample_all_metrics,
+            preflight_options={"known_future_covariates": "holidays"},
+        )
+        text = " ".join(a.assumption for a in report.assumptions).lower()
+        assert "exogenous" not in text
+
+    def test_assumptions_seasonal_only_when_detected(
+        self,
+        sample_validation: ValidationResult,
+        sample_statistical: StatisticalResult,
+        sample_model_selection: ModelSelectionResult,
+        sample_forecast: ForecastResult,
+        sample_review: StatisticalReviewResult,
+        sample_all_metrics: dict[str, dict[str, float]],
+    ) -> None:
+        non_seasonal = sample_statistical.model_copy(
+            update={"seasonal_period": None, "dominant_period": None}
+        )
+        report = self._build(
+            sample_validation,
+            non_seasonal,
+            sample_model_selection,
+            sample_forecast,
+            sample_review,
+            sample_all_metrics,
+        )
+        text = " ".join(a.assumption for a in report.assumptions).lower()
+        assert "seasonal cycle" not in text
+
+    def test_assumptions_frequency_only_when_detected(
+        self,
+        sample_validation: ValidationResult,
+        sample_statistical: StatisticalResult,
+        sample_model_selection: ModelSelectionResult,
+        sample_forecast: ForecastResult,
+        sample_review: StatisticalReviewResult,
+        sample_all_metrics: dict[str, dict[str, float]],
+    ) -> None:
+        no_freq = sample_validation.model_copy(update={"frequency": None})
+        report = self._build(
+            no_freq,
+            sample_statistical,
+            sample_model_selection,
+            sample_forecast,
+            sample_review,
+            sample_all_metrics,
+        )
+        text = " ".join(a.assumption for a in report.assumptions).lower()
+        assert "frequency" not in text
+
+    def test_domain_specific_assumption_wording(
+        self,
+        sample_validation: ValidationResult,
+        sample_statistical: StatisticalResult,
+        sample_model_selection: ModelSelectionResult,
+        sample_forecast: ForecastResult,
+        sample_review: StatisticalReviewResult,
+        sample_all_metrics: dict[str, dict[str, float]],
+    ) -> None:
+        report = self._build(
+            sample_validation,
+            sample_statistical,
+            sample_model_selection,
+            sample_forecast,
+            sample_review,
+            sample_all_metrics,
+            preflight_options={"data_domain": "retail sales"},
+        )
+        assert "retail sales" in report.assumptions[0].assumption.lower()

@@ -593,9 +593,15 @@ def test_recommendation_narrative_guard_preserves_deterministic_sequence() -> No
     assert _unsupported_recommendation_claims(
         "Use future actuals for the first out-of-sample validation.", monitoring
     )
-    assert _fallback_narrative(recommendations[1], "recommendation") == (
-        recommendations[1].recommendation
-    )
+    assert _fallback_narrative(recommendations[1], "recommendation") == " ".join(
+        part
+        for part in (
+            recommendations[1].recommendation,
+            recommendations[1].rationale,
+            recommendations[1].expected_outcome,
+        )
+        if part
+    ).strip()
 
 
 def test_forecast_chart_uses_estimated_interval_label() -> None:
@@ -639,7 +645,7 @@ def test_high_error_risk_respects_interval_provenance() -> None:
         return next(
             risk.mitigation
             for risk in risks
-            if "Forecast validation error is high" in risk.description
+            if "Validation error is high" in risk.description
         )
 
     assert "model-based 95% prediction intervals" in mitigation(high_error)

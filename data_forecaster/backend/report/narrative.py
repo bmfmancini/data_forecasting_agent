@@ -22,6 +22,7 @@ from core.llm_factory import get_llm
 from core.logging_config import get_logger
 from forecasting.selection_policy import validate_llm_output
 from prompts.report_generation_prompt import (
+    ASSUMPTION_NARRATIVE_PROMPT,
     DATA_QUALITY_NARRATIVE_PROMPT,
     EXECUTIVE_SUMMARY_NARRATIVE_PROMPT,
     EXPLAINABILITY_NARRATIVE_PROMPT,
@@ -29,12 +30,28 @@ from prompts.report_generation_prompt import (
     HISTORICAL_ANALYSIS_NARRATIVE_PROMPT,
     MODEL_COMPARISON_NARRATIVE_PROMPT,
     RECOMMENDATION_NARRATIVE_PROMPT,
+    RISK_NARRATIVE_PROMPT,
     STATISTICAL_AUDIT_NARRATIVE_PROMPT,
 )
 from report.models import ExecutiveReport
 from utils.token_tracking import extract_token_usage, estimate_input_text
 
 logger = get_logger(__name__)
+
+
+def _business_context_block(report: ExecutiveReport) -> str:
+    """Format ``metadata.business_context`` as a prompt appendix.
+
+    Returns an empty string when no usable business context was distilled, so
+    prompts stay unchanged for runs without preflight context.
+    """
+    context = report.metadata.business_context or {}
+    if not context:
+        return ""
+    lines = [f"- {key}: {value}" for key, value in context.items()]
+    return "\n\nBUSINESS CONTEXT (user-supplied; cite only when relevant):\n" + "\n".join(
+        lines
+    )
 
 
 def generate_narratives(
@@ -57,11 +74,12 @@ def generate_narratives(
         "total_tokens": 0,
     }
     fallback_sections: list[str] = []
-    extra = (
+    user_extra = (
         f"\n\nADDITIONAL USER INSTRUCTIONS:\n{user_prompt.strip()}"
         if user_prompt and user_prompt.strip()
         else ""
     )
+    context_extra = _business_context_block(report) + user_extra
 
     # ── Executive Summary ─────────────────────────────────────────────────
     report.executive_summary.narrative = _generate_section(
@@ -70,7 +88,7 @@ def generate_narratives(
         report.executive_summary,
         "executive_summary",
         total_usage,
-        extra,
+        context_extra,
         fallback_sections,
     )
 
@@ -81,7 +99,7 @@ def generate_narratives(
         report.data_quality,
         "data_quality",
         total_usage,
-        extra,
+        context_extra,
         fallback_sections,
     )
 
@@ -92,7 +110,7 @@ def generate_narratives(
         report.historical_analysis,
         "historical_analysis",
         total_usage,
-        extra,
+        context_extra,
         fallback_sections,
     )
 
@@ -103,7 +121,7 @@ def generate_narratives(
         report.forecast_outlook,
         "forecast_outlook",
         total_usage,
-        extra,
+        context_extra,
         fallback_sections,
     )
 
@@ -114,7 +132,7 @@ def generate_narratives(
         report.model_comparison,
         "model_comparison",
         total_usage,
-        extra,
+        context_extra,
         fallback_sections,
     )
 
@@ -125,7 +143,7 @@ def generate_narratives(
         report.statistical_audit,
         "statistical_audit",
         total_usage,
-        extra,
+        context_extra,
         fallback_sections,
     )
 
@@ -136,7 +154,7 @@ def generate_narratives(
         report.explainability,
         "explainability",
         total_usage,
-        extra,
+        context_extra,
         fallback_sections,
     )
 
@@ -148,7 +166,31 @@ def generate_narratives(
             rec,
             "recommendation",
             total_usage,
-            extra,
+            context_extra,
+            fallback_sections,
+        )
+
+    # ── Risks ─────────────────────────────────────────────────────────────
+    for risk in report.risks:
+        risk.narrative = _generate_section(
+            llm,
+            RISK_NARRATIVE_PROMPT,
+            risk,
+            "risk",
+            total_usage,
+            context_extra,
+            fallback_sections,
+        )
+
+    # ── Assumptions ───────────────────────────────────────────────────────
+    for assumption in report.assumptions:
+        assumption.narrative = _generate_section(
+            llm,
+            ASSUMPTION_NARRATIVE_PROMPT,
+            assumption,
+            "assumption",
+            total_usage,
+            context_extra,
             fallback_sections,
         )
 
@@ -237,6 +279,14 @@ def _generate_section(
         elif section_name == "recommendation":
             validation_warnings.extend(
                 _unsupported_recommendation_claims(narrative, section_data)
+            )
+        elif section_name == "risk":
+            validation_warnings.extend(
+                _unsupported_risk_claims(narrative, section_data)
+            )
+        elif section_name == "assumption":
+            validation_warnings.extend(
+                _unsupported_assumption_claims(narrative, section_data)
             )
         if validation_warnings:
             logger.warning(
@@ -406,6 +456,57 @@ def _contradictory_data_quality_rating(
     return []
 
 
+def _unsupported_change_point_sequencing(
+    text: str,
+    section_data: dict[str, Any],
+) -> list[str]:
+    """Reject prose that prescribes break-response options before validation.
+
+    Shared by the recommendation and risk validators: when the structured
+    evidence mentions candidate break dates / change points, any intervention
+    term, recency weighting, segmentation, or regime-specific modelling option
+    must appear only after a validation-first, conditional cue.
+    """
+    normalized = re.sub(r"[‐‑‒–—−]", "-", text).lower()
+    evidence = json.dumps(section_data, default=str).lower()
+    if "candidate break dates" not in evidence and "change points" not in evidence:
+        return []
+    option_positions = [
+        normalized.find(option)
+        for option in (
+            "intervention term",
+            "recency weighting",
+            "segment",
+            "regime-specific",
+        )
+        if option in normalized
+    ]
+    if not option_positions:
+        return []
+    validation_positions = [
+        normalized.find(term)
+        for term in ("validate", "validation", "confirm")
+        if term in normalized
+    ]
+    validation_first = bool(validation_positions) and min(
+        validation_positions
+    ) < min(option_positions)
+    conditional = bool(
+        re.search(
+            r"\b(?:only if|if (?:the )?(?:break|shift).{0,30}"
+            r"(?:confirmed|durable|persistent)|after validation|"
+            r"once validated|then (?:compare|consider))\b",
+            normalized,
+        )
+    )
+    if not validation_first or not conditional:
+        return [
+            "Structural-break options were recommended without "
+            "validation-first, conditional sequencing."
+        ]
+    return []
+
+
 def _unsupported_recommendation_claims(
     text: str,
     section_data: dict[str, Any],
@@ -413,41 +514,7 @@ def _unsupported_recommendation_claims(
     """Reject recommendation prose that reverses deterministic safeguards."""
     normalized = re.sub(r"[‐‑‒–—−]", "-", text).lower()
     evidence = json.dumps(section_data, default=str).lower()
-    warnings: list[str] = []
-
-    if "candidate break dates" in evidence or "change points" in evidence:
-        option_positions = [
-            normalized.find(option)
-            for option in (
-                "intervention term",
-                "recency weighting",
-                "segment",
-                "regime-specific",
-            )
-            if option in normalized
-        ]
-        if option_positions:
-            validation_positions = [
-                normalized.find(term)
-                for term in ("validate", "validation", "confirm")
-                if term in normalized
-            ]
-            validation_first = bool(validation_positions) and min(
-                validation_positions
-            ) < min(option_positions)
-            conditional = bool(
-                re.search(
-                    r"\b(?:only if|if (?:the )?(?:break|shift).{0,30}"
-                    r"(?:confirmed|durable|persistent)|after validation|"
-                    r"once validated|then (?:compare|consider))\b",
-                    normalized,
-                )
-            )
-            if not validation_first or not conditional:
-                warnings.append(
-                    "Structural-break options were recommended without "
-                    "validation-first, conditional sequencing."
-                )
+    warnings: list[str] = _unsupported_change_point_sequencing(text, section_data)
 
     completed_validation = any(
         marker in evidence
@@ -471,6 +538,56 @@ def _unsupported_recommendation_claims(
                 "Recommendation implied that completed out-of-sample validation "
                 "had not occurred."
             )
+    return warnings
+
+
+def _unsupported_risk_claims(
+    text: str,
+    section_data: dict[str, Any],
+) -> list[str]:
+    """Reject risk prose that breaks deterministic safeguards.
+
+    Preserves the change-point validation-first sequencing on structural-break
+    risks and blocks fabricated financial impacts.
+    """
+    warnings: list[str] = list(
+        _unsupported_change_point_sequencing(text, section_data)
+    )
+    normalized = re.sub(r"\s+", " ", text).lower()
+    if re.search(r"\$[\d.,]+\s*(million|billion|thousand|m|b|k)\b", normalized):
+        warnings.append(
+            "Risk narrative fabricated a financial impact not present in the "
+            "structured context."
+        )
+    return warnings
+
+
+def _unsupported_assumption_claims(
+    text: str,
+    section_data: dict[str, Any],
+) -> list[str]:
+    """Reject assumption prose that introduces undeclared context.
+
+    An assumption must not assert conditions, interventions, covariates, or
+    stockouts that the structured context does not mention.
+    """
+    evidence = json.dumps(section_data, default=str).lower()
+    normalized = re.sub(r"[‐‑‒–—−]", "-", text).lower()
+    warnings: list[str] = []
+    if "interventions" not in evidence and re.search(
+        r"\b(?:promotion|outage|policy change|intervention)\b", normalized
+    ):
+        warnings.append(
+            "Assumption narrative introduced interventions not declared in the "
+            "structured context."
+        )
+    if "covariates" not in evidence and re.search(
+        r"\b(?:covariate|exogenous variable|holiday|price signal)\b", normalized
+    ):
+        warnings.append(
+            "Assumption narrative introduced covariates not declared in the "
+            "structured context."
+        )
     return warnings
 
 
@@ -601,5 +718,23 @@ def _fallback_narrative(section: Any, section_name: str) -> str:
             "projected forward."
         )
     if section_name == "recommendation":
-        return data.get("recommendation", "")
+        parts = [
+            data.get("recommendation", ""),
+            data.get("rationale", ""),
+            data.get("expected_outcome", ""),
+        ]
+        return " ".join(part for part in parts if part).strip()
+    if section_name == "risk":
+        parts = [
+            data.get("description", ""),
+            data.get("potential_impact", ""),
+            data.get("mitigation", ""),
+        ]
+        return " ".join(part for part in parts if part).strip()
+    if section_name == "assumption":
+        assumption = data.get("assumption", "")
+        consequence = data.get("consequence_if_false", "")
+        if consequence:
+            return f"{assumption} {consequence}"
+        return assumption
     return ""

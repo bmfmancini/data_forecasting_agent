@@ -1,15 +1,16 @@
 """Prompt templates for executive report narrative generation (Stage 2).
 
 Each narrative section has its own focused :class:`ChatPromptTemplate` that
-receives the pre-computed structured data for that section as JSON context.
+receives the pre-computed structured data for that section as JSON context,
+together with the distilled business context and any user tone instructions.
 The LLM is instructed to use ONLY the provided values — it must never invent
 metrics, financial impacts, or business conclusions.
 
 Common rules enforced by all prompts:
-- Executive tone, no statistical jargon.
-- Hedged language (ban "will", "proves", "guarantees").
+- Executive tone; the persona is a senior data analyst briefing leadership.
+- No statistical jargon in prose (metric names are fine inside Evidence).
 - No unsupported business conclusions (staffing, fleet, pricing, revenue,
-  cost, seat claims) unless explicitly supplied by the user.
+  cost) unless explicitly supplied by the user via business context.
 - No financial fabrication ("$X million" placeholders).
 - Use only the values provided in the structured context.
 """
@@ -23,26 +24,27 @@ from prompts.prompt_utils import apply_token_budget
 # ── Shared system message fragment ───────────────────────────────────────────
 
 _SYSTEM_PREAMBLE = (
-    "You are an elite business strategist writing for a C-suite audience. "
-    "Your task is to transform pre-computed structured data into polished "
-    "executive narrative. You are NOT a forecaster — every number, score, "
-    "and metric has already been computed by the analytics engine.\n\n"
+    "You are a senior data analyst briefing leadership in plain, confident "
+    "prose. Every number, score, and metric has already been computed by the "
+    "analytics engine — you are writing the narrative, not forecasting.\n\n"
     "### ABSOLUTE RULES ###\n"
-    "1. Use ONLY the values provided in the structured context. Do NOT "
-    "invent, estimate, or fabricate any metric, score, or value.\n"
-    "2. Do NOT generate financial impacts (e.g. '$X million') unless "
-    "explicitly provided. Write 'Financial impact depends on average "
-    "revenue per unit and other business KPIs' instead.\n"
+    "1. Use ONLY the values in the structured context. Do NOT invent, "
+    "estimate, or fabricate any metric, score, or value.\n"
+    "2. Do NOT generate financial impacts (e.g. '$X million') unless the "
+    "context explicitly provides them. Write 'financial impact depends on "
+    "average revenue per unit and other business KPIs' instead.\n"
     "3. Do NOT make unsupported business conclusions about staffing, fleet "
     "sizing, pricing, marketing, revenue, or operating costs unless those "
-    "values are in the context. Use hedged language: 'The projected "
-    "increase may warrant a review of operational capacity.'\n"
-    "4. Replace absolute language. Never use 'will', 'proves', 'guarantees', "
-    "'confirms beyond doubt'. Prefer 'is expected to', 'suggests', "
-    "'indicates', 'projects', 'based on historical evidence'.\n"
-    "5. No statistical jargon. Do NOT mention: ADF, KPSS, p-values, "
-    "differencing, stationarity, residuals, prediction intervals (use "
-    "'forecast range'), AR/MA/I components, or model order parameters.\n"
+    "values appear in the business context. Hedge with 'may warrant a review "
+    "of operational capacity' when a capacity implication is plausible.\n"
+    "4. Vary sentence structure. Do NOT open consecutive sections or bullets "
+    "with the same phrase. Be specific — cite the actual numbers from the "
+    "context rather than restating labels.\n"
+    "5. No statistical jargon in prose. Do NOT mention: ADF, KPSS, p-values, "
+    "differencing, stationarity, residuals, prediction intervals (say "
+    "'forecast range'), AR/MA/I components, or model order parameters. Metric "
+    "names (MAPE, RMSE, MASE, WAPE) are permitted only inside Evidence "
+    "references, not in flowing prose.\n"
     "6. Begin immediately with the narrative — no greetings, no section "
     "headers, no meta-commentary.\n"
     "7. Treat change points as candidates, not confirmed structural breaks. "
@@ -64,7 +66,7 @@ EXECUTIVE_SUMMARY_NARRATIVE_PROMPT = apply_token_budget(
             ("system", _SYSTEM_PREAMBLE),
             (
                 "human",
-                "Write a concise executive summary (3-4 sentences) for the "
+                "Write a concise executive summary (3-5 sentences) for the "
                 "following forecast. The audience should understand the "
                 "forecast in less than one minute. Cover: strategic outlook, "
                 "first-to-last endpoint change, why confidence is at its level, the primary "
@@ -87,7 +89,7 @@ DATA_QUALITY_NARRATIVE_PROMPT = apply_token_budget(
             ("system", _SYSTEM_PREAMBLE),
             (
                 "human",
-                "Write a 2-3 sentence data quality summary for executives. "
+                "Write a 2-4 sentence data quality summary for executives. "
                 "Explain the rating, the most significant issues (if any), "
                 "and how data quality may influence forecast reliability. "
                 "Preserve the supplied deterministic rating and explanation. "
@@ -112,7 +114,7 @@ HISTORICAL_ANALYSIS_NARRATIVE_PROMPT = apply_token_budget(
             ("system", _SYSTEM_PREAMBLE),
             (
                 "human",
-                "Write a 3-4 sentence historical performance summary for "
+                "Write a 3-5 sentence historical performance summary for "
                 "executives. Explain the trend direction, its business "
                 "significance, and any seasonal patterns in plain language. "
                 "Do not use statistical terminology.\n\n"
@@ -131,7 +133,7 @@ FORECAST_OUTLOOK_NARRATIVE_PROMPT = apply_token_budget(
             ("system", _SYSTEM_PREAMBLE),
             (
                 "human",
-                "Write a 3-4 sentence forecast outlook for executives. "
+                "Write a 3-5 sentence forecast outlook for executives. "
                 "State metrics.forecast_pattern and the first-to-last endpoint "
                 "change separately. Never interpret endpoint change as growth, "
                 "decline, expansion, contraction, or trend. Never call a "
@@ -161,7 +163,7 @@ MODEL_COMPARISON_NARRATIVE_PROMPT = apply_token_budget(
             ("system", _SYSTEM_PREAMBLE),
             (
                 "human",
-                "Write a 3-4 sentence explanation of why the selected "
+                "Write a 3-5 sentence explanation of why the selected "
                 "forecasting model was chosen and what characteristics it "
                 "captures. Do not claim it outperformed every alternative "
                 "unless the structured rationale explicitly says so. Refer to "
@@ -187,7 +189,7 @@ STATISTICAL_AUDIT_NARRATIVE_PROMPT = apply_token_budget(
             ("system", _SYSTEM_PREAMBLE),
             (
                 "human",
-                "Write a 2-3 sentence independent statistical assessment "
+                "Write a 2-4 sentence independent statistical assessment "
                 "for executives. Summarise the strongest evidence, key "
                 "concerns (if any), and recommended follow-up. Frame any "
                 "concerns as forward-looking recommendations, not process "
@@ -208,7 +210,7 @@ EXPLAINABILITY_NARRATIVE_PROMPT = apply_token_budget(
             ("system", _SYSTEM_PREAMBLE),
             (
                 "human",
-                "Write a 2-3 sentence explainability summary that helps "
+                "Write a 2-4 sentence explainability summary that helps "
                 "executives understand why the AI reached its conclusions. "
                 "Translate the findings into plain business language. Do "
                 "not use statistical terminology.\n\n"
@@ -219,6 +221,51 @@ EXPLAINABILITY_NARRATIVE_PROMPT = apply_token_budget(
     "narrative_explainability",
 )
 
+# ── Risk Narrative ───────────────────────────────────────────────────────────
+
+RISK_NARRATIVE_PROMPT = apply_token_budget(
+    ChatPromptTemplate.from_messages(
+        [
+            ("system", _SYSTEM_PREAMBLE),
+            (
+                "human",
+                "Write one flowing 2-3 sentence paragraph for the following "
+                "risk. Lead with what was detected and the supporting numbers, "
+                "then state why it matters, then give the concrete next step. "
+                "Merge the description, impact, and mitigation into a single "
+                "paragraph — do NOT use 'Risk:', 'Impact:', or 'Mitigation:' "
+                "labels. Keep the change-point validation-first sequencing when "
+                "the mitigation calls for it. Do not add financial impacts or "
+                "business conclusions absent from the context.\n\n"
+                "STRUCTURED CONTEXT:\n{section_json}",
+            ),
+        ]
+    ),
+    "narrative_risk",
+)
+
+# ── Assumption Narrative ─────────────────────────────────────────────────────
+
+ASSUMPTION_NARRATIVE_PROMPT = apply_token_budget(
+    ChatPromptTemplate.from_messages(
+        [
+            ("system", _SYSTEM_PREAMBLE),
+            (
+                "human",
+                "Write 1-2 flowing sentences for the following assumption, "
+                "grounded in the business context when it is supplied. State "
+                "the assumption and, where it fits naturally, the consequence "
+                "of it being false — do not use 'Assumption:' or "
+                "'Consequence:' labels. Do not introduce conditions, "
+                "interventions, or covariates that the context does not "
+                "mention.\n\n"
+                "STRUCTURED CONTEXT:\n{section_json}",
+            ),
+        ]
+    ),
+    "narrative_assumption",
+)
+
 # ── Recommendation Narrative ─────────────────────────────────────────────────
 
 RECOMMENDATION_NARRATIVE_PROMPT = apply_token_budget(
@@ -227,18 +274,20 @@ RECOMMENDATION_NARRATIVE_PROMPT = apply_token_budget(
             ("system", _SYSTEM_PREAMBLE),
             (
                 "human",
-                "Rewrite the following recommendation into polished "
-                "executive prose (1-2 sentences). Do NOT change the intent, "
-                "priority, or supporting evidence. Do NOT add financial "
-                "impacts or business conclusions not present in the data. "
+                "Rewrite the following recommendation into one merged 2-4 "
+                "sentence executive paragraph that combines the action, its "
+                "rationale, and the expected outcome — do NOT use 'Action:', "
+                "'Rationale:', or 'Expected Outcome:' labels. Do NOT change "
+                "the intent, priority, or supporting evidence, and do NOT add "
+                "financial impacts or business conclusions absent from the data. "
+                "Cite the concrete numbers from the rationale and evidence. "
                 "For change-point recommendations, preserve the required order: "
                 "validate break dates, effect sizes, and persistence first; only "
                 "after confirmation compare intervention terms, recency weighting, "
                 "segmentation, or regime-specific models. "
                 "If completed rolling-origin or untouched final-test evidence is "
                 "present, describe future-actual comparisons as monitoring, not "
-                "first-time out-of-sample validation. "
-                "Improve readability and executive tone only.\n\n"
+                "first-time out-of-sample validation.\n\n"
                 "STRUCTURED CONTEXT:\n{section_json}",
             ),
         ]
