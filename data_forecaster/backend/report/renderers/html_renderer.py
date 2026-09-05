@@ -18,7 +18,6 @@ from report.renderers.markdown_renderer import (
     _assumption_fallback_text,
     _recommendation_fallback_text,
     _recommendation_title,
-    _risk_fallback_text,
 )
 from report.rules import DASHBOARD_STATUS_COLORS
 
@@ -297,15 +296,17 @@ class HTMLRenderer:
         for risk in report.risks:
             evidence_items = "".join(f"<li>{escape(ev)}</li>" for ev in risk.evidence)
             evidence = (
-                f'<ul class="small text-muted">{evidence_items}</ul>'
+                f'<p>Supporting evidence:</p><ul class="small text-muted">{evidence_items}</ul>'
                 if evidence_items
                 else ""
             )
-            narrative = risk.narrative or _risk_fallback_text(risk)
+            description = f"<p>{escape(risk.description)}</p>" if risk.title else ""
             blocks.append(
                 f'<div class="risk-block mb-2">'
-                f"<h6>{escape(risk.category)} — {escape(risk.severity)}</h6>"
-                f"<p>{escape(narrative)}</p>"
+                f"<h6>{escape(risk.title or risk.description)}</h6>"
+                f"{description}"
+                f"<p><strong>Business implication:</strong> {escape(risk.potential_impact)}</p>"
+                f"<p><strong>Recommended action:</strong> {escape(risk.mitigation)}</p>"
                 f"{evidence}"
                 f"</div>"
             )
@@ -386,7 +387,7 @@ class HTMLRenderer:
                 for ev in rec.supporting_evidence
             )
             evidence = (
-                f'<ul class="small text-muted">{evidence_items}</ul>'
+                f'<p>Supporting evidence:</p><ul class="small text-muted">{evidence_items}</ul>'
                 if evidence_items
                 else ""
             )

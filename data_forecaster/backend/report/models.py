@@ -285,6 +285,7 @@ class Risk(BaseModel):
     """A strategic risk identified from the analysis.
 
     Attributes:
+        title:             Business-facing issue heading; optional for older reports.
         category:          Risk category (e.g. "Data", "Model", "Market").
         description:       Factual seed describing what was detected.
         potential_impact:  Business impact if the risk materialises.
@@ -296,6 +297,7 @@ class Risk(BaseModel):
                            the fallback.
     """
 
+    title: str = ""
     category: str
     description: str
     potential_impact: str

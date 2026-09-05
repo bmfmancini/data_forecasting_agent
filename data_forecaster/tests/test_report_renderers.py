@@ -241,9 +241,13 @@ class TestSectionFallbackProse:
     ) -> None:
         md = MarkdownRenderer().render(sample_report)
         assert "## 10. Strategic Risks" in md
-        # The horizon-decay risk is always present; its seeds merge into prose.
-        assert "Accuracy is expected to decline" in md
-        assert "Weight near-term projections" in md
+        # Horizon length must not be presented as measured accuracy decay.
+        assert "The horizon alone does not establish how accuracy changes" in md
+        assert "Refresh the forecast as actual results arrive" in md
+        assert "### Longer-term commitments need updated forecasts" in md
+        assert "**Business implication:**" in md
+        assert "**Recommended action:**" in md
+        assert "### Model — Low" not in md
         # Old field labels must not appear.
         assert "**Risk:**" not in md
         assert "**Potential Impact:**" not in md
@@ -273,6 +277,10 @@ class TestSectionFallbackProse:
         self, sample_report: "object"
     ) -> None:
         html = HTMLRenderer().render(sample_report)
+        assert "<h6>Longer-term commitments need updated forecasts</h6>" in html
+        assert "<strong>Business implication:</strong>" in html
+        assert "<strong>Recommended action:</strong>" in html
+        assert "Model — Low" not in html
         assert "<strong>Risk:</strong>" not in html
         assert "<strong>Potential Impact:</strong>" not in html
         assert "<strong>Mitigation:</strong>" not in html

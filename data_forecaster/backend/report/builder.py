@@ -1221,6 +1221,7 @@ class ExecutiveReportBuilder:
                 )
             risks.append(
                 Risk(
+                    title="Forecast error limits planning confidence",
                     category="Model",
                     description=(
                         f"Validation error is high (MAPE {forecast.mape:.1f}%)."
@@ -1241,9 +1242,10 @@ class ExecutiveReportBuilder:
         # Risk: Structural breaks
         if has_structural_breaks:
             cp_count = statistical.change_point_count
-            count_text = f" ({cp_count} candidate break point(s))" if cp_count else ""
+            count_text = f" ({cp_count} possible changes)" if cp_count else ""
             risks.append(
                 Risk(
+                    title="Historical patterns may have changed",
                     category="Data",
                     description=(
                         f"Change-point analysis identified candidate breaks"
@@ -1272,6 +1274,7 @@ class ExecutiveReportBuilder:
         if data_quality.rating == "Poor":
             risks.append(
                 Risk(
+                    title="Data quality needs remediation",
                     category="Data",
                     description=(
                         "Data quality is poor — significant gaps, duplicates, "
@@ -1298,6 +1301,7 @@ class ExecutiveReportBuilder:
             concerns = self._review_concerns(review)
             risks.append(
                 Risk(
+                    title="Statistical review requires follow-up",
                     category="Model",
                     description=(
                         f"The independent statistical review raised "
@@ -1316,23 +1320,25 @@ class ExecutiveReportBuilder:
                 )
             )
 
-        # Risk: Horizon decay (always present, frequency-aware wording)
+        # Constraint: Forecast horizon does not establish accuracy by lead time
         freq = data_quality.frequency or "the detected"
         horizon = len(forecast.forecast)
         risks.append(
             Risk(
+                title="Longer-term commitments need updated forecasts",
                 category="Model",
                 description=(
-                    f"Accuracy is expected to decline over the {horizon}-period "
-                    f"({freq}) horizon — near-term projections are more reliable."
+                    f"The forecast covers {horizon} periods at {freq} frequency. "
+                    "The horizon alone does not establish how accuracy changes "
+                    "across those periods."
                 ),
                 potential_impact=(
-                    "Long-term decisions based on distant forecast periods "
-                    "carry higher uncertainty."
+                    "Longer-term commitments depend on business conditions "
+                    "remaining consistent with the forecast assumptions."
                 ),
                 mitigation=(
-                    "Weight near-term projections more heavily in planning "
-                    "and re-forecast as new data arrives."
+                    "Refresh the forecast as actual results arrive and check accuracy "
+                    "by forecast period before making longer-term commitments."
                 ),
                 evidence=[f"Forecast horizon: {horizon} periods"],
                 severity="Low",
@@ -1358,6 +1364,7 @@ class ExecutiveReportBuilder:
                 what = " and ".join(declared) or "exogenous context"
                 risks.append(
                     Risk(
+                        title="Known business events are absent from the forecast",
                         category="Model",
                         description=(
                             f"The selected {model_name} model cannot ingest "

@@ -364,12 +364,14 @@ class MarkdownRenderer:
             lines.append("No significant risks were identified from the analysis.")
             return "\n".join(lines)
         for risk in report.risks:
-            lines.append(f"### {risk.category} — {risk.severity}")
-            narrative = risk.narrative or _risk_fallback_text(risk)
-            lines.append(narrative)
+            lines.extend([f"### {risk.title or risk.description}", ""])
+            if risk.title:
+                lines.extend([risk.description, ""])
+            lines.extend([f"**Business implication:** {risk.potential_impact}", ""])
+            lines.append(f"**Recommended action:** {risk.mitigation}")
             if risk.evidence:
                 lines.append("")
-                lines.append("**Evidence:**")
+                lines.extend(["**Supporting evidence:**", ""])
                 for ev in risk.evidence:
                     lines.append(f"- {ev}")
             lines.append("")
