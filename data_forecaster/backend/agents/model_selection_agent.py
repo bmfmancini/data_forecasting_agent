@@ -243,9 +243,7 @@ def _build_suitability_summary(stat_result: StatisticalResult) -> str:
         "Prophet": _prophet_suitability,
     }
     sections = [
-        builders[name](stat_result)
-        for name in get_enabled_models()
-        if name in builders
+        builders[name](stat_result) for name in get_enabled_models() if name in builders
     ]
     if stat_result.disabled_tests:
         sections.append(
@@ -274,8 +272,7 @@ def _heuristic_fallback(
     fallback_model = preference[0]
     enabled = set(get_enabled_models())
     reasoning: dict[str, str | None] = {
-        name: (None if name in enabled else _DISABLED_REASON)
-        for name in MODEL_NAMES
+        name: (None if name in enabled else _DISABLED_REASON) for name in MODEL_NAMES
     }
     for m in preference[1:]:
         reasoning[m] = _heuristic_rejection_reason(stat_result, m)
@@ -720,6 +717,7 @@ def build_model_rejection_reasons(
     stat_result: StatisticalResult,
     all_metrics: dict[str, dict[str, float]] | None = None,
     excluded_models: list[str] | None = None,
+    loss_preference: str | None = None,
 ) -> dict[str, str | None]:
     """Build final rejection reasons aligned to the production selection.
 
@@ -727,6 +725,19 @@ def build_model_rejection_reasons(
     selection, including administrator-disabled and review-excluded models.
     """
     reasons = _business_selection_reasons(selected_model, stat_result, all_metrics)
+    if all_metrics and loss_preference:
+        metric = loss_preference.upper()
+        selected_value = _finite_metric(all_metrics.get(selected_model, {}), metric)
+        if selected_value is not None:
+            for model, values in all_metrics.items():
+                value = _finite_metric(values, metric)
+                if model != selected_model and value is not None:
+                    reasons[model] = (
+                        f"Higher validation {metric}: {value:.4f} versus {selected_value:.4f}."
+                        if value > selected_value
+                        else f"Competitive {metric}; the common selection policy preferred another procedure "
+                        "after baseline retention, simplicity, and production-fit checks."
+                    )
     for excluded_model in excluded_models or []:
         if excluded_model in reasons and excluded_model != selected_model:
             reasons[excluded_model] = (

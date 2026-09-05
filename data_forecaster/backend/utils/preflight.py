@@ -67,9 +67,7 @@ def run_preflight_checks(
 
     duplicate_ts = int(selected[date_col].duplicated().sum())
     missing_values = int(series.isna().sum())
-    missing_ts, is_regular, _ = time_index_quality(
-        series.index, detected_frequency
-    )
+    missing_ts, is_regular, _ = time_index_quality(series.index, detected_frequency)
     usable_observations = int(series.dropna().shape[0])
 
     outlier_info = detect_outliers_iqr(series.dropna())
@@ -151,7 +149,7 @@ def run_preflight_checks(
                     "forecasting assistant recommend an objective from your "
                     "business context; model ranking remains deterministic."
                 ),
-                options=["auto", "rmse", "mae", "wape", "mase"],
+                options=["auto", "rmse", "mae", "wape", "mase", "pinball"],
                 default="auto",
             ),
             PreflightDecision(
@@ -294,7 +292,22 @@ def prepare_series_frame(
         series = resolve_duplicates(series, duplicate_strategy)
 
     if frequency:
-        series = reindex_series(series, frequency)
+        aggregation = str(options.get("aggregation", "As provided")).lower()
+        if aggregation in {"sum", "mean", "last", "first"}:
+            grouped = series.resample(frequency)
+            series = (
+                grouped.sum(min_count=1)
+                if aggregation == "sum"
+                else grouped.agg(aggregation)
+            )
+        else:
+            grid = pd.date_range(series.index.min(), series.index.max(), freq=frequency)
+            if not series.index.isin(grid).all():
+                raise ValueError(
+                    "Some observations do not fall on the selected frequency grid. "
+                    "Choose sum, mean, first, or last aggregation to preserve their meaning."
+                )
+            series = reindex_series(series, frequency)
 
     outlier_strategy = options.get("outlier_strategy", "None")
     if outlier_strategy == "Let AI Decide":
@@ -305,8 +318,8 @@ def prepare_series_frame(
     # evaluation fits imputation, clipping, and smoothing independently within
     # each training window; the production refit applies them to full history
     # only after deterministic selection.
-    if missing_strategy == "drop":
-        series = series.dropna()
+    # Preserve the calendar even for legacy "drop" requests. Training-only
+    # imputation handles gaps; metrics exclude unobserved validation targets.
 
     prepared = series.rename(value_col).reset_index()
     prepared.columns = [date_col, value_col]

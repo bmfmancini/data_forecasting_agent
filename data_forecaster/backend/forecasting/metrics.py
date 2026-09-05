@@ -58,6 +58,7 @@ def calculate_forecast_metrics(
     *,
     training: np.ndarray | pd.Series | None = None,
     mase_period: int = 1,
+    quantile: float = 0.5,
 ) -> ForecastMetrics:
     """Calculate point metrics under one documented set of conventions.
 
@@ -66,6 +67,8 @@ def calculate_forecast_metrics(
     estimated. WAPE uses the sum of absolute actuals as its denominator.
     """
     y_true = np.asarray(actual, dtype=float)
+    if not 0 < quantile < 1:
+        raise ValueError("The forecast quantile must be strictly between zero and one.")
     y_pred = np.asarray(predicted, dtype=float)
     if y_true.shape != y_pred.shape or y_true.size == 0:
         return ForecastMetrics(
@@ -107,14 +110,15 @@ def calculate_forecast_metrics(
         reasons["rmsse"] = "Training data is required for RMSSE."
     else:
         train = np.asarray(training, dtype=float)
-        train = train[np.isfinite(train)]
         if mase_period < 1 or train.size <= mase_period:
             reasons["mase"] = "Training data is too short for the configured naive lag."
             reasons["rmsse"] = (
                 "Training data is too short for the configured naive lag."
             )
         else:
-            scale = float(np.mean(np.abs(train[mase_period:] - train[:-mase_period])))
+            differences = train[mase_period:] - train[:-mase_period]
+            differences = differences[np.isfinite(differences)]
+            scale = float(np.mean(np.abs(differences))) if differences.size else 0.0
             if scale == 0:
                 reasons["mase"] = (
                     "MASE is undefined because the naive error scale is zero."
@@ -124,9 +128,7 @@ def calculate_forecast_metrics(
                 )
             else:
                 mase = float(np.mean(absolute_errors) / scale)
-                squared_scale = float(
-                    np.mean((train[mase_period:] - train[:-mase_period]) ** 2)
-                )
+                squared_scale = float(np.mean(differences**2))
                 if squared_scale > 0:
                     rmsse = float(np.sqrt(np.mean(errors**2) / squared_scale))
     smape_denominator = np.abs(y_true) + np.abs(y_pred)
@@ -148,6 +150,7 @@ def calculate_forecast_metrics(
         mase=mase,
         smape=smape,
         rmsse=rmsse,
+        pinball=float(np.mean(np.maximum(quantile * errors, (quantile - 1) * errors))),
         n_evaluated=int(y_true.size),
         n_missing=n_missing,
         unavailable_reasons=reasons,

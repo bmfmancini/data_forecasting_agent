@@ -13,7 +13,6 @@ import sqlite3
 from collections.abc import Callable
 from typing import Any
 
-import pandas as pd
 
 from core.database import get_connection
 from core.logging_config import get_logger
@@ -22,41 +21,68 @@ from forecasting.ewma_model import fit_ewma
 from forecasting.holt_winters import fit_holt_winters
 from forecasting.prophet_model import fit_prophet
 from forecasting.sarima_model import fit_sarima
+from forecasting.window_models import (
+    fit_arima_window,
+    fit_sarima_window,
+    fit_holt_winters_window,
+    fit_ewma_window,
+    fit_prophet_window,
+)
+from forecasting.dynamic_regression import fit_dynamic_regression, fit_dynamic_window
+from forecasting.intermittent import fit_intermittent, fit_intermittent_window
+from forecasting.contracts import ForecastAdapterResult
 
 logger = get_logger(__name__)
 
 # Fit functions accept (series, forecast_horizon, **kwargs) and return the
-# standard metrics dict (forecast, lower_ci, upper_ci, rmse, mae, mape).
-FitFn = Callable[..., dict[str, Any]]
+# typed result with predictions, intervals, nullable metrics, and fit status.
+FitFn = Callable[..., ForecastAdapterResult]
 
 #: Canonical model catalog.  ``extra_kwargs`` maps model-specific keyword
 #: arguments to keys of the fit context passed by the caller (e.g. the
 #: forecasting agent supplies ``seasonal_period`` and ``freq``).
 MODELS: dict[str, dict[str, Any]] = {
     "Holt-Winters": {
+        "window_fn": fit_holt_winters_window,
         "fit_fn": fit_holt_winters,
         "display_name": "Holt-Winters",
-        "extra_kwargs": {},
+        "extra_kwargs": {"seasonal_period": "seasonal_period"},
     },
     "ARIMA": {
+        "window_fn": fit_arima_window,
         "fit_fn": fit_arima,
         "display_name": "ARIMA",
         "extra_kwargs": {},
     },
     "SARIMA": {
+        "window_fn": fit_sarima_window,
         "fit_fn": fit_sarima,
         "display_name": "SARIMA",
         "extra_kwargs": {"seasonal_period": "seasonal_period"},
     },
     "EWMA": {
+        "window_fn": fit_ewma_window,
         "fit_fn": fit_ewma,
         "display_name": "EWMA",
         "extra_kwargs": {},
     },
     "Prophet": {
+        "window_fn": fit_prophet_window,
         "fit_fn": fit_prophet,
         "display_name": "Prophet",
         "extra_kwargs": {"freq": "freq"},
+    },
+    "Dynamic Regression": {
+        "fit_fn": fit_dynamic_regression,
+        "window_fn": fit_dynamic_window,
+        "display_name": "Dynamic Regression",
+        "extra_kwargs": {"freq": "freq"},
+    },
+    "Intermittent Demand": {
+        "fit_fn": fit_intermittent,
+        "window_fn": fit_intermittent_window,
+        "display_name": "Intermittent Demand (TSB)",
+        "extra_kwargs": {},
     },
 }
 
@@ -96,16 +122,12 @@ def get_enabled_models(db_path: str | None = None) -> tuple[str, ...]:
         )
         return MODEL_NAMES
     if not enabled:
-        logger.warning(
-            "model_config has no enabled models — treating all as enabled."
-        )
+        logger.warning("model_config has no enabled models — treating all as enabled.")
         return MODEL_NAMES
     return tuple(enabled)
 
 
-def set_model_enabled(
-    name: str, enabled: bool, db_path: str | None = None
-) -> None:
+def set_model_enabled(name: str, enabled: bool, db_path: str | None = None) -> None:
     """Enable or disable a model, enforcing the at-least-one invariant.
 
     Args:

@@ -32,7 +32,7 @@ jobs:
         if [ -f data_forecaster/backend/requirements.txt ]; then pip install -r data_forecaster/backend/requirements.txt; fi
         if [ -f data_forecaster/frontend/requirements.txt ]; then pip install -r data_forecaster/frontend/requirements.txt; fi
         # Install development tools (pinned for reproducible CI runs)
-        pip install pylint==3.3.* mypy==1.13.* black==24.10.* pytest==8.3.* pip-audit==2.7.*
+        pip install pylint==3.3.* mypy==1.13.* black==24.10.* pytest==8.3.* pytest-asyncio==0.24.* pip-audit==2.7.*
 
     - name: Run Black (check mode)
       continue-on-error: true
@@ -52,7 +52,7 @@ jobs:
     - name: Run Pytest
       working-directory: .
       run: |
-        pytest tests/ -v
+        pytest tests/ data_forecaster/tests/ -v
 
     - name: Run pip-audit (dependency vulnerability scan)
       continue-on-error: true

@@ -11,11 +11,9 @@ import core.config as settings
 from auth.api_key_db import (
     create_api_user,
     create_first_user,
-    delete_api_user,
     list_api_users,
     set_user_admin,
 )
-from auth.dependency import require_admin_api_key, require_api_key
 from core.database import init_database
 from main import app
 
@@ -238,7 +236,7 @@ class TestBootstrap:
         data = response.json()
         assert data["setup_complete"] is False
         assert data["admin_exists"] is False
-        assert data["models_enabled"] == 5
+        assert data["models_enabled"] == 7
         assert "key" not in str(data).lower().replace("api_key_set", "")
 
 

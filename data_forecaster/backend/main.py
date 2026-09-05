@@ -96,7 +96,7 @@ from services.job_service import (
     update_job_settings,
 )
 from services.llm_validation_service import validate_llm_configuration
-from utils.data_parser import parse_upload, parse_upload_from_path
+from utils.data_parser import parse_upload_from_path
 from utils.preflight import run_preflight_checks
 
 logger = get_logger(__name__)
@@ -832,6 +832,36 @@ def get_job_status(
 # ── Chat ──────────────────────────────────────────────────────────────────────
 
 
+@app.get("/jobs/{job_id}/monitoring")
+def get_forecast_monitoring(
+    job_id: str, _user: Annotated[dict, Depends(require_api_key)]
+) -> dict:
+    """Read forecast accuracy after actual observations have been supplied."""
+    from services.forecast_monitoring import monitor_forecast
+
+    try:
+        return monitor_forecast(job_id, _user)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/jobs/{job_id}/actuals")
+def record_forecast_actuals(
+    job_id: str,
+    actuals: dict[str, float],
+    _user: Annotated[dict, Depends(require_api_key)],
+) -> dict:
+    """Record a timestamp-to-observed-value mapping and return forecast accuracy."""
+    from services.forecast_monitoring import monitor_forecast
+
+    try:
+        return monitor_forecast(job_id, _user, actuals)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (ValueError, TypeError, OverflowError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 @app.post(
     "/chat",
     responses={
@@ -1058,9 +1088,7 @@ def llm_config_put(
             provider=request.provider,
             model=request.model,
             base_url=request.base_url,
-            api_key=(
-                request.api_key.get_secret_value() if request.api_key else None
-            ),
+            api_key=(request.api_key.get_secret_value() if request.api_key else None),
             temperature=request.temperature,
         )
     except ValueError as exc:

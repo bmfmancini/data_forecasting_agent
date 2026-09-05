@@ -13,13 +13,20 @@ simply skips the model when Prophet is unavailable.
 
 from __future__ import annotations
 
+from threading import Lock
+
 import numpy as np
 import pandas as pd
 
 from core.logging_config import get_logger
-from forecasting.prophet_compat import import_prophet
+from forecasting.contracts import (
+    ForecastAdapterResult,
+    ForecastFitStatus,
+    ForecastMetrics,
+)
 
 logger = get_logger(__name__)
+_PREDICTION_LOCK = Lock()
 
 
 def _to_history_frame(series: pd.Series) -> pd.DataFrame:
@@ -63,113 +70,52 @@ def _future_frame(
     return pd.DataFrame({"ds": future_dates})
 
 
-def _metrics_from_holdout(
-    train: pd.Series,
-    test: pd.Series,
-    prophet_module,
-    freq: str | None,
-) -> tuple[float, float, float]:
-    """Fit Prophet on ``train`` and score RMSE/MAE/MAPE against ``test``.
-
-    Args:
-        train: Training observations.
-        test: Holdout observations.
-        prophet_module: The imported ``prophet`` module.
-        freq: Optional pandas frequency string for the future frame.
-
-    Returns:
-        ``(rmse, mae, mape)`` — zeroed on any fit/predict failure so the
-        caller can still produce a full-series forecast.
-    """
-    try:
-        train_history = _to_history_frame(train)
-        m = prophet_module.Prophet()
-        m.fit(train_history)
-        future = _future_frame(train_history, periods=len(test), freq=freq)
-        fc = m.predict(future)
-        pred = fc["yhat"].to_numpy()
-        actual = test.to_numpy()
-        residuals = actual - pred
-        rmse = float(np.sqrt(np.mean(residuals**2)))
-        mae = float(np.mean(np.abs(residuals)))
-        mape = float(np.mean(np.abs(residuals / (actual + 1e-8))) * 100)
-        return rmse, mae, mape
-    except Exception as exc:  # pylint: disable=broad-except
-        logger.warning("Prophet holdout metrics failed: %s", exc)
-        return 0.0, 0.0, 0.0
+def prophet_predictive_samples(model, future: pd.DataFrame) -> np.ndarray:
+    """Reproducible Prophet marginal draws without leaking random state."""
+    with _PREDICTION_LOCK:
+        state = np.random.get_state()
+        try:
+            np.random.seed(42)
+            model.uncertainty_samples = 2000
+            return np.asarray(model.predictive_samples(future)["yhat"], dtype=float).T
+        finally:
+            np.random.set_state(state)
+            model.uncertainty_samples = 0
 
 
 def fit_prophet(
     series: pd.Series,
     forecast_horizon: int,
     freq: str | None = None,
-) -> dict:
-    """Fit Meta Prophet and return forecast + metrics.
+) -> ForecastAdapterResult:
+    """Compatibility adapter with nullable evaluation and the shared fitter."""
+    from forecasting.window_models import fit_prophet_window
+    from forecasting.evaluation import make_terminal_holdout, evaluate_predictions
 
-    Args:
-        series: A pandas Series containing the time series data.
-        forecast_horizon: The number of periods to forecast.
-        freq: Optional pandas frequency string for building the future frame.
-            Inferred from the series index when not supplied.
-
-    Returns:
-        dict with keys: forecast, lower_ci, upper_ci, rmse, mae, mape
-    """
-    series = series.dropna().astype(float)
-
-    if len(series) < 2:
-        logger.warning(
-            "Series too short for Prophet (%d points). Returning persistence "
-            "forecast.",
-            len(series),
+    if series.notna().sum() < 3:
+        return ForecastAdapterResult(
+            status=ForecastFitStatus.NOT_ESTIMABLE,
+            failure_reason="Prophet requires at least three observations.",
+            fitted_configuration={"model": "Prophet"},
         )
-        last_val = series.iloc[-1] if not series.empty else 0.0
-        return {
-            "forecast": [last_val] * forecast_horizon,
-            "lower_ci": [last_val] * forecast_horizon,
-            "upper_ci": [last_val] * forecast_horizon,
-            "rmse": 0.0,
-            "mae": 0.0,
-            "mape": 0.0,
-        }
-
-    prophet_module = import_prophet()
-
-    # Split data into train and test sets for metrics calculation
-    split = max(
-        int(len(series) * 0.8),
-        len(series) - forecast_horizon,
-    )
-    split = min(split, len(series) - 1)
-    train, test = series.iloc[:split], series.iloc[split:]
-
-    rmse, mae, mape = 0.0, 0.0, 0.0
-    if len(train) >= 2 and len(test) >= 1:
-        rmse, mae, mape = _metrics_from_holdout(train, test, prophet_module, freq)
-
-    # Fit the model on the full series for the final forecast
-    history = _to_history_frame(series)
-    m = prophet_module.Prophet()
-    m.fit(history)
-    future = _future_frame(history, periods=forecast_horizon, freq=freq)
-    fc = m.predict(future)
-
-    forecast_values = fc["yhat"].to_numpy()
-    lower_ci = fc["yhat_lower"].to_numpy()
-    upper_ci = fc["yhat_upper"].to_numpy()
-
-    logger.info(
-        "Prophet fitted: series_len=%d horizon=%d freq=%s",
-        len(series),
-        forecast_horizon,
-        freq,
-    )
-
-    return {
-        "forecast": forecast_values.tolist(),
-        "lower_ci": lower_ci.tolist(),
-        "upper_ci": upper_ci.tolist(),
-        "rmse": rmse,
-        "mae": mae,
-        "mape": mape,
-    }
+    holdout = make_terminal_holdout(series, forecast_horizon)
+    metrics = ForecastMetrics()
+    try:
+        fit = fit_prophet_window(holdout.train, len(holdout.test), freq=freq)
+        metrics = evaluate_predictions(holdout, np.asarray(fit.forecast), mase_period=1)
+    except Exception as exc:
+        metrics = ForecastMetrics(unavailable_reasons={"all": str(exc)})
+    try:
+        result = fit_prophet_window(series, forecast_horizon, freq=freq)
+    except Exception as exc:
+        return ForecastAdapterResult(
+            status=ForecastFitStatus.FAILED,
+            failure_reason=str(exc),
+            metrics=metrics,
+            fitted_configuration={"model": "Prophet"},
+        )
+    result.metrics = metrics
+    if metrics.rmse is None:
+        result.status = ForecastFitStatus.DEGRADED
+        result.failure_reason = metrics.unavailable_reasons.get("all")
+    return result

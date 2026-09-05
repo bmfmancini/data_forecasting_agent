@@ -417,38 +417,34 @@ def _check_deterministic_policy_violation(
     if model_selection.selection_method != "deterministic":
         return None
     selected = model_selection.selected_model
-    if not all_metrics or selected not in all_metrics:
-        return None
-    selected_rmse = all_metrics[selected].get("RMSE")
-    if selected_rmse is None or not math.isfinite(selected_rmse):
-        return None
+    evidence = model_selection.selection_evidence or {}
+    design = evidence.get("validation_design", {})
+    loss = (
+        evidence.get("decision_loss", design.get("decision_loss", {}))
+        .get("resolved", "rmse")
+        .upper()
+    )
+    excluded = set(design.get("excluded_models", [])) | set(
+        design.get("production_failures", [])
+    )
     comparable = {
-        name: metrics["RMSE"]
+        name: metrics[loss]
         for name, metrics in all_metrics.items()
-        if metrics.get("RMSE") is not None and math.isfinite(metrics["RMSE"])
+        if name not in excluded
+        and metrics.get(loss) is not None
+        and math.isfinite(metrics[loss])
     }
-    if not comparable:
+    if selected not in comparable or not comparable:
         return None
-    best_model = min(comparable, key=comparable.get)
-    best_rmse = comparable[best_model]
-    if best_model != selected and best_rmse > 0:
-        ratio = selected_rmse / best_rmse
-        if ratio > 1.5:
-            return {
-                "agent": "model_selection",
-                "severity": "critical",
-                "issue": (
-                    f"Deterministic policy selected '{selected}' (RMSE="
-                    f"{selected_rmse:.4f}) which is {ratio:.1f}x worse than "
-                    f"the best candidate '{best_model}' (RMSE="
-                    f"{best_rmse:.4f})."
-                ),
-                "recommendation": (
-                    "The selection policy may have excluded the best model "
-                    "due to a status or assumption violation. Review the "
-                    "selection_evidence for exclusion reasons."
-                ),
-            }
+    best = min(comparable, key=comparable.get)
+    if best != selected and comparable[selected] > 1.5 * comparable[best]:
+        return {
+            "agent": "model_selection",
+            "severity": "critical",
+            "issue": f"Deterministic selection '{selected}' has {loss}={comparable[selected]:.4f}, "
+            f"materially worse than eligible '{best}' ({loss}={comparable[best]:.4f}).",
+            "recommendation": "Review common validation evidence and production exclusions.",
+        }
     return None
 
 
@@ -517,6 +513,19 @@ def _deterministic_pre_check(
         _check_residual_mean(forecast_result),
     ]
 
+    if (
+        model_selection.selection_method == "deterministic"
+        and forecast_result.validation_design.get("comparison_policy")
+        == "all_folds_finite_predictions"
+    ):
+        # Full-history descriptive tests are not evidence that a competitor
+        # forecasts better. They cannot overturn common out-of-sample ranking.
+        for flag in checks[:2]:
+            if flag:
+                flag["severity"] = "warning"
+                flag["recommendation"] = (
+                    "Monitor accuracy; this model won the common rolling-origin comparison."
+                )
     return [flag for flag in checks if flag is not None]
 
 

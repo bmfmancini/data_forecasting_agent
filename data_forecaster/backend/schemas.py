@@ -195,6 +195,7 @@ class ResidualDiagnostics(BaseModel):
     disabled_tests: list[str] = Field(default_factory=list)
     # ── Residual diagnostics additions ──────────────────────────────────────
     error_type: str = "innovations"
+    innovation_diagnostics: dict[str, Any] = Field(default_factory=dict)
     n_errors: int = 0
     mean_ci_lower: float | None = None
     mean_ci_upper: float | None = None
@@ -227,6 +228,7 @@ class ForecastCandidateResult(BaseModel):
     mase: float | None = None
     smape: float | None = None
     rmsse: float | None = None
+    pinball: float | None = None
     n_evaluated: int = 0
     n_missing: int = 0
     fitted_configuration: dict[str, Any] = Field(default_factory=dict)
@@ -256,6 +258,7 @@ class ForecastResult(BaseModel):
     mase: float | None = None
     smape: float | None = None
     rmsse: float | None = None
+    pinball: float | None = None
     residual_diagnostics: ResidualDiagnostics | None = None
     candidate_results: list[ForecastCandidateResult] = Field(default_factory=list)
     reasoning_steps: list[dict[str, Any]] = Field(default_factory=list)

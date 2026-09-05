@@ -93,6 +93,15 @@ Poll job status. Returns the current state and, when complete, the full results.
 }
 ```
 
+### Forecast monitoring
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/jobs/{job_id}/actuals` | Record or correct observed values as a JSON timestamp-to-number mapping; return updated accuracy |
+| `GET` | `/jobs/{job_id}/monitoring` | Read accuracy, bias, baseline skill, coverage, and horizon scores for an issued forecast |
+
+Both endpoints require authentication and job ownership (or admin access). Predictions are immutable. Unknown jobs and jobs without snapshots return `404`; invalid actuals return `422`. See [statistical forecasting](statistical-improvements.md) for examples, model options, and interpretation.
+
 ### `POST /chat`
 
 Ask a follow-up question about the analysis results.
@@ -139,7 +148,7 @@ First-run provisioning. Unauthenticated; the bootstrap endpoint is guarded by an
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/models` | List the five forecasting models with enabled state |
+| `GET` | `/models` | List the seven forecasting models with enabled state |
 | `PUT` | `/models/{name}` | Enable/disable a model; `400` when disabling the last enabled model |
 
 ## Error responses

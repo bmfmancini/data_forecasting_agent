@@ -34,7 +34,7 @@ logger = get_logger(__name__)
 # ── Constants ────────────────────────────────────────────────────────────────
 
 # Metric priority for ranking (lower is better for all).
-_METRIC_PRIORITY = ("mase", "wape", "rmse", "mae", "mape")
+_METRIC_PRIORITY = ("mase", "wape", "rmse", "mae", "mape", "pinball")
 
 # Models ordered by simplicity (simplest first) for tie-breaking.
 _SIMPLICITY_ORDER = ("EWMA", "Holt-Winters", "ARIMA", "SARIMA")
@@ -106,7 +106,7 @@ class CandidateEvidence:
             val = getattr(self.backtest.pooled_metrics, metric, None)
             if val is not None and math.isfinite(val):
                 return val
-        if self.adapter_result:
+        if self.adapter_result and self.backtest is None:
             val = getattr(self.adapter_result.metrics, metric, None)
             if val is not None and math.isfinite(val):
                 return val
@@ -166,6 +166,12 @@ def _filter_rankable(
 
 def _exclusion_reason(cand: CandidateEvidence) -> str:
     """Return the reason a non-rankable candidate was excluded."""
+    if cand.backtest:
+        return (
+            "Excluded: incomplete common validation evidence "
+            f"({cand.backtest.n_origins} successful origins, "
+            f"{cand.backtest.n_failed_origins} failed origins)."
+        )
     if cand.adapter_result and cand.adapter_result.status != ForecastFitStatus.OK:
         return f"Excluded: status is {cand.adapter_result.status.value}."
     if cand.adapter_result:
@@ -267,7 +273,12 @@ def _check_baseline_retention(
         return selected, tie_break_note
 
     best_baseline = min(
-        baselines, key=lambda c: c.metric_value(loss_metric) or float("inf")
+        baselines,
+        key=lambda c: (
+            c.metric_value(loss_metric)
+            if c.metric_value(loss_metric) is not None
+            else float("inf")
+        ),
     )
     selected_val = selected.metric_value(loss_metric)
     baseline_val = best_baseline.metric_value(loss_metric)
@@ -329,7 +340,7 @@ def select_model_deterministic(
         loss_metric = "rmse"
 
     ranked = _rank_candidates(rankable, loss_metric)
-    ranking = [(c.name, c.rmse or float("inf")) for c in ranked]
+    ranking = [(c.name, c.rmse if c.rmse is not None else float("inf")) for c in ranked]
 
     selected, tie_break_note = _apply_tie_break(ranked, loss_metric)
     selected, tie_break_note = _check_baseline_retention(

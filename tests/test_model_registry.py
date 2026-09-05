@@ -37,7 +37,7 @@ class TestEnabledModels:
         enabled = registry.get_enabled_models(db)
 
         assert "Prophet" not in enabled
-        assert len(enabled) == 4
+        assert len(enabled) == 6
 
     def test_missing_table_falls_back_to_all(self, tmp_path, monkeypatch):
         db_path = str(tmp_path / "empty.db")
@@ -82,7 +82,7 @@ class TestFitFunctions:
 
         names = [name for name, _, _ in triples]
         assert "Prophet" not in names
-        assert len(triples) == 4
+        assert len(triples) == 6
 
     def test_model_specific_kwargs(self, db):
         triples = dict(
@@ -107,4 +107,4 @@ class TestListModelStates:
 
         assert states["SARIMA"] is False
         assert states["ARIMA"] is True
-        assert len(states) == 5
+        assert len(states) == 7

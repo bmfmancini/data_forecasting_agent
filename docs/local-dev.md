@@ -47,16 +47,19 @@ The frontend is now at `http://localhost:5000`. Log in with `admin` / `admin`.
 ## Running tests
 
 ```bash
-cd data_forecasting_agent/data_forecaster
+cd data_forecasting_agent
+
+# Install development test dependencies in your activated environment
+pip install 'pytest==8.3.*' 'pytest-asyncio==0.24.*'
 
 # All tests
-python -m pytest tests/
+python -m pytest tests/ data_forecaster/tests/
 
 # With verbose output
-python -m pytest tests/ -v
+python -m pytest tests/ data_forecaster/tests/ -v
 
 # A specific test file
-python -m pytest tests/test_zscore_outliers.py
+python -m pytest tests/test_statistical_improvements.py
 ```
 
 ## LLM setup for development

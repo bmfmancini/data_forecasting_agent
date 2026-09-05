@@ -34,10 +34,9 @@ from schemas import (
     ValidationResult,
 )
 from services.rag_service import get_rag_kb
-from utils.data_cleaning import apply_iqr_clipping, apply_zscore_clipping
 from utils.data_cleaning import impute_missing
 from utils.preflight import prepare_series_frame
-from utils.statistical import apply_boxcox, compute_acf_pacf, run_stl_decomposition
+from utils.statistical import compute_acf_pacf, run_stl_decomposition
 from utils.visualization import (
     chart_dict_to_png_b64,
     plot_acf_pacf,
@@ -310,10 +309,10 @@ def _run_statistical_stages(
     missing_strategy = options.get("missing_strategy", "interpolate")
     if missing_strategy == "Let AI Decide":
         missing_strategy = "interpolate"
-    analysis_series = prepared.series
-    if missing_strategy != "drop":
-        analysis_series = impute_missing(analysis_series, missing_strategy)
-    analysis_series = analysis_series.dropna()
+    analysis_series = impute_missing(
+        prepared.series,
+        "interpolate" if missing_strategy == "drop" else missing_strategy,
+    ).dropna()
     stat_result = run_statistical_agent(
         analysis_series,
         prepared.seasonal_period,
@@ -322,8 +321,10 @@ def _run_statistical_stages(
     )
     progress(35, "Statistical analysis complete")
 
+    # Reporting and charts retain the target's observed units. Forecasting
+    # procedures fit transformations independently inside each training window.
     series = _apply_agent_remediation(
-        analysis_series,
+        prepared.series,
         stat_result,
         prepared.disabled_statistical_tests,
         preflight_options,
@@ -343,51 +344,18 @@ def _apply_agent_remediation(
     preflight_options: dict[str, Any] | None,
 ) -> pd.Series:
     """Apply safe, agent-recommended transformations before forecasting."""
-    remediated = series
-    if (preflight_options or {}).get("outlier_strategy") == "Let AI Decide":
-        if "iqr_clip" in stat_result.recommended_remediation:
-            logger.info("Agent decided to APPLY IQR clipping.")
-            remediated = apply_iqr_clipping(remediated)
-            logger.info("IQR clipping applied successfully.")
-        elif "zscore_clip" in stat_result.recommended_remediation:
-            logger.info("Agent decided to APPLY Z-score clipping.")
-            remediated = apply_zscore_clipping(remediated)
-            logger.info("Z-score clipping applied successfully.")
-        else:
-            logger.info(
-                "Agent decided to SKIP outlier clipping "
-                "(likely determined outliers are signal)."
-            )
-
-    if (
-        "box_cox" in stat_result.recommended_remediation
-        and "box_cox" not in disabled_statistical_tests
-    ):
-        logger.info("Agent decided to APPLY Box-Cox transformation.")
-        try:
-            remediated, _ = apply_boxcox(remediated)
-            stat_result.summary += (
-                "\n\n(Note: A Box-Cox transformation was applied to stabilize "
-                "variance based on agent recommendation.)"
-            )
-        except (TypeError, ValueError) as exc:
-            logger.warning("Box-Cox application failed: %s", exc)
-
+    # Kept as a compatibility hook: descriptive diagnostics must never mutate
+    # the history plotted beside original-scale predictions.
     if (
         "change_point_analysis" in stat_result.recommended_remediation
         and "change_points" not in disabled_statistical_tests
     ):
-        logger.info(
-            "Agent identified candidate change points. Adding note to analysis."
-        )
         stat_result.summary += (
-            "\n\n(Note: Change-point analysis identified candidate breaks. "
-            "Validate candidate break dates, effect sizes, and persistence before "
-            "choosing a response. Only if a durable break is confirmed should "
-            "intervention terms, recency weighting, segmentation, or "
-            "regime-specific models be compared.)"
+            "\n\nValidate candidate break dates, effect sizes, and persistence before "
+            "considering segmentation or intervention terms. Recent-window forecasts "
+            "are compared with expanding-window forecasts on common validation origins."
         )
-    return remediated
+    return series
 
 
 def _run_forecast_stages(
@@ -441,6 +409,7 @@ def _run_forecast_stages(
             forecast_result.model_used,
             stat_result,
             all_metrics,
+            loss_preference=resolved_loss,
         )
         model_selection = model_selection.model_copy(
             update={
@@ -694,6 +663,9 @@ def _maybe_retry_forecast_after_review(
             stat_result,
             all_metrics,
             retry_exclusions,
+            loss_preference=forecast_result.validation_design.get(
+                "decision_loss", {}
+            ).get("resolved"),
         )
         selection_evidence = dict(model_selection.selection_evidence)
         selection_evidence.update(
