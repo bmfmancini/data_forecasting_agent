@@ -153,6 +153,7 @@ def holt_winters_model_selection() -> ModelSelectionResult:
 def good_forecast_result() -> ForecastResult:
     """A forecast result with low error."""
     return ForecastResult(
+        status="ok",
         model_used="SARIMA",
         forecast=[100.0, 101.0, 102.0],
         lower_ci=[95.0, 96.0, 97.0],
@@ -168,6 +169,7 @@ def good_forecast_result() -> ForecastResult:
 def poor_forecast_result() -> ForecastResult:
     """A forecast result with high MAPE."""
     return ForecastResult(
+        status="ok",
         model_used="ARIMA",
         forecast=[100.0, 110.0, 130.0],
         lower_ci=[80.0, 85.0, 90.0],

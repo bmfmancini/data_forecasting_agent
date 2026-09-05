@@ -1,7 +1,7 @@
 """Unit tests for the Prophet forecast model adapter.
 
 Prophet is a heavy optional dependency that is not installed in CI, so every
-test patches ``forecasting.prophet_model.import_prophet`` with a lightweight
+test patches ``forecasting.prophet_compat.import_prophet`` with a lightweight
 fake ``prophet`` module.  The fake Prophet class records the frames it is
 handed and returns deterministic ``yhat``/``yhat_lower``/``yhat_upper``
 columns so the adapter logic can be exercised end-to-end without cmdstan.
@@ -15,7 +15,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from forecasting import prophet_model
+from forecasting import prophet_model, prophet_compat
+from forecasting.contracts import ForecastAdapterResult, ForecastFitStatus
 
 
 class _FakeProphet:
@@ -31,7 +32,7 @@ class _FakeProphet:
     fail_first_fit: bool = False
     _fit_call_count: int = 0
 
-    def __init__(self) -> None:
+    def __init__(self, **kwargs) -> None:
         self._history: pd.DataFrame | None = None
         self._make_future_freqs: list[str | None] = []
 
@@ -76,6 +77,10 @@ class _FakeProphet:
             }
         )
 
+    def predictive_samples(self, future):
+        point = self.predict(future)["yhat"].to_numpy()
+        return {"yhat": point[:, None] + np.linspace(-1.0, 1.0, 2000)[None, :]}
+
 
 def _fake_prophet_module() -> SimpleNamespace:
     """Build a fake ``prophet`` module exposing ``Prophet``."""
@@ -94,7 +99,9 @@ def _reset_fake() -> None:
 
 def _patch_prophet(monkeypatch: pytest.MonkeyPatch) -> None:
     """Patch ``import_prophet`` to return the fake prophet module."""
-    monkeypatch.setattr(prophet_model, "import_prophet", lambda: _fake_prophet_module())
+    monkeypatch.setattr(
+        prophet_compat, "import_prophet", lambda: _fake_prophet_module()
+    )
 
 
 def _monthly_series(n: int = 36) -> pd.Series:
@@ -116,26 +123,18 @@ class TestFitProphetHappyPath:
 
         result = prophet_model.fit_prophet(series, forecast_horizon=6, freq="MS")
 
-        assert set(result) == {
-            "forecast",
-            "lower_ci",
-            "upper_ci",
-            "rmse",
-            "mae",
-            "mape",
-        }
-        assert len(result["forecast"]) == 6
-        assert len(result["lower_ci"]) == 6
-        assert len(result["upper_ci"]) == 6
+        assert isinstance(result, ForecastAdapterResult)
+        assert result.status == ForecastFitStatus.OK
+        assert len(result.forecast) == 6
+        assert len(result.lower_ci) == 6
+        assert len(result.upper_ci) == 6
 
     def test_intervals_bracket_forecast(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """``lower_ci`` <= ``forecast`` <= ``upper_ci`` for every step."""
         _patch_prophet(monkeypatch)
         result = prophet_model.fit_prophet(_monthly_series(), 4, freq="MS")
 
-        for lo, fc, hi in zip(
-            result["lower_ci"], result["forecast"], result["upper_ci"]
-        ):
+        for lo, fc, hi in zip(result.lower_ci, result.forecast, result.upper_ci):
             assert lo <= fc <= hi
 
     def test_metrics_are_finite(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -143,9 +142,9 @@ class TestFitProphetHappyPath:
         _patch_prophet(monkeypatch)
         result = prophet_model.fit_prophet(_monthly_series(), 6, freq="MS")
 
-        assert np.isfinite(result["rmse"])
-        assert np.isfinite(result["mae"])
-        assert np.isfinite(result["mape"])
+        assert np.isfinite(result.metrics.rmse)
+        assert np.isfinite(result.metrics.mae)
+        assert np.isfinite(result.metrics.mape)
 
 
 class TestFitProphetShortSeries:
@@ -160,12 +159,10 @@ class TestFitProphetShortSeries:
 
         result = prophet_model.fit_prophet(series, forecast_horizon=3)
 
-        assert result["forecast"] == [42.0, 42.0, 42.0]
-        assert result["lower_ci"] == [42.0, 42.0, 42.0]
-        assert result["upper_ci"] == [42.0, 42.0, 42.0]
-        assert result["rmse"] == 0.0
-        assert result["mae"] == 0.0
-        assert result["mape"] == 0.0
+        assert result.status == ForecastFitStatus.NOT_ESTIMABLE
+        assert result.forecast == []
+        assert result.metrics.rmse is None
+        assert _FakeProphet._fit_call_count == 0
 
     def test_empty_series_returns_zero_forecast(
         self, monkeypatch: pytest.MonkeyPatch
@@ -174,8 +171,9 @@ class TestFitProphetShortSeries:
         _patch_prophet(monkeypatch)
         result = prophet_model.fit_prophet(pd.Series(dtype=float), forecast_horizon=2)
 
-        assert result["forecast"] == [0.0, 0.0]
-        assert result["rmse"] == 0.0
+        assert result.forecast == []
+        assert result.status == ForecastFitStatus.NOT_ESTIMABLE
+        assert result.metrics.rmse is None
 
 
 class TestFitProphetNonDatetimeIndex:
@@ -187,27 +185,27 @@ class TestFitProphetNonDatetimeIndex:
 
         result = prophet_model.fit_prophet(series, forecast_horizon=3)
 
-        assert len(result["forecast"]) == 3
-        assert all(np.isfinite(result["forecast"]))
+        assert len(result.forecast) == 3
+        assert all(np.isfinite(result.forecast))
 
 
 class TestFitProphetTrainFailure:
     """Resilience when the holdout fit fails but the full fit succeeds."""
 
-    def test_holdout_failure_zeroes_metrics_but_keeps_forecast(
+    def test_holdout_failure_preserves_missing_metrics_but_keeps_forecast(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """If the train-split fit raises, metrics zero out, forecast survives."""
+        """If the train-split fit raises, metrics remain unavailable, forecast survives."""
         _patch_prophet(monkeypatch)
         # First fit (holdout) raises; the second (full-series) succeeds.
         _FakeProphet.fail_first_fit = True
 
         result = prophet_model.fit_prophet(_monthly_series(), 4, freq="MS")
 
-        assert result["rmse"] == 0.0
-        assert result["mae"] == 0.0
-        assert result["mape"] == 0.0
-        assert len(result["forecast"]) == 4
+        assert result.metrics.rmse is None
+        assert result.metrics.mae is None
+        assert result.metrics.mape is None
+        assert len(result.forecast) == 4
 
 
 class TestFitProphetImportError:
@@ -217,10 +215,12 @@ class TestFitProphetImportError:
         def _raise() -> None:
             raise ImportError("prophet not installed")
 
-        monkeypatch.setattr(prophet_model, "import_prophet", _raise)
+        monkeypatch.setattr(prophet_compat, "import_prophet", _raise)
 
-        with pytest.raises(ImportError):
-            prophet_model.fit_prophet(_monthly_series(), forecast_horizon=3)
+        result = prophet_model.fit_prophet(_monthly_series(), forecast_horizon=3)
+        assert result.status == ForecastFitStatus.FAILED
+        assert result.metrics.rmse is None
+        assert "prophet not installed" in result.failure_reason
 
 
 class TestFitProphetFreqThreading:

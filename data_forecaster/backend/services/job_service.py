@@ -7,7 +7,6 @@ import importlib
 import json
 import threading
 import uuid
-from collections.abc import Callable
 from typing import Any, cast
 
 import core.config as settings
@@ -30,14 +29,12 @@ def init_job_queue() -> None:
     JOB_QUEUE = asyncio.Queue()
     connection = get_connection()
     try:
-        connection.execute(
-            """
+        connection.execute("""
             UPDATE forecast_jobs
             SET status = 'error', error = 'Backend restarted during processing.',
                 step = 'Interrupted by backend restart.', completed_at = datetime('now')
             WHERE status = 'running'
-            """
-        )
+            """)
         pending_rows = connection.execute(
             "SELECT job_id, file_id FROM forecast_jobs WHERE status = 'pending' "
             "ORDER BY queued_at, rowid"
@@ -63,12 +60,10 @@ def get_job_settings() -> dict[str, Any]:
     """Return the current persistent job scheduler settings."""
     connection = get_connection()
     try:
-        row = connection.execute(
-            """
+        row = connection.execute("""
             SELECT max_running_jobs_per_user, retention_days, cleanup_enabled
             FROM forecast_job_settings WHERE singleton = 1
-            """
-        ).fetchone()
+            """).fetchone()
         return (
             dict(row)
             if row
@@ -410,6 +405,11 @@ async def _run_job(job_id: str, job: dict[str, Any]) -> None:
 
     try:
         result = await asyncio.to_thread(run_pipeline_sync)
+        from services.forecast_monitoring import save_snapshot
+
+        await asyncio.to_thread(
+            save_snapshot, job_id, result.forecast.model_dump(mode="json")
+        )
         _complete_job(job_id)
         with _job_store_lock:
             _job_store.setdefault(job_id, {})["result"] = result.model_dump()

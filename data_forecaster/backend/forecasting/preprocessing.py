@@ -49,7 +49,9 @@ class FoldSafeImputer:
         """Fill using training observations only."""
         values = train.astype(float).copy()
         if self.method == "drop":
-            return values.dropna()
+            # Dropping a target timestamp changes the meaning of seasonal lags.
+            # Only missing validation actuals are dropped from metric scoring.
+            return values.interpolate(limit_direction="both").ffill().bfill()
         if self.method == "forward-fill":
             return values.ffill().bfill()
         return values.interpolate(limit_direction="both").ffill().bfill()
@@ -84,9 +86,7 @@ def prepare_training_series(
         .transform_training(series)
     )
     prepared = (
-        FoldSafeImputer(imputation_method)
-        .fit(prepared)
-        .transform_training(prepared)
+        FoldSafeImputer(imputation_method).fit(prepared).transform_training(prepared)
     )
     prepared = smooth_training_series(prepared, smoothing_method)
     if apply_iqr_clip:

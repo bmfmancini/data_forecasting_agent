@@ -20,6 +20,7 @@ from forecasting.contracts import (
 )
 from forecasting.evaluation import evaluate_predictions, make_terminal_holdout
 from forecasting.indexing import normalize_forecast_index
+from forecasting.intervals import smoothing_paths, path_intervals
 
 logger = get_logger(__name__)
 
@@ -109,9 +110,9 @@ def fit_ewma(
 
     # ── Evaluate holdout metrics on the training split ──────────────────────
     try:
-        train_fit = SimpleExpSmoothing(
-            train, initialization_method="estimated"
-        ).fit(smoothing_level=alpha, optimized=alpha is None)
+        train_fit = SimpleExpSmoothing(train, initialization_method="estimated").fit(
+            smoothing_level=alpha, optimized=alpha is None
+        )
         estimated_alpha = float(train_fit.params["smoothing_level"])
         test_fc = np.asarray(train_fit.forecast(len(test)), dtype=float)
         metrics = evaluate_predictions(
@@ -124,20 +125,12 @@ def fit_ewma(
         metrics = ForecastMetrics(unavailable_reasons={"all": str(exc)})
 
     # ── Full-series fit for forecast ─────────────────────────────────────────
-    full_fit = SimpleExpSmoothing(
-        series, initialization_method="estimated"
-    ).fit(smoothing_level=estimated_alpha, optimized=False)
+    full_fit = SimpleExpSmoothing(series, initialization_method="estimated").fit(
+        smoothing_level=estimated_alpha, optimized=False
+    )
     forecast_values = np.asarray(full_fit.forecast(forecast_horizon), dtype=float)
     residuals = pd.Series(np.asarray(full_fit.resid, dtype=float)).dropna()
-    rng = np.random.default_rng(42)
-    sampled = rng.choice(
-        residuals.to_numpy(dtype=float),
-        size=(1000, forecast_horizon),
-        replace=True,
-    )
-    simulated = forecast_values[None, :] + sampled
-    lower_ci = np.quantile(simulated, 0.025, axis=0).tolist()
-    upper_ci = np.quantile(simulated, 0.975, axis=0).tolist()
+    lower_ci, upper_ci = path_intervals(smoothing_paths(full_fit, forecast_horizon))
 
     # Expose fitted innovations (one-step smoothing errors).
     innovations: list[float] = []

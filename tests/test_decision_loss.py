@@ -13,9 +13,10 @@ from utils.preflight import run_preflight_checks
 
 def test_explicit_loss_is_preserved() -> None:
     """An explicit business choice must not be overridden by LLM text."""
-    assert _resolve_loss_preference(
-        "mae", "Recommended decision loss: rmse"
-    ) == ("mae", "user_selected")
+    assert _resolve_loss_preference("mae", "Recommended decision loss: rmse") == (
+        "mae",
+        "user_selected",
+    )
 
 
 def test_auto_loss_uses_constrained_llm_recommendation() -> None:
@@ -57,4 +58,4 @@ def test_preflight_defaults_decision_loss_to_auto() -> None:
 
     assert result.defaults["loss_metric"] == "auto"
     assert decision.default == "auto"
-    assert decision.options == ["auto", "rmse", "mae", "wape", "mase"]
+    assert decision.options == ["auto", "rmse", "mae", "wape", "mase", "pinball"]

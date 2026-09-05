@@ -8,12 +8,14 @@ You upload a CSV or Excel file with time series data. Six AI agents then work th
 
 1. **Data Validation** — cleans and validates the data
 2. **Statistical Analysis** — runs ACF/PACF, trend/seasonality checks, recommends transformations
-3. **Model Selection** — picks the best model based on the data characteristics
-4. **Forecasting** — runs ARIMA, SARIMA, Holt-Winters, or EWMA and generates predictions with confidence intervals
+3. **Model Selection** — explains candidate models using the data characteristics
+4. **Forecasting** — compares enabled models, baselines, ensembles, and training windows on common rolling origins, then produces forecasts and prediction intervals
 5. **Statistical Review** — QA agent that reviews the outputs of the previous stages for consistency and correctness
 6. **Report Generation** — puts together a report with charts and plain-English insights
 
 Python computes all statistical metrics; the LLM interprets the pre-computed results — it never computes numbers itself.
+
+Models include ARIMA, SARIMA, Holt-Winters, EWMA, Prophet, dynamic regression, and optional intermittent-demand forecasting. An untouched final period evaluates the selected procedure when sufficient history is available. Issued forecasts can be monitored against subsequent actuals through the API.
 
 You interact with all of this through a Flask web UI with auth, an admin panel, and role-based access.
 
@@ -51,9 +53,9 @@ If you're running Ollama locally, pull the model first: `ollama pull llama3`.
 ```
 data_forecaster/
 ├── backend/              # FastAPI service
-│   ├── agents/           # The five AI agents
+│   ├── agents/           # Pipeline agents
 │   ├── auth/             # API key auth (Argon2id)
-│   ├── forecasting/      # ARIMA, SARIMA, Holt-Winters, EWMA
+│   ├── forecasting/      # Models, rolling validation, metrics, uncertainty
 │   ├── rag/              # ChromaDB knowledge base
 │   └── main.py           # API endpoints
 ├── frontend/             # Flask web app
@@ -73,6 +75,7 @@ Detailed docs are split out so this README stays short:
 - [API authentication](docs/api-auth.md) — how API keys work, rotating credentials, the default `frontend` user
 - [API reference](docs/api-reference.md) — endpoint list, error codes, request/response schemas
 - [Local development](docs/local-dev.md) — running without Docker, running the test suite
+- [Statistical forecasting](docs/statistical-improvements.md) — validation, model additions, monitoring, options, and limitations
 - [User management scripts](docs/user-management-scripts.md) — CLI runbook for frontend users and backend API users
 
 ## Tech stack
@@ -90,8 +93,8 @@ Detailed docs are split out so this README stays short:
 ## Testing
 
 ```bash
-cd data_forecaster
-python -m pytest tests/
+# From the repository root, with development dependencies installed
+python -m pytest tests/ data_forecaster/tests/
 ```
 
 ## License

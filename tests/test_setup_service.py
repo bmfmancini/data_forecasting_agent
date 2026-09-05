@@ -61,7 +61,9 @@ class TestBootstrap:
             except setup_service.SetupAlreadyCompleteError as exc:
                 errors.append(exc)
 
-        threads = [threading.Thread(target=attempt, args=(f"user{i}",)) for i in range(4)]
+        threads = [
+            threading.Thread(target=attempt, args=(f"user{i}",)) for i in range(4)
+        ]
         for thread in threads:
             thread.start()
         for thread in threads:
@@ -90,7 +92,7 @@ class TestSetupStatus:
             "setup_complete": False,
             "admin_exists": False,
             "llm_configured": False,
-            "models_enabled": 5,
+            "models_enabled": 7,
         }
 
     def test_status_after_bootstrap(self, db):

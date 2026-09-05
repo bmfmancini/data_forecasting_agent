@@ -27,6 +27,7 @@ class ForecastMetrics(BaseModel):
     mase: float | None = None
     smape: float | None = None
     rmsse: float | None = None
+    pinball: float | None = None
     n_evaluated: int = Field(default=0, ge=0)
     n_missing: int = Field(default=0, ge=0)
     unavailable_reasons: dict[str, str] = Field(default_factory=dict)
@@ -67,6 +68,7 @@ class ForecastAdapterResult(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     innovations: list[float] = Field(default_factory=list)
     interval_label: str = "prediction_interval"
+    prediction_samples: list[list[float]] = Field(default_factory=list, exclude=True)
 
     @property
     def is_rankable(self) -> bool:
@@ -93,6 +95,7 @@ class BacktestFold(BaseModel):
 
     fold_index: int
     train_end_index: int
+    train_start_index: int = 0
     test_start_index: int
     test_end_index: int
     horizon: int
@@ -154,7 +157,13 @@ class BacktestEvaluation(BaseModel):
     def is_rankable(self) -> bool:
         """Return whether pooled evidence supports ranking."""
         rmse = self.pooled_metrics.rmse
-        return self.n_origins > 0 and rmse is not None and math.isfinite(rmse)
+        minimum = int(self.validation_design.get("minimum_origins", 2))
+        return (
+            self.n_origins >= minimum
+            and self.n_failed_origins == 0
+            and rmse is not None
+            and math.isfinite(rmse)
+        )
 
 
 # ── Residual diagnostics contracts ───────────────────────────────────────────

@@ -104,7 +104,8 @@
         rmse: "Avoid occasional large errors (RMSE)",
         mae: "Minimize the typical absolute error (MAE)",
         wape: "Control error relative to total volume (WAPE)",
-        mase: "Compare accuracy against a naive forecast (MASE)"
+        mase: "Compare accuracy against a naive forecast (MASE)",
+        pinball: "Choose a quantile for unequal error costs (pinball loss)"
       };
       var options = (decision.options || []).map(function (option) {
         var label = decision.key === "loss_metric" ? lossLabels[option] || option : option;
@@ -172,7 +173,10 @@
       "clean-duplicates": "duplicate_strategy",
       "clean-missing": "missing_strategy",
       "clean-outliers": "outlier_strategy",
-      "clean-smoothing": "smoothing"
+      "clean-smoothing": "smoothing",
+      "forecast-aggregation": "aggregation",
+      "forecast-demand-pattern": "demand_pattern",
+      "forecast-quantile": "forecast_quantile"
     };
     var options = {};
     Object.keys(fields).forEach(function (id) {

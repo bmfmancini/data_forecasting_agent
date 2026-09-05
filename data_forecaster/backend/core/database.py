@@ -73,6 +73,20 @@ ON forecast_jobs(status, queued_at);
 CREATE INDEX IF NOT EXISTS forecast_jobs_application_status_idx
 ON forecast_jobs(application_user_id, status);
 
+CREATE TABLE IF NOT EXISTS forecast_snapshots (
+    job_id TEXT PRIMARY KEY REFERENCES forecast_jobs(job_id) ON DELETE CASCADE,
+    forecast_json TEXT NOT NULL,
+    issued_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS forecast_actuals (
+    job_id TEXT NOT NULL REFERENCES forecast_snapshots(job_id) ON DELETE CASCADE,
+    timestamp TEXT NOT NULL,
+    actual REAL NOT NULL,
+    recorded_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (job_id, timestamp)
+);
+
 CREATE TABLE IF NOT EXISTS forecast_job_settings (
     singleton                 INTEGER PRIMARY KEY CHECK (singleton = 1),
     max_running_jobs_per_user INTEGER NOT NULL DEFAULT 1,
@@ -114,7 +128,9 @@ INSERT OR IGNORE INTO model_config (name, enabled, priority) VALUES
     ('SARIMA',       1, 20),
     ('Holt-Winters', 1, 30),
     ('EWMA',         1, 40),
-    ('Prophet',      1, 50);
+    ('Prophet',      1, 50),
+    ('Dynamic Regression', 1, 60),
+    ('Intermittent Demand', 1, 70);
 
 -- Singleton system-wide setup and deployment state.  ``setup_complete``
 -- gates the first-run wizard; once true the DB is authoritative and

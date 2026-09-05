@@ -10,29 +10,19 @@ import pandas as pd
 
 from core.llm_factory import get_llm
 from core.logging_config import get_logger
-from forecasting.arima_model import fit_arima
-from forecasting.backtesting import BacktestConfig, evaluate_candidates
+from forecasting.backtesting import evaluate_candidates
 from forecasting.contracts import (
     BacktestEvaluation,
     ForecastAdapterResult,
     ForecastFitStatus,
-    ForecastMetrics,
 )
-from forecasting.ewma_model import fit_ewma
-from forecasting.holt_winters import fit_holt_winters
 from forecasting.residual_diagnostics import (
     analyze_backtest_errors,
     analyze_innovations,
-    calibrate_interval_width,
 )
 from forecasting.selection_policy import CandidateEvidence, select_model_deterministic
-from forecasting.sarima_model import fit_sarima
-from forecasting.preprocessing import (
-    BoxCoxTransform,
-    YeoJohnsonTransform,
-    bias_adjusted_inverse,
-    prepare_training_series,
-)
+from forecasting.backtesting import evaluate_final_candidate
+from forecasting.engine import BASELINES, ForecastEngine, backtest_config
 from prompts.forecasting_prompt import FORECASTING_PROMPT
 from schemas import (
     ForecastCandidateResult,
@@ -45,7 +35,7 @@ from utils.token_tracking import estimate_input_text, extract_token_usage
 
 logger = get_logger(__name__)
 
-_SUPPORTED_LOSS_METRICS = ("mase", "wape", "rmse", "mae")
+_SUPPORTED_LOSS_METRICS = ("mase", "wape", "rmse", "mae", "pinball")
 _AUTO_LOSS_VALUES = {"auto", "ai", "recommended", "let ai decide"}
 
 
@@ -130,905 +120,326 @@ def run_forecasting_agent(
     preprocessing_options: dict[str, Any] | None = None,
     exclude_models: list[str] | None = None,
 ) -> tuple[ForecastResult, dict[str, dict[str, float]]]:
-    """Run all forecasting models, return ForecastResult for the selected model
-    and an all-metrics dict for the comparison chart.
+    """Select a complete procedure, refit it, and audit its untouched test.
 
-    Args:
-        series: Historical time series data.
-        model_selection: Output of the model selection agent.
-        stat_result: Output of the statistical analysis agent.
-        forecast_horizon: Number of periods to forecast.
-        freq: Frequency string for generating forecast dates.
-        existing_metrics: Optional pre-existing metrics dict (e.g. from a prior
-            run or baseline models) to merge into the returned dict so that
-            re-runs preserve previously computed metrics.
-        disabled_tests: Optional list of residual diagnostic tests to skip.
-
-    Returns:
-        (ForecastResult, all_metrics_dict) where all_metrics_dict maps model
-        names to ``{"RMSE": x, "MAE": y, "MAPE": z, "WAPE": w, "MASE": m}``.
-
-    Raises:
-        RuntimeError: If no forecasting model produces valid evaluation metrics.
+    All numerical evidence comes from identical rolling origins. Production
+    failures trigger the same selection policy with the failed procedure
+    excluded. Neither final-test scores nor legacy adapter holdouts rank models.
     """
-    seasonal_period = max(1, stat_result.seasonal_period or 1)
-    preprocessing_options = preprocessing_options or {}
-    excluded_models = set(exclude_models or [])
-    outlier_strategy = {
-        "Clip (Winsorize)": "clip",
-        "clip": "clip",
-        "Remove": "remove",
-        "remove": "remove",
-        "Z-Score Clip": "zscore_clip",
-        "zscore_clip": "zscore_clip",
-    }.get(preprocessing_options.get("outlier_strategy"), "none")
-    imputation_method = preprocessing_options.get("missing_strategy", "interpolate")
-    if imputation_method == "Let AI Decide":
-        imputation_method = "interpolate"
-    smoothing_method = preprocessing_options.get("smoothing", "none")
-    production_series = prepare_training_series(
-        series,
-        outlier_strategy=outlier_strategy,
-        imputation_method=imputation_method,
-        smoothing_method=smoothing_method,
+    options = dict(preprocessing_options or {})
+    if (
+        model_selection.selection_method == "forced"
+        and model_selection.selected_model == "Intermittent Demand"
+    ):
+        options["demand_pattern"] = "intermittent"
+    if str(loss_preference).lower() == "pinball":
+        options["point_quantile"] = options.get("forecast_quantile", 0.5)
+    engine = ForecastEngine(freq, options)
+    config = backtest_config(len(series), forecast_horizon, freq, options)
+    excluded = set(exclude_models or [])
+    # Excluding a base model also excludes procedures that use that model.
+    excluded.update(
+        name
+        for name, procedure in engine.candidates.items()
+        if procedure.base_name in excluded
+        or any(m in excluded for m in procedure.members)
     )
-    results_store: dict[str, ForecastAdapterResult] = {}
-
-    # ── Fit all models directly in Python ─────────────────────────────────────
-    for name, fn, kwargs in [
-        (
-            "Holt-Winters",
-            fit_holt_winters,
-            {
-                "seasonal_period": seasonal_period,
-                "mase_period": seasonal_period,
-            },
-        ),
-        ("ARIMA", fit_arima, {"mase_period": seasonal_period}),
-        (
-            "SARIMA",
-            fit_sarima,
-            {"seasonal_period": seasonal_period, "mase_period": seasonal_period},
-        ),
-        ("EWMA", fit_ewma, {"mase_period": seasonal_period}),
-    ]:
-        try:
-            results_store[name] = fn(production_series, forecast_horizon, **kwargs)
-        except Exception as exc:  # pylint: disable=broad-except
-            logger.warning("%s fitting failed: %s", name, exc)
-            results_store[name] = ForecastAdapterResult(
-                status=ForecastFitStatus.FAILED,
-                failure_reason=str(exc),
-                fitted_configuration={"model": name},
-            )
-
-    # ── Common rolling-origin backtesting ───────────────────────────────────
-    # Run all candidates on identical expanding-window folds so the reported
-    # metrics are apples-to-apples. The terminal-holdout metrics produced by
-    # each adapter remain on the result; the backtest evaluation supplements
-    # them with pooled rolling-origin evidence.
-    backtest_evals = _run_backtest_evaluation(
-        series,
-        forecast_horizon,
-        seasonal_period,
-        apply_iqr_clip=False,
-        imputation_method=imputation_method,
-        smoothing_method=smoothing_method,
-        outlier_strategy=outlier_strategy,
+    candidates = {
+        name: proc for name, proc in engine.candidates.items() if name not in excluded
+    }
+    backtests = evaluate_candidates(series, candidates, config)
+    all_metrics = {
+        name: {
+            metric.upper(): value
+            for metric, value in evaluation.pooled_metrics.model_dump().items()
+            if metric
+            in {"rmse", "mae", "mape", "wape", "mase", "smape", "rmsse", "pinball"}
+            and value is not None
+        }
+        for name, evaluation in backtests.items()
+        if evaluation.is_rankable
+    }
+    comparison_summary = (
+        "Common rolling-origin metrics (lower is better):\n"
+        + "\n".join(f"- {name}: {metrics}" for name, metrics in all_metrics.items())
     )
-
-    comparison_summary = "Model comparison metrics (lower is better):\n"
-    for name, res in results_store.items():
-        # Include status, warnings, and provenance in the evidence passed
-        # to the LLM so it has versioned typed evidence.
-        status_text = f" [status={res.status.value}]"
-        if res.is_fallback:
-            status_text += " [fallback]"
-        if res.failure_reason:
-            status_text += f" [failure={res.failure_reason}]"
-        warnings_text = ""
-        if res.warnings:
-            warnings_text = f" [warnings: {'; '.join(res.warnings)}]"
-        if not res.is_rankable:
-            comparison_summary += (
-                f"- {name}:{status_text}{warnings_text} required metrics unavailable\n"
-            )
-            continue
-        wape_text = (
-            f", WAPE={_format_metric(res.metrics.wape, '.2%')}"
-            if res.metrics.wape is not None
-            else ""
-        )
-        mase_text = (
-            f", MASE={_format_metric(res.metrics.mase, '.4f')}"
-            if res.metrics.mase is not None
-            else ""
-        )
-        backtest_text = ""
-        bt = backtest_evals.get(name)
-        if bt is not None and bt.pooled_metrics.rmse is not None:
-            backtest_text = (
-                f", backtest RMSE={bt.pooled_metrics.rmse:.4f} "
-                f"(n_origins={bt.n_origins})"
-            )
-        interval_text = ""
-        if res.interval_label:
-            interval_text = f" [interval={res.interval_label}]"
-        comparison_summary += (
-            f"- {name}:{status_text}{warnings_text}{interval_text} "
-            f"RMSE={res.metrics.rmse:.4f}, MAE={res.metrics.mae:.4f}, "
-            f"MAPE={_format_metric(res.metrics.mape, '.2f')}%"
-            f"{wape_text}{mase_text}{backtest_text}\n"
-        )
-
-    # ── LLM Setup ────────────────────────────────────────────────────────────
-    llm = get_llm(temperature=0)
-
-    prompt = FORECASTING_PROMPT
+    resolved_loss, loss_source = _resolve_loss_preference(loss_preference, None)
+    loss_rationale = _loss_recommendation_rationale(resolved_loss, loss_source, None)
     token_usage: dict[str, int] = {}
-    loss_context = _business_context(preprocessing_options)
-    resolved_loss, loss_resolution_source = _resolve_loss_preference(
-        loss_preference, None
-    )
-    loss_rationale = _loss_recommendation_rationale(
-        resolved_loss, loss_resolution_source, None
-    )
-
+    reasoning_steps = [
+        {
+            "thought": "Compared enabled forecasting procedures on common origins.",
+            "observation": comparison_summary,
+        }
+    ]
+    # The model may interpret context, but receives no final-test observations.
     try:
-        chain = prompt | llm
+        llm = get_llm(temperature=0)
         inputs = {
-            "selected": model_selection.selected_model,
+            "selected": "Pending common rolling-origin selection",
             "summary": comparison_summary,
             "requested_loss": loss_preference,
-            "business_context": loss_context,
+            "business_context": _business_context(options),
         }
-        response = chain.invoke(inputs)
-        resolved_loss, loss_resolution_source = _resolve_loss_preference(
+        response = (FORECASTING_PROMPT | llm).invoke(inputs)
+        resolved_loss, loss_source = _resolve_loss_preference(
             loss_preference, str(response.content)
         )
         loss_rationale = _loss_recommendation_rationale(
-            resolved_loss,
-            loss_resolution_source,
-            str(response.content),
+            resolved_loss, loss_source, str(response.content)
         )
         token_usage = extract_token_usage(
-            response, input_text=estimate_input_text(prompt, inputs)
+            response, input_text=estimate_input_text(FORECASTING_PROMPT, inputs)
         )
-        reasoning_steps = [
+        reasoning_steps.append(
             {
-                "thought": "Fitting Holt-Winters, ARIMA, and SARIMA in Python...",
-                "observation": comparison_summary,
-            },
-            {
-                "thought": "Analyzing metrics for performance comparison...",
-                "observation": response.content,
-            },
-        ]
-    except Exception as exc:  # pylint: disable=broad-except
-        logger.warning("Forecasting agent LLM call failed: %s", exc)
-        reasoning_steps = [
-            {
-                "thought": "LLM analysis failed, relying on direct Python metrics.",
-                "observation": comparison_summary,
+                "thought": "Interpreted the comparison and business objective.",
+                "observation": str(response.content),
             }
-        ]
-
-    # ── Select from common rolling-origin evidence ───────────────────────────
-    selected = model_selection.selected_model
-    sensitivity_winners: dict[str, str] = {}
-    if model_selection.selection_method != "forced":
-        rankable = {
-            name: evaluation
-            for name, evaluation in backtest_evals.items()
-            if evaluation.is_rankable
-            and (
-                name not in results_store
-                or results_store[name].status == ForecastFitStatus.OK
-            )
-        }
-        if rankable:
-            candidate_evidence = [
-                CandidateEvidence(
-                    name=name,
-                    adapter_result=results_store.get(name),
-                    backtest=evaluation,
-                    is_baseline=name in _BASELINE_NAMES,
-                )
-                for name, evaluation in rankable.items()
-            ]
-            outcomes = {
-                metric: select_model_deterministic(
-                    candidate_evidence,
-                    exclude_models=list(excluded_models),
-                    user_loss_preference=metric,
-                )
-                for metric in _SUPPORTED_LOSS_METRICS
-            }
-            sensitivity_winners = {
-                metric: metric_outcome.selected_model
-                for metric, metric_outcome in outcomes.items()
-                if metric_outcome.selected_model
-            }
-            outcome = outcomes[resolved_loss]
-            if outcome.selected_model:
-                selected = outcome.selected_model
-    if selected not in results_store and selected in _BASELINE_NAMES:
-        try:
-            results_store[selected] = _fit_baseline_production(
-                selected,
-                production_series,
-                forecast_horizon,
-                seasonal_period,
-                backtest_evals.get(selected),
-            )
-        except Exception as exc:  # pylint: disable=broad-except
-            logger.warning(
-                "Baseline production refit failed for %s: %s", selected, exc
-            )
-            results_store[selected] = ForecastAdapterResult(
-                status=ForecastFitStatus.FAILED,
-                failure_reason=str(exc),
-                fitted_configuration={"model": selected},
-            )
-    if " + " in selected and selected not in results_store:
-        try:
-            results_store[selected] = _fit_transformed_production(
-                selected,
-                production_series,
-                forecast_horizon,
-                seasonal_period,
-                backtest_evals.get(selected),
-            )
-        except Exception as exc:  # pylint: disable=broad-except
-            logger.warning(
-                "Transformed production refit failed for %s: %s", selected, exc
-            )
-            results_store[selected] = ForecastAdapterResult(
-                status=ForecastFitStatus.FAILED,
-                failure_reason=str(exc),
-                fitted_configuration={"model": selected},
-            )
-    if selected not in results_store:
-        # Try to fit the selected model directly
-        try:
-            if selected == "Holt-Winters":
-                results_store[selected] = fit_holt_winters(
-                    series,
-                    forecast_horizon,
-                    seasonal_period=seasonal_period,
-                    mase_period=seasonal_period,
-                )
-            elif selected == "ARIMA":
-                results_store[selected] = fit_arima(
-                    series, forecast_horizon, mase_period=seasonal_period
-                )
-            elif selected == "EWMA":
-                results_store[selected] = fit_ewma(
-                    series, forecast_horizon, mase_period=seasonal_period
-                )
-            else:
-                results_store[selected] = fit_sarima(
-                    series,
-                    forecast_horizon,
-                    seasonal_period,
-                    mase_period=seasonal_period,
-                )
-        except Exception as exc:  # pylint: disable=broad-except
-            logger.error("Could not fit selected model %s: %s", selected, exc)
-            # Fall back to any available result
-            if results_store:
-                selected = next(iter(results_store))
-                logger.warning("Falling back to %s", selected)
-            else:
-                raise RuntimeError("All forecasting models failed.") from exc
-
-    res = results_store[selected]
-    if not res.is_rankable:
-        rankable = {
-            name: candidate
-            for name, candidate in results_store.items()
-            if candidate.is_rankable and name not in excluded_models
-        }
-        if not rankable:
-            raise RuntimeError(
-                "No forecasting model produced valid evaluation metrics."
-            )
-        # Deterministic policy: lowest RMSE wins. The LLM never decides
-        # model rankings.
-        selected = min(
-            rankable, key=lambda name: rankable[name].metrics.rmse or float("inf")
         )
-        res = rankable[selected]
-        res = res.model_copy(update={"is_fallback": True})
-        logger.warning(
-            "Selected model lacked valid evaluation evidence; falling back to %s",
-            selected,
-        )
+    except Exception as exc:
+        logger.warning("Forecast explanation unavailable: %s", exc)
 
-    # ── Generate forecast dates ───────────────────────────────────────────────
-    last_date = series.index[-1] if hasattr(series.index, "max") else None
-    forecast_dates: list[str] = []
-    if last_date is not None:
-        try:
-            date_range = pd.date_range(
-                start=last_date, periods=forecast_horizon + 1, freq=freq
-            )[1:]
-            forecast_dates = date_range.strftime("%Y-%m-%d").tolist()
-        except Exception:  # pylint: disable=broad-except
-            forecast_dates = [str(i + 1) for i in range(forecast_horizon)]
-    else:
-        forecast_dates = [str(i + 1) for i in range(forecast_horizon)]
-
-    # ── Build all_metrics dict for comparison chart ───────────────────────────
-    all_metrics: dict[str, dict[str, float]] = {}
-    for name, evaluation in backtest_evals.items():
-        if not evaluation.is_rankable:
-            continue
-        metrics = evaluation.pooled_metrics
-        all_metrics[name] = {
-            "RMSE": metrics.rmse if metrics.rmse is not None else float("nan"),
-            "MAE": metrics.mae if metrics.mae is not None else float("nan"),
-            "MAPE": metrics.mape if metrics.mape is not None else float("nan"),
-            "WAPE": metrics.wape if metrics.wape is not None else float("nan"),
-            "MASE": metrics.mase if metrics.mase is not None else float("nan"),
-            "sMAPE": metrics.smape if metrics.smape is not None else float("nan"),
-            "RMSSE": metrics.rmsse if metrics.rmsse is not None else float("nan"),
-        }
-    # Merge any pre-existing metrics (e.g. baselines) passed in by the caller
-    # so re-runs preserve previously computed results.
-    if existing_metrics is not None:
-        for name, metrics in existing_metrics.items():
-            all_metrics.setdefault(name, metrics)
-
-    # ── Residual Analysis ───────────────────────────────────────────────────
-    residual_diagnostics = _run_residual_diagnostics(
-        res, backtest_evals.get(selected), series, disabled_tests
-    )
-    lower_ci = res.lower_ci
-    upper_ci = res.upper_ci
-    interval_label = res.interval_label
-    if (
-        residual_diagnostics is not None
-        and residual_diagnostics.coverage_estimable
-        and lower_ci
-        and upper_ci
+    if not any(
+        item.is_rankable
+        and getattr(item.pooled_metrics, resolved_loss, None) is not None
+        for item in backtests.values()
     ):
-        lower_ci, upper_ci = calibrate_interval_width(
-            lower_ci,
-            upper_ci,
-            empirical_coverage=residual_diagnostics.interval_coverage,
-            nominal_coverage=residual_diagnostics.nominal_coverage,
+        unavailable_loss = resolved_loss
+        resolved_loss = "mae"
+        loss_source = "unavailable_metric_fallback"
+        loss_rationale = (
+            f"{unavailable_loss.upper()} was not estimable on the common validation "
+            "data for any eligible candidate, so selection used MAE."
         )
-        interval_label = "calibrated_prediction_interval"
 
-    logger.info("Forecasting complete. Selected: %s", selected)
-
-    selected_evaluation = backtest_evals.get(selected)
-    validation_design = (
-        dict(selected_evaluation.validation_design) if selected_evaluation else {}
-    )
-    distinct_winners = set(sensitivity_winners.values())
-    validation_design["decision_loss"] = {
-        "requested": loss_preference,
-        "resolved": resolved_loss,
-        "resolution_source": loss_resolution_source,
-        "rationale": loss_rationale,
-        "winners_by_metric": sensitivity_winners,
-        "selection_sensitive": len(distinct_winners) > 1,
-    }
-    reported_metrics = (
-        selected_evaluation.pooled_metrics
-        if selected_evaluation is not None and selected_evaluation.is_rankable
-        else res.metrics
-    )
-    forecast_result = ForecastResult(
-        model_used=selected,
-        status=res.status,
-        failure_reason=res.failure_reason,
-        is_fallback=res.is_fallback,
-        forecast=res.forecast,
-        lower_ci=lower_ci,
-        upper_ci=upper_ci,
-        forecast_dates=forecast_dates,
-        rmse=reported_metrics.rmse,
-        mae=reported_metrics.mae,
-        mape=reported_metrics.mape,
-        wape=reported_metrics.wape,
-        mase=reported_metrics.mase,
-        smape=reported_metrics.smape,
-        rmsse=reported_metrics.rmsse,
-        residual_diagnostics=residual_diagnostics,
-        candidate_results=[
-            *[
-                ForecastCandidateResult(
-                    model=name,
-                    status=candidate.status,
-                    failure_reason=candidate.failure_reason,
-                    is_fallback=candidate.is_fallback,
-                    rmse=(
-                        backtest_evals[name].pooled_metrics.rmse
-                        if name in backtest_evals
-                        else None
-                    ),
-                    mae=(
-                        backtest_evals[name].pooled_metrics.mae
-                        if name in backtest_evals
-                        else None
-                    ),
-                    mape=(
-                        backtest_evals[name].pooled_metrics.mape
-                        if name in backtest_evals
-                        else None
-                    ),
-                    wape=(
-                        backtest_evals[name].pooled_metrics.wape
-                        if name in backtest_evals
-                        else None
-                    ),
-                    mase=(
-                        backtest_evals[name].pooled_metrics.mase
-                        if name in backtest_evals
-                        else None
-                    ),
-                    smape=(
-                        backtest_evals[name].pooled_metrics.smape
-                        if name in backtest_evals
-                        else None
-                    ),
-                    rmsse=(
-                        backtest_evals[name].pooled_metrics.rmsse
-                        if name in backtest_evals
-                        else None
-                    ),
-                    n_evaluated=(
-                        backtest_evals[name].n_evaluated
-                        if name in backtest_evals
-                        else 0
-                    ),
-                    n_missing=candidate.metrics.n_missing,
-                    fitted_configuration=candidate.fitted_configuration,
-                    warnings=candidate.warnings,
-                    interval_label=candidate.interval_label,
-                    validation_design=(
-                        backtest_evals[name].validation_design
-                        if name in backtest_evals
-                        else {}
-                    ),
-                    metric_intervals=(
-                        backtest_evals[name].metric_intervals
-                        if name in backtest_evals
-                        else {}
-                    ),
-                    skill_scores=(
-                        backtest_evals[name].skill_scores
-                        if name in backtest_evals
-                        else {}
-                    ),
-                    final_test_metrics=(
-                        backtest_evals[name].final_test_metrics.model_dump()
-                        if name in backtest_evals
-                        else {}
-                    ),
+    evidence = [
+        CandidateEvidence(name=name, backtest=value, is_baseline=name in BASELINES)
+        for name, value in backtests.items()
+    ]
+    forced = model_selection.selection_method == "forced"
+    results: dict[str, ForecastAdapterResult] = {}
+    failed: list[str] = []
+    while True:
+        if forced:
+            selected = model_selection.selected_model
+            if selected not in candidates:
+                raise ValueError(
+                    f"Requested model '{selected}' is disabled, excluded, or unknown."
                 )
-                for name, candidate in results_store.items()
-            ],
-            *[
-                ForecastCandidateResult(
-                    model=name,
-                    status=(
-                        ForecastFitStatus.OK
-                        if evaluation.is_rankable
-                        else ForecastFitStatus.NOT_ESTIMABLE
-                    ),
-                    rmse=evaluation.pooled_metrics.rmse,
-                    mae=evaluation.pooled_metrics.mae,
-                    mape=evaluation.pooled_metrics.mape,
-                    wape=evaluation.pooled_metrics.wape,
-                    mase=evaluation.pooled_metrics.mase,
-                    smape=evaluation.pooled_metrics.smape,
-                    rmsse=evaluation.pooled_metrics.rmsse,
-                    n_evaluated=evaluation.n_evaluated,
-                    warnings=evaluation.warnings,
-                    interval_label="backtest_only",
-                    validation_design=evaluation.validation_design,
-                    metric_intervals=evaluation.metric_intervals,
-                    skill_scores=evaluation.skill_scores,
-                    final_test_metrics=evaluation.final_test_metrics.model_dump(),
+        else:
+            outcome = select_model_deterministic(
+                evidence,
+                exclude_models=list(excluded),
+                user_loss_preference=resolved_loss,
+            )
+            selected = outcome.selected_model
+            if not selected:
+                raise RuntimeError(
+                    "No forecasting procedure passed all common validation folds (minimum two origins)."
                 )
-                for name, evaluation in backtest_evals.items()
-                if name not in results_store
-            ],
-        ],
-        reasoning_steps=reasoning_steps,
-        token_usage=token_usage,
-        interval_label=interval_label,
-        validation_design=validation_design,
-        selection_metrics=reported_metrics.model_dump(
-            include={"rmse", "mae", "mape", "wape", "mase", "smape", "rmsse"}
-        ),
-        final_test_metrics=(
-            selected_evaluation.final_test_metrics.model_dump()
-            if selected_evaluation is not None
-            else {}
-        ),
-    )
-    return forecast_result, all_metrics
-
-
-_BASELINE_NAMES = {"Constant", "Naive", "Seasonal Naive", "Mean Forecast", "Drift"}
-
-
-def _fit_baseline_production(
-    name: str,
-    series: pd.Series,
-    horizon: int,
-    seasonal_period: int,
-    evaluation: BacktestEvaluation | None,
-) -> ForecastAdapterResult:
-    """Generate a full-history baseline forecast after common evaluation."""
-    if name == "Constant":
-        predictions = np.repeat(float(series.iloc[-1]), horizon)
-    elif name == "Naive":
-        predictions = np.repeat(float(series.iloc[-1]), horizon)
-    elif name == "Seasonal Naive":
-        season = series.iloc[-seasonal_period:].to_numpy(dtype=float)
-        predictions = np.resize(season, horizon)
-    elif name == "Mean Forecast":
-        predictions = np.repeat(float(series.mean()), horizon)
-    else:
-        drift = float(series.iloc[-1] - series.iloc[0]) / max(1, len(series) - 1)
-        predictions = np.asarray(
-            [float(series.iloc[-1]) + step * drift for step in range(1, horizon + 1)]
-        )
-    return ForecastAdapterResult(
-        status=ForecastFitStatus.OK,
-        forecast=predictions.tolist(),
-        metrics=(evaluation.pooled_metrics if evaluation else ForecastMetrics()),
-        fitted_configuration={"model": name, "seasonal_period": seasonal_period},
-        interval_label="unavailable",
-    )
-
-
-def _fit_transformed_production(
-    name: str,
-    series: pd.Series,
-    horizon: int,
-    mase_period: int,
-    evaluation: BacktestEvaluation | None,
-) -> ForecastAdapterResult:
-    """Refit a fold-selected model/transform pipeline on the full history."""
-    base_name, transform_name = name.split(" + ", maxsplit=1)
-    transform = (
-        BoxCoxTransform() if transform_name == "Box-Cox" else YeoJohnsonTransform()
-    ).fit(series)
-    transformed = transform.transform_series(series)
-    fitters = {
-        "ARIMA": lambda: fit_arima(transformed, horizon, mase_period=mase_period),
-        "SARIMA": lambda: fit_sarima(
-            transformed, horizon, mase_period, mase_period=mase_period
-        ),
-        "Holt-Winters": lambda: fit_holt_winters(
-            transformed, horizon, seasonal_period=mase_period, mase_period=mase_period
-        ),
-        "EWMA": lambda: fit_ewma(transformed, horizon, mase_period=mase_period),
-    }
-    result = fitters[base_name]()
-    configuration = dict(result.fitted_configuration)
-    configuration["preprocessing"] = transform.transform.model_dump()
-    configuration["retransformation_bias"] = "residual_smearing"
-    residuals = np.asarray(result.innovations, dtype=float)
-    return result.model_copy(
-        update={
-            "forecast": bias_adjusted_inverse(
-                transform, result.forecast, residuals
-            ).tolist(),
-            "lower_ci": transform.inverse_transform(result.lower_ci).tolist(),
-            "upper_ci": transform.inverse_transform(result.upper_ci).tolist(),
-            "metrics": evaluation.pooled_metrics if evaluation else result.metrics,
-            "fitted_configuration": configuration,
-        }
-    )
-
-
-def _run_backtest_evaluation(
-    series: pd.Series,
-    forecast_horizon: int,
-    seasonal_period: int,
-    *,
-    apply_iqr_clip: bool = False,
-    imputation_method: str = "interpolate",
-    smoothing_method: str = "none",
-    outlier_strategy: str = "none",
-) -> dict[str, Any]:
-    """Run common rolling-origin backtesting for all four adapters.
-
-    Every candidate is evaluated on identical expanding-window folds so the
-    reported metrics are apples-to-apples. The backtest evaluation
-    supplements (does not replace) the terminal-holdout metrics each adapter
-    computes internally.
-
-    Args:
-        series:           Cleaned historical series.
-        forecast_horizon:  Production forecast horizon.
-        seasonal_period:   Seasonal period for MASE scale.
-
-    Returns:
-        Mapping of model name to :class:`BacktestEvaluation`.
-    """
-    from forecasting.backtesting import BacktestFold, FoldPrediction  # local
-
-    config = BacktestConfig(
-        horizon=min(forecast_horizon, max(1, len(series) // 5)),
-        requested_horizon=forecast_horizon,
-        max_origins=5,
-        mase_period=seasonal_period,
-        apply_iqr_clip=apply_iqr_clip,
-        imputation_method=imputation_method,
-        smoothing_method=smoothing_method,
-        outlier_strategy=outlier_strategy,
-        final_test_size=(
-            forecast_horizon if len(series) >= 3 * forecast_horizon else 0
-        ),
-    )
-
-    def _arima_fn(train: pd.Series, fold: BacktestFold) -> FoldPrediction | None:
-        from forecasting.pmdarima_compat import import_pmdarima  # local
-
-        pm = import_pmdarima()
         try:
-            model = pm.auto_arima(
-                train,
-                seasonal=False,
-                stepwise=True,
-                max_p=5,
-                max_q=5,
-                test="kpss",
-                max_d=2,
-                error_action="ignore",
-                suppress_warnings=True,
-                information_criterion="aicc",
+            result = candidates[selected].fit(series, forecast_horizon)
+            if (
+                result.status != ForecastFitStatus.OK
+                or not np.isfinite(result.forecast).all()
+            ):
+                raise ValueError(
+                    result.failure_reason or "Production forecast is invalid."
+                )
+            result.metrics = backtests[selected].pooled_metrics
+            result.is_fallback = bool(failed)
+            results[selected] = result
+            break
+        except Exception as exc:
+            results[selected] = ForecastAdapterResult(
+                status=ForecastFitStatus.FAILED, failure_reason=str(exc)
             )
-            preds, bounds = model.predict(n_periods=fold.horizon, return_conf_int=True)
-            return FoldPrediction(
-                predictions=np.asarray(preds, dtype=float),
-                lower_ci=np.asarray(bounds[:, 0], dtype=float),
-                upper_ci=np.asarray(bounds[:, 1], dtype=float),
-                fitted_configuration={
-                    "order": model.order,
-                    "with_intercept": getattr(model, "with_intercept", None),
-                    "_transformed_residuals": np.asarray(
-                        model.resid(), dtype=float
-                    ).tolist(),
-                },
-            )
-        except Exception as exc:  # pylint: disable=broad-except
-            logger.warning("Backtest ARIMA fold %d failed: %s", fold.fold_index, exc)
-            return None
-
-    def _sarima_fn(train: pd.Series, fold: BacktestFold) -> FoldPrediction | None:
-        from forecasting.pmdarima_compat import import_pmdarima  # local
-
-        pm = import_pmdarima()
-        use_seasonal = len(train) >= 2 * seasonal_period
-        try:
-            model = pm.auto_arima(
-                train,
-                seasonal=use_seasonal,
-                m=seasonal_period if use_seasonal else 1,
-                stepwise=True,
-                max_p=3,
-                max_q=3,
-                max_P=2,
-                max_Q=2,
-                max_order=10,
-                test="kpss",
-                seasonal_test="ocsb",
-                max_d=2,
-                max_D=1,
-                error_action="ignore",
-                suppress_warnings=True,
-                information_criterion="aicc",
-            )
-            preds, bounds = model.predict(n_periods=fold.horizon, return_conf_int=True)
-            return FoldPrediction(
-                predictions=np.asarray(preds, dtype=float),
-                lower_ci=np.asarray(bounds[:, 0], dtype=float),
-                upper_ci=np.asarray(bounds[:, 1], dtype=float),
-                fitted_configuration={
-                    "order": model.order,
-                    "seasonal_order": model.seasonal_order,
-                    "with_intercept": getattr(model, "with_intercept", None),
-                    "_transformed_residuals": np.asarray(
-                        model.resid(), dtype=float
-                    ).tolist(),
-                },
-            )
-        except Exception as exc:  # pylint: disable=broad-except
-            logger.warning("Backtest SARIMA fold %d failed: %s", fold.fold_index, exc)
-            return None
-
-    def _hw_fn(train: pd.Series, fold: BacktestFold) -> FoldPrediction | None:
-        from forecasting.holt_winters import (  # local
-            bootstrap_holt_winters_interval,
-            select_holt_winters_fit,
-        )
-
-        try:
-            fit, spec = select_holt_winters_fit(train, seasonal_period)
-            pred_values = np.asarray(fit.forecast(fold.horizon), dtype=float)
-            lower, upper = bootstrap_holt_winters_interval(
-                fit,
-                pred_values,
-                seed=42 + fold.fold_index,
-            )
-            return FoldPrediction(
-                predictions=pred_values,
-                lower_ci=np.asarray(lower, dtype=float),
-                upper_ci=np.asarray(upper, dtype=float),
-                fitted_configuration={
-                    "trend": spec.trend,
-                    "damped_trend": spec.damped_trend,
-                    "seasonal": spec.seasonal,
-                    "seasonal_period": spec.seasonal_period,
-                    "selection_criterion": "aicc",
-                    "_transformed_residuals": np.asarray(
-                        fit.resid, dtype=float
-                    ).tolist(),
-                },
-            )
-        except Exception as exc:  # pylint: disable=broad-except
+            if forced:
+                raise RuntimeError(
+                    f"Requested model '{selected}' failed: {exc}"
+                ) from exc
+            failed.append(selected)
+            excluded.add(selected)
             logger.warning(
-                "Backtest Holt-Winters fold %d failed: %s", fold.fold_index, exc
+                "Production fit failed for %s; reranking common evidence: %s",
+                selected,
+                exc,
             )
-            return None
 
-    def _ewma_fn(train: pd.Series, fold: BacktestFold) -> FoldPrediction | None:
-        try:
-            from statsmodels.tsa.holtwinters import SimpleExpSmoothing  # local
-
-            fit = SimpleExpSmoothing(train, initialization_method="estimated").fit(
-                optimized=True
-            )
-            alpha = float(fit.params["smoothing_level"])
-            preds = np.asarray(fit.forecast(fold.horizon), dtype=float)
-            residuals = np.asarray(fit.resid, dtype=float)
-            residuals = residuals[np.isfinite(residuals)]
-            rng = np.random.default_rng(142 + fold.fold_index)
-            simulated = preds[None, :] + rng.choice(
-                residuals, size=(1000, fold.horizon), replace=True
-            )
-            return FoldPrediction(
-                predictions=preds,
-                lower_ci=np.quantile(simulated, 0.025, axis=0),
-                upper_ci=np.quantile(simulated, 0.975, axis=0),
-                fitted_configuration={
-                    "alpha": alpha,
-                    "_transformed_residuals": residuals.tolist(),
-                },
-            )
-        except Exception as exc:  # pylint: disable=broad-except
-            logger.warning("Backtest EWMA fold %d failed: %s", fold.fold_index, exc)
-            return None
-
-    def _naive_fn(train: pd.Series, fold: BacktestFold) -> FoldPrediction:
-        return FoldPrediction(
-            predictions=np.repeat(float(train.iloc[-1]), fold.horizon),
-            fitted_configuration={"model": "Naive"},
+    # Freeze the winning procedure before consulting any final-test targets.
+    evaluation = backtests[selected]
+    final_metrics, final_fold = evaluate_final_candidate(
+        selected, series, candidates[selected], config
+    )
+    evaluation.final_test_metrics = final_metrics
+    final_interval_diagnostics = {}
+    if final_fold is not None and final_fold.status == ForecastFitStatus.OK:
+        final_actual = series.iloc[final_fold.fold.test_start_index :].tolist()
+        final_interval_diagnostics = analyze_backtest_errors(
+            [final_fold.residuals],
+            fold_actuals=[final_actual],
+            fold_lower=[final_fold.lower_ci],
+            fold_upper=[final_fold.upper_ci],
+        ).model_dump(
+            include={
+                "interval_coverage",
+                "interval_mean_width",
+                "winkler_score",
+                "n_errors",
+            }
         )
 
-    def _seasonal_naive_fn(
-        train: pd.Series, fold: BacktestFold
-    ) -> FoldPrediction | None:
-        if seasonal_period <= 1 or len(train) < seasonal_period:
-            return None
-        return FoldPrediction(
-            predictions=np.resize(
-                train.iloc[-seasonal_period:].to_numpy(dtype=float), fold.horizon
-            ),
-            fitted_configuration={
-                "model": "Seasonal Naive",
-                "seasonal_period": seasonal_period,
-            },
-        )
-
-    def _mean_fn(train: pd.Series, fold: BacktestFold) -> FoldPrediction:
-        return FoldPrediction(
-            predictions=np.repeat(float(train.mean()), fold.horizon),
-            fitted_configuration={"model": "Mean Forecast"},
-        )
-
-    def _drift_fn(train: pd.Series, fold: BacktestFold) -> FoldPrediction | None:
-        if len(train) < 2:
-            return None
-        drift = float(train.iloc[-1] - train.iloc[0]) / (len(train) - 1)
-        return FoldPrediction(
-            predictions=np.asarray(
-                [
-                    float(train.iloc[-1]) + step * drift
-                    for step in range(1, fold.horizon + 1)
-                ]
-            ),
-            fitted_configuration={"model": "Drift"},
-        )
-
-    def _transformed_candidate(base_fn: Any, transform_type: type[Any]) -> Any:
-        def candidate(train: pd.Series, fold: BacktestFold) -> FoldPrediction | None:
-            transform = transform_type().fit(train)
-            if not transform.transform.is_fitted:
-                return None
-            transformed = transform.transform_series(train)
-            raw = base_fn(transformed, fold)
-            if raw is None:
-                return None
-            configuration = dict(raw.fitted_configuration or {})
-            residuals = np.asarray(
-                configuration.pop("_transformed_residuals", []), dtype=float
-            )
-            return FoldPrediction(
-                predictions=bias_adjusted_inverse(
-                    transform, raw.predictions, residuals
-                ),
-                lower_ci=(
-                    transform.inverse_transform(raw.lower_ci)
-                    if raw.lower_ci is not None
-                    else None
-                ),
-                upper_ci=(
-                    transform.inverse_transform(raw.upper_ci)
-                    if raw.upper_ci is not None
-                    else None
-                ),
-                status=raw.status,
-                warnings=raw.warnings,
-                fitted_configuration={
-                    **configuration,
-                    "preprocessing": transform.transform.model_dump(),
-                    "retransformation_bias": "residual_smearing",
-                },
-            )
-
-        return candidate
-
-    candidates = {
-        "ARIMA": _arima_fn,
-        "SARIMA": _sarima_fn,
-        "Holt-Winters": _hw_fn,
-        "EWMA": _ewma_fn,
-        "Naive": _naive_fn,
-        "Seasonal Naive": _seasonal_naive_fn,
-        "Mean Forecast": _mean_fn,
-        "Drift": _drift_fn,
+    sensitivity = {
+        metric: select_model_deterministic(
+            evidence, exclude_models=list(excluded), user_loss_preference=metric
+        ).selected_model
+        for metric in _SUPPORTED_LOSS_METRICS
     }
-    finite = series.dropna().astype(float)
-    if not finite.empty and bool(np.isclose(finite.std(ddof=0), 0.0)):
-        candidates = {
-            "Constant": lambda train, fold: FoldPrediction(
-                predictions=np.repeat(float(train.iloc[-1]), fold.horizon),
-                fitted_configuration={
-                    "model": "Constant",
-                    "reason": "constant_series",
-                },
+    design = dict(evaluation.validation_design)
+    monitoring_baselines = {}
+    for name in ("Naive", "Seasonal Naive"):
+        try:
+            monitoring_baselines[name] = (
+                engine.candidates[name].fit(series, forecast_horizon).forecast
             )
+        except ValueError:
+            pass
+    design.update(
+        {
+            "monitoring_baselines": monitoring_baselines,
+            "decision_loss": {
+                "requested": loss_preference,
+                "resolved": resolved_loss,
+                "quantile": options.get("point_quantile"),
+                "resolution_source": loss_source,
+                "rationale": loss_rationale,
+                "winners_by_metric": sensitivity,
+                "selection_sensitive": len(set(sensitivity.values())) > 1,
+            },
+            "production_failures": failed,
+            "excluded_models": sorted(excluded),
+            "final_test_used_for_selection": False,
+            "final_test_interval_diagnostics": final_interval_diagnostics,
+            "interval_calibration": "none; model-based intervals audited out of sample",
+            "by_horizon_metrics": {
+                str(h): m.model_dump() for h, m in evaluation.by_horizon_metrics.items()
+            },
+            "preprocessing": engine.preprocessing,
         }
-    if abs(float(series.skew())) > 1.0:
-        transform_name = "Box-Cox" if bool((series > 0).all()) else "Yeo-Johnson"
-        transform_type = (
-            BoxCoxTransform if transform_name == "Box-Cox" else YeoJohnsonTransform
+    )
+    if options.get("missing_strategy") == "drop":
+        result.warnings.append(
+            "Missing timestamps retained; training gaps imputed and missing actuals excluded from scores."
         )
-        for base_name, base_fn in (
-            ("ARIMA", _arima_fn),
-            ("SARIMA", _sarima_fn),
-            ("Holt-Winters", _hw_fn),
-            ("EWMA", _ewma_fn),
-        ):
-            candidates[f"{base_name} + {transform_name}"] = _transformed_candidate(
-                base_fn, transform_type
+    if not evaluation.is_rankable:
+        result.status = ForecastFitStatus.DEGRADED
+        result.warnings.append(
+            "Forced forecast lacks complete common validation evidence."
+        )
+    if config.horizon < forecast_horizon:
+        result.warnings.append(
+            "Requested horizons beyond the evaluated horizon have no validation evidence."
+        )
+    residual_diagnostics = _run_residual_diagnostics(
+        result, evaluation, series, disabled_tests
+    )
+    if isinstance(series.index, pd.DatetimeIndex):
+        dates = pd.date_range(
+            start=series.index[-1], periods=forecast_horizon + 1, freq=freq
+        )[1:]
+        # Preserve time-of-day for subdaily series.
+        date_strings = [date.isoformat() for date in dates]
+    else:
+        date_strings = [str(i + 1) for i in range(forecast_horizon)]
+    candidate_results = []
+    for name, item in backtests.items():
+        production = results.get(name)
+        candidate_results.append(
+            ForecastCandidateResult(
+                model=name,
+                status=(
+                    production.status
+                    if production
+                    else (
+                        ForecastFitStatus.OK
+                        if item.is_rankable
+                        else ForecastFitStatus.NOT_ESTIMABLE
+                    )
+                ),
+                failure_reason=production.failure_reason if production else None,
+                is_fallback=production.is_fallback if production else False,
+                **item.pooled_metrics.model_dump(
+                    include={
+                        "rmse",
+                        "mae",
+                        "mape",
+                        "wape",
+                        "mase",
+                        "smape",
+                        "rmsse",
+                        "pinball",
+                        "n_missing",
+                    }
+                ),
+                n_evaluated=item.n_evaluated,
+                fitted_configuration=(
+                    production.fitted_configuration if production else {}
+                ),
+                warnings=[*item.warnings, *(production.warnings if production else [])],
+                interval_label=(
+                    production.interval_label if production else "backtest_only"
+                ),
+                validation_design=item.validation_design,
+                metric_intervals=item.metric_intervals,
+                skill_scores=item.skill_scores,
+                final_test_metrics=item.final_test_metrics.model_dump(),
             )
-    try:
-        return evaluate_candidates(series, candidates, config=config)
-    except Exception as exc:  # pylint: disable=broad-except
-        logger.warning("Backtest evaluation failed: %s", exc)
-        return {}
+        )
+    return (
+        ForecastResult(
+            model_used=selected,
+            status=result.status,
+            failure_reason=result.failure_reason,
+            is_fallback=result.is_fallback,
+            forecast=result.forecast,
+            lower_ci=result.lower_ci,
+            upper_ci=result.upper_ci,
+            forecast_dates=date_strings,
+            **result.metrics.model_dump(
+                include={
+                    "rmse",
+                    "mae",
+                    "mape",
+                    "wape",
+                    "mase",
+                    "smape",
+                    "rmsse",
+                    "pinball",
+                }
+            ),
+            residual_diagnostics=residual_diagnostics,
+            candidate_results=candidate_results,
+            reasoning_steps=reasoning_steps,
+            token_usage=token_usage,
+            interval_label=result.interval_label,
+            validation_design=design,
+            selection_metrics=result.metrics.model_dump(
+                include={
+                    "rmse",
+                    "mae",
+                    "mape",
+                    "wape",
+                    "mase",
+                    "smape",
+                    "rmsse",
+                    "pinball",
+                }
+            ),
+            final_test_metrics=final_metrics.model_dump(),
+        ),
+        all_metrics,
+    )
 
 
 def _run_residual_diagnostics(
@@ -1082,7 +493,29 @@ def _run_residual_diagnostics(
         logger.warning("Residual diagnostics failed: %s", exc)
         return None
 
+    innovation_diagnostics = {}
+    if result.innovations and diag.error_type == "backtest_errors":
+        innovation = analyze_innovations(
+            np.asarray(result.innovations),
+            ar_ma_order=int(result.fitted_configuration.get("ar_ma_order", 0)),
+            disabled_tests=disabled_tests or [],
+        )
+        innovation_diagnostics = innovation.model_dump()
+        for attribute in (
+            "ljung_box_p_value",
+            "ljung_box_lag",
+            "ljung_box_df_adjust",
+            "is_uncorrelated",
+            "shapiro_p_value",
+            "is_normal",
+        ):
+            setattr(diag, attribute, getattr(innovation, attribute))
+        diag.error_type = "backtest_errors_with_innovation_checks"
+        diag.warnings.append(
+            "Bias and coverage use backtests; autocorrelation and normality use fitted one-step innovations."
+        )
     return ResidualDiagnostics(
+        innovation_diagnostics=innovation_diagnostics,
         mean=diag.mean,
         is_zero_mean=diag.is_zero_mean,
         ljung_box_p_value=diag.ljung_box_p_value,
