@@ -17,7 +17,7 @@ import json
 import re
 from typing import Any
 
-from core.config import GEMINI_TEMPERATURE
+from core.llm_config_store import get_llm_config
 from core.llm_factory import get_llm
 from core.logging_config import get_logger
 from forecasting.selection_policy import validate_llm_output
@@ -50,12 +50,13 @@ def generate_narratives(
     Returns:
         A tuple of (updated :class:`ExecutiveReport`, token_usage_dict).
     """
-    llm = get_llm(temperature=GEMINI_TEMPERATURE)
+    llm = get_llm(temperature=get_llm_config().temperature)
     total_usage: dict[str, int] = {
         "input_tokens": 0,
         "output_tokens": 0,
         "total_tokens": 0,
     }
+    fallback_sections: list[str] = []
     extra = (
         f"\n\nADDITIONAL USER INSTRUCTIONS:\n{user_prompt.strip()}"
         if user_prompt and user_prompt.strip()
@@ -70,6 +71,7 @@ def generate_narratives(
         "executive_summary",
         total_usage,
         extra,
+        fallback_sections,
     )
 
     # ── Data Quality ──────────────────────────────────────────────────────
@@ -80,6 +82,7 @@ def generate_narratives(
         "data_quality",
         total_usage,
         extra,
+        fallback_sections,
     )
 
     # ── Historical Analysis ───────────────────────────────────────────────
@@ -90,6 +93,7 @@ def generate_narratives(
         "historical_analysis",
         total_usage,
         extra,
+        fallback_sections,
     )
 
     # ── Forecast Outlook ──────────────────────────────────────────────────
@@ -100,6 +104,7 @@ def generate_narratives(
         "forecast_outlook",
         total_usage,
         extra,
+        fallback_sections,
     )
 
     # ── Model Comparison ──────────────────────────────────────────────────
@@ -110,6 +115,7 @@ def generate_narratives(
         "model_comparison",
         total_usage,
         extra,
+        fallback_sections,
     )
 
     # ── Statistical Audit ─────────────────────────────────────────────────
@@ -120,6 +126,7 @@ def generate_narratives(
         "statistical_audit",
         total_usage,
         extra,
+        fallback_sections,
     )
 
     # ── Explainability ────────────────────────────────────────────────────
@@ -130,6 +137,7 @@ def generate_narratives(
         "explainability",
         total_usage,
         extra,
+        fallback_sections,
     )
 
     # ── Recommendations ───────────────────────────────────────────────────
@@ -141,8 +149,11 @@ def generate_narratives(
             "recommendation",
             total_usage,
             extra,
+            fallback_sections,
         )
 
+    report.metadata.llm_narrative_fallback = bool(fallback_sections)
+    report.metadata.llm_fallback_sections = fallback_sections
     logger.info("Narrative generation complete. Tokens: %s", total_usage)
     return report, total_usage
 
@@ -154,6 +165,7 @@ def _generate_section(
     section_name: str,
     total_usage: dict[str, int],
     extra_instructions: str = "",
+    fallback_sections: list[str] | None = None,
 ) -> str:
     """Generate narrative for a single section via the LLM.
 
@@ -166,6 +178,7 @@ def _generate_section(
         section_name:      Name for logging.
         total_usage:       Mutable token usage dict to accumulate.
         extra_instructions: Optional extra user instructions.
+        fallback_sections: Mutable list used to record fallback sections.
 
     Returns:
         Narrative text string.
@@ -231,6 +244,8 @@ def _generate_section(
                 section_name,
                 "; ".join(validation_warnings),
             )
+            if fallback_sections is not None:
+                fallback_sections.append(section_name)
             return _fallback_narrative(section, section_name)
         logger.debug("Narrative generated for %s", section_name)
         return narrative
@@ -240,6 +255,8 @@ def _generate_section(
             section_name,
             exc,
         )
+        if fallback_sections is not None:
+            fallback_sections.append(section_name)
         return _fallback_narrative(section, section_name)
 
 

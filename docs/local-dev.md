@@ -20,9 +20,6 @@ pip install -r requirements.txt
 # Or with uv (faster):
 # uv pip install -r uv.txt
 
-# Set up environment variables
-cp .env.example .env
-
 # Start the backend
 uvicorn main:app --reload --port 8000
 ```
@@ -37,11 +34,6 @@ cd data_forecasting_agent/data_forecaster/frontend
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-
-# Set up environment variables
-cp .env.example .env
-# Then set FLASK_ENCRYPTION_KEY in frontend/.env:
-# python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 
 # Initialize the database
 flask --app app init-db
@@ -89,6 +81,6 @@ export OLLAMA_MODEL=llama3
 
 - The backend uses `--reload` which watches for file changes and auto-restarts. Great for iterating on agents or API endpoints.
 - The frontend in development mode has Flask debug enabled — you get the interactive debugger in the browser on errors.
-- The `FLASK_ENCRYPTION_KEY` is used to encrypt stored API credentials at rest. Generate one with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`.
-- Backend API credentials are entered in the frontend under Admin -> API Config, not stored in `frontend/.env`.
+- The frontend generates its session and encryption keys on first startup and stores them under `frontend/instance/` (mode 0600). Back up that directory with the frontend database.
+- Backend API credentials are entered in the frontend under Admin -> API Config, not stored in an environment file.
 - ChromaDB persists to `./chroma_db` by default. Delete that directory if you want a clean RAG knowledge base.

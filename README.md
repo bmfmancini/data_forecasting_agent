@@ -25,11 +25,6 @@ The easiest way to run this is with Docker. You'll need Docker and Docker Compos
 git clone <repository-url>
 cd data_forecasting_agent/data_forecaster
 
-# Copy the service-specific env examples, then edit backend/.env
-# to add your LLM API key.
-cp backend/.env.example backend/.env
-cp frontend/.env.example frontend/.env
-
 # Build and start everything (single-machine mode)
 ./scripts/build_containers.sh --single
 ```
@@ -43,28 +38,11 @@ That's it. Four containers come up:
 | `nginx-backend` | TLS termination for the API | `https://localhost:8443` |
 | `backend` | FastAPI + forecasting engine | internal only |
 
-Open `https://localhost` in your browser. Log in with `admin` / `admin` (you'll be prompted to change the password). The default API credentials (`frontend` / `frontend`) are already configured, so the frontend can talk to the backend out of the box.
-
-> **Heads up:** The default `frontend` API key is publicly known. Rotate it before exposing this to anything beyond your local machine. See [docs/api-auth.md](docs/api-auth.md) for how.
+Open `https://localhost` in your browser. On first run you'll be redirected to the **setup wizard** (`/setup`), which walks you through: backend connection → LLM provider and credentials → enabling API auth → choosing forecasting models → creating the first admin account. No `.env` secrets are needed — keys are generated and stored encrypted at setup time.
 
 ## LLM setup
 
-The agents need an LLM to do their analysis. You can use either Google Gemini or Ollama.
-
-**Gemini** (easiest — just add your key):
-```bash
-# In backend/.env
-GOOGLE_API_KEY=your_key_here
-USE_OLLAMA=false
-```
-
-**Ollama** (runs locally or via Ollama Cloud):
-```bash
-# In backend/.env
-USE_OLLAMA=true
-OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=llama3
-```
+The agents need an LLM to do their analysis. You can use either Google Gemini or Ollama — configured in the setup wizard or later under **Admin → LLM Config** (keys are stored encrypted in the backend database, never in the frontend).
 
 If you're running Ollama locally, pull the model first: `ollama pull llama3`.
 

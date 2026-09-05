@@ -9,7 +9,7 @@ forecast), chat, jobs, and API key management.
 from __future__ import annotations
 
 from typing import Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 
 from forecasting.contracts import ForecastFitStatus
 
@@ -169,6 +169,7 @@ class ModelSelectionResult(BaseModel):
     arima_rejected_reason: str | None = None
     sarima_rejected_reason: str | None = None
     ewma_rejected_reason: str | None = None
+    prophet_rejected_reason: str | None = None
     reasoning_steps: list[dict[str, Any]] = Field(default_factory=list)
     token_usage: dict[str, Any] = Field(default_factory=dict)
     # ── Selection policy additions ──────────────────────────────────────────
@@ -442,3 +443,96 @@ class AuthStatusResponse(BaseModel):
 
     auth_enabled: bool
     has_users: bool
+
+
+# ── Setup Wizard Schemas ──────────────────────────────────────────────────────
+
+
+class SetupBootstrapRequest(BaseModel):
+    """Request schema for the atomic first-run setup bootstrap."""
+
+    username: str
+    api_key: str
+
+
+class SetupBootstrapResponse(BaseModel):
+    """Response schema after a successful setup bootstrap."""
+
+    user: APIUserResponse
+    setup_complete: bool = True
+
+
+class SetupStatusResponse(BaseModel):
+    """Response schema for setup status — booleans only, never secrets."""
+
+    setup_complete: bool
+    admin_exists: bool
+    llm_configured: bool
+    models_enabled: int
+
+
+# ── Model Registry Schemas ───────────────────────────────────────────────────
+
+
+class ModelState(BaseModel):
+    """Enable/disable state of one forecasting model."""
+
+    name: str
+    display_name: str
+    enabled: bool
+
+
+class ModelsResponse(BaseModel):
+    """Response schema listing all models and their states."""
+
+    models: list[ModelState]
+
+
+class ModelUpdateRequest(BaseModel):
+    """Request schema for enabling or disabling a model."""
+
+    enabled: bool
+
+
+# ── LLM Configuration Schemas ────────────────────────────────────────────────
+
+
+class LLMConfigResponse(BaseModel):
+    """Masked LLM configuration — the API key is structurally absent.
+
+    Only ``api_key_set`` reveals whether a key is stored; the key itself
+    (plaintext or ciphertext) is never included in any API response.
+    """
+
+    provider: str
+    model: str
+    base_url: str | None = None
+    temperature: float
+    api_key_set: bool
+    configured: bool
+
+
+class LLMConfigUpdateRequest(BaseModel):
+    """One-way write schema for LLM configuration.
+
+    ``api_key`` is a :class:`SecretStr` so it cannot leak via logs or
+    ``repr``.  Omitting it (``None``) preserves the stored key.
+    """
+
+    provider: str
+    model: str
+    base_url: str | None = None
+    api_key: SecretStr | None = None
+    temperature: float = 0.1
+
+
+class LLMConfigTestResponse(BaseModel):
+    """Result of testing candidate LLM settings without saving them."""
+
+    ok: bool
+    url_reachable: bool
+    credentials_valid: bool
+    llm_responded: bool
+    message: str
+    response: str | None = None
+    diagnostic: str | None = None

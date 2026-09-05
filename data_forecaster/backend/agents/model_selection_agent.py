@@ -1,42 +1,33 @@
 """Model selection agent for the Data Forecaster backend.
 
-Python is the source of statistical decisions. When empirical metrics are
-available, a deterministic selection policy selects the best model. The
-LLM is used for context, critique, and explanation only — it never
-decides model rankings. When no empirical metrics are available (first
-run), the LLM provides a suitability-based recommendation, but the
-deterministic heuristic fallback is used if the LLM is unavailable or its
-output is invalid.
-
-All suitability-assessment, heuristic-fallback, and LLM-output parsing
-logic is implemented as small, focused module-level helpers so that the
-public :func:`run_model_selection_agent` stays readable and well below
-the SonarQube Cognitive Complexity threshold.
+This module uses an LLM to reason over statistical findings and select the
+best forecasting model.  All suitability-assessment, heuristic-fallback, and
+LLM-output parsing logic is implemented as small, focused module-level
+helpers so that the public :func:`run_model_selection_agent` stays readable
+and well below the SonarQube Cognitive Complexity threshold.
 """
 
 from __future__ import annotations
 
 import math
 
-import numpy as np
-
 from core.llm_factory import get_llm
 from core.logging_config import get_logger
-from forecasting.selection_policy import (
-    CandidateEvidence,
-    SelectionOutcome,
-    select_model_deterministic,
-    validate_llm_output,
-)
-from forecasting.contracts import ForecastAdapterResult
+from forecasting.registry import MODEL_NAMES, get_enabled_models
 from prompts.model_selection_prompt import MODEL_SELECTION_PROMPT
 from schemas import ModelSelectionResult, StatisticalResult
 from utils.token_tracking import estimate_input_text, extract_token_usage
 
 logger = get_logger(__name__)
 
-_MODELS = ("ARIMA", "SARIMA", "Holt-Winters", "EWMA")
+# Canonical model names live in forecasting.registry.MODEL_NAMES; enabled
+# state is read from the DB via get_enabled_models() at call time so that
+# admin changes take effect without a restart.
+_MODELS = MODEL_NAMES  # Backward-compatible alias (all known models).
 _METRIC_PRIORITY = ("MASE", "WAPE", "RMSE", "MAE", "MAPE")
+
+# Message shown for models disabled by the administrator.
+_DISABLED_REASON = "Model disabled by administrator."
 
 # Unicode hyphen characters that the LLM may emit instead of ASCII '-'.
 _UNICODE_HYPHENS = (
@@ -191,20 +182,70 @@ def _ewma_suitability(stat_result: StatisticalResult) -> str:
     return "EWMA Assessment:\n" + "\n".join(f"- {p}" for p in points)
 
 
-def _build_suitability_summary(stat_result: StatisticalResult) -> str:
-    """Combine all four model suitability assessments into one summary.
+def _prophet_suitability(stat_result: StatisticalResult) -> str:
+    """Build the Prophet (Meta Prophet) suitability assessment string.
 
     Args:
         stat_result: Output of the statistical analysis agent.
 
     Returns:
-        A single string containing all four assessments separated by blank lines.
+        A multi-line bullet list describing Prophet suitability.
     """
+    points: list[str] = []
+    sp = stat_result.seasonal_period
+    if sp and sp > 1:
+        points.append(
+            f"Seasonal period {sp} detected — Prophet models seasonality "
+            "natively via Fourier terms and can combine multiple seasonalities."
+        )
+    else:
+        points.append(
+            "No strong seasonal period — Prophet still fits a piecewise trend "
+            "and may capture seasonalities the statistical tests missed."
+        )
+    if stat_result.has_trend:
+        points.append(
+            f"Trend detected (slope={stat_result.trend_slope:.4f}) — Prophet "
+            "models trend automatically with changepoint detection."
+        )
+    if stat_result.outlier_ratio > 0.05:
+        points.append(
+            f"High outlier ratio ({stat_result.outlier_ratio:.1%}) — Prophet "
+            "is robust to outliers and missing observations."
+        )
+    else:
+        points.append("Low outlier count — Prophet will be stable.")
+    points.append(
+        "Prophet needs at least 2 observations and performs best with "
+        "substantial history; it is heavier to fit than the other models."
+    )
+    return "Prophet Assessment:\n" + "\n".join(f"- {p}" for p in points)
+
+
+def _build_suitability_summary(stat_result: StatisticalResult) -> str:
+    """Combine enabled models' suitability assessments into one summary.
+
+    Disabled models are omitted entirely so the LLM never sees (and never
+    selects) a model the administrator has turned off.
+
+    Args:
+        stat_result: Output of the statistical analysis agent.
+
+    Returns:
+        A single string containing the enabled models' assessments
+        separated by blank lines.
+    """
+    builders = {
+        "Holt-Winters": _hw_suitability,
+        "ARIMA": _arima_suitability,
+        "SARIMA": _sarima_suitability,
+        "EWMA": _ewma_suitability,
+        "Prophet": _prophet_suitability,
+    }
     sections = [
-        _hw_suitability(stat_result),
-        _arima_suitability(stat_result),
-        _sarima_suitability(stat_result),
-        _ewma_suitability(stat_result),
+        builders[name](stat_result)
+        for name in get_enabled_models()
+        if name in builders
     ]
     if stat_result.disabled_tests:
         sections.append(
@@ -231,11 +272,10 @@ def _heuristic_fallback(
     """
     preference = _heuristic_preference(stat_result)
     fallback_model = preference[0]
+    enabled = set(get_enabled_models())
     reasoning: dict[str, str | None] = {
-        "Holt-Winters": None,
-        "ARIMA": None,
-        "SARIMA": None,
-        "EWMA": None,
+        name: (None if name in enabled else _DISABLED_REASON)
+        for name in MODEL_NAMES
     }
     for m in preference[1:]:
         reasoning[m] = _heuristic_rejection_reason(stat_result, m)
@@ -253,16 +293,28 @@ def _heuristic_preference(stat_result: StatisticalResult) -> list[str]:
         stat_result: Output of the statistical analysis agent.
 
     Returns:
-        A list of model names ordered by heuristic preference.
+        A list of enabled model names ordered by heuristic preference.
+        Guaranteed non-empty (the registry enforces at least one enabled
+        model).
     """
     sp = stat_result.seasonal_period or 1
     if sp > 1:
-        return ["SARIMA", "Holt-Winters", "ARIMA", "EWMA"]
-    if stat_result.has_trend and abs(stat_result.trend_slope) > 0.1:
-        return ["Holt-Winters", "ARIMA", "SARIMA", "EWMA"]
-    if stat_result.is_white_noise:
-        return ["EWMA", "ARIMA", "Holt-Winters", "SARIMA"]
-    return ["ARIMA", "Holt-Winters", "SARIMA", "EWMA"]
+        preference = ["SARIMA", "Prophet", "Holt-Winters", "ARIMA", "EWMA"]
+    elif stat_result.has_trend and abs(stat_result.trend_slope) > 0.1:
+        preference = ["Holt-Winters", "Prophet", "ARIMA", "SARIMA", "EWMA"]
+    elif stat_result.is_white_noise:
+        preference = ["EWMA", "ARIMA", "Holt-Winters", "SARIMA", "Prophet"]
+    else:
+        preference = ["ARIMA", "Prophet", "Holt-Winters", "SARIMA", "EWMA"]
+    enabled = set(get_enabled_models())
+    filtered = [m for m in preference if m in enabled]
+    if not filtered:  # Defensive: registry should prevent this.
+        logger.warning(
+            "Heuristic preference was empty after filtering disabled models; "
+            "falling back to the enabled set."
+        )
+        return list(get_enabled_models())
+    return filtered
 
 
 def _heuristic_rejection_reason(
@@ -286,24 +338,40 @@ def _heuristic_rejection_reason(
             ),
             "ARIMA": "Seasonal pattern detected; plain ARIMA ignores seasonality.",
             "EWMA": "Seasonal patterns present; EWMA does not capture seasonality.",
+            "Prophet": (
+                "Seasonality detected; SARIMA models it more explicitly and "
+                "is lighter to fit than Prophet for this case."
+            ),
         }
     elif stat_result.has_trend and abs(stat_result.trend_slope) > 0.1:
         reasons = {
             "ARIMA": "Trend present but Holt-Winters handles it more naturally.",
             "SARIMA": "No strong seasonality confirmed; SARIMA may overfit.",
             "EWMA": "Strong trend present; EWMA will lag behind trend changes.",
+            "Prophet": (
+                "Trend present; Holt-Winters handles it more lightly than "
+                "Prophet for a non-seasonal series."
+            ),
         }
     elif stat_result.is_white_noise:
         reasons = {
             "Holt-Winters": "Series appears random; simple EWMA may suffice.",
             "ARIMA": "Series is random noise; complex models may overfit.",
             "SARIMA": "No patterns detected; SARIMA would overfit.",
+            "Prophet": (
+                "Series is random noise; Prophet is heavier than the data "
+                "structure warrants and would overfit."
+            ),
         }
     else:
         reasons = {
             "Holt-Winters": "No clear seasonal pattern or strong trend detected.",
             "SARIMA": "No seasonal period confirmed; SARIMA would overfit.",
             "EWMA": "Series has patterns that ARIMA can better capture.",
+            "Prophet": (
+                "No strong seasonal pattern or trend confirmed; ARIMA is "
+                "lighter and captures the autocorrelation more directly."
+            ),
         }
     return reasons.get(model, "Not selected based on heuristic reasoning.")
 
@@ -367,9 +435,9 @@ def _match_exact(normalized_lower: str) -> str | None:
         normalized_lower: Lower-cased, normalized LLM output.
 
     Returns:
-        The matched model name, or ``None`` if no exact match is found.
+        The matched enabled model name, or ``None`` if no exact match.
     """
-    for m in _MODELS:
+    for m in get_enabled_models():
         if f"selected model: {m.lower()}" in normalized_lower:
             return m
     return None
@@ -391,7 +459,7 @@ def _match_line_scan(normalized: str) -> str | None:
         if "selected model" not in line.lower():
             continue
         upper_line = line.upper()
-        for m in sorted(_MODELS, key=len, reverse=True):
+        for m in sorted(get_enabled_models(), key=len, reverse=True):
             if m.upper() in upper_line:
                 return m
     return None
@@ -568,6 +636,30 @@ def _statistical_fit_reason(
             "EWMA is simple and stable, but it can miss autocorrelation that a "
             "time-series model can use for more accurate forecasts."
         )
+    if model == "Prophet":
+        if has_seasonality or has_trend:
+            if selected:
+                return (
+                    "Prophet is a strong general-purpose choice because it "
+                    "models trend (with changepoints) and seasonality together "
+                    "and is robust to outliers and missing values."
+                )
+            return (
+                "Prophet can model trend and seasonality, but it is heavier to "
+                "fit than the selected model and offered weaker validation "
+                "evidence here."
+            )
+        if selected:
+            return (
+                "Prophet was selected for its robust trend modeling, although "
+                "limited seasonality or trend means simpler models may be "
+                "competitive."
+            )
+        return (
+            "Prophet was rejected because the series lacks strong trend or "
+            "seasonality, so its extra complexity and fit cost are not "
+            "justified for this case."
+        )
     return (
         "Selected for the best balance of validation accuracy, assumptions, "
         "and reliability."
@@ -606,8 +698,12 @@ def _business_selection_reasons(
     all_metrics: dict[str, dict[str, float]] | None = None,
 ) -> dict[str, str | None]:
     """Build per-model business explanations for selection and rejection."""
+    enabled = set(get_enabled_models())
     reasons: dict[str, str | None] = {}
-    for model in _MODELS:
+    for model in MODEL_NAMES:
+        if model not in enabled:
+            reasons[model] = _DISABLED_REASON
+            continue
         if model == selected_model:
             reasons[model] = None
             continue
@@ -625,7 +721,11 @@ def build_model_rejection_reasons(
     all_metrics: dict[str, dict[str, float]] | None = None,
     excluded_models: list[str] | None = None,
 ) -> dict[str, str | None]:
-    """Build final rejection reasons aligned to the production model."""
+    """Build final rejection reasons aligned to the production selection.
+
+    This public helper keeps retry paths consistent with the initial model
+    selection, including administrator-disabled and review-excluded models.
+    """
     reasons = _business_selection_reasons(selected_model, stat_result, all_metrics)
     for excluded_model in excluded_models or []:
         if excluded_model in reasons and excluded_model != selected_model:
@@ -639,22 +739,6 @@ def build_model_rejection_reasons(
 
 
 # ── LLM invocation ───────────────────────────────────────────────────────────
-
-
-_NOT_AVAILABLE = "not available"
-
-
-def _format_metric_value(
-    value: float | None,
-    fmt: str,
-    percent: bool = False,
-) -> str:
-    """Format a nullable metric value, returning ``_NOT_AVAILABLE`` for None/NaN."""
-    if value is None or not np.isfinite(value):
-        return _NOT_AVAILABLE
-    if percent:
-        return format(value * 100, fmt) + "%"
-    return format(value, fmt)
 
 
 def _format_metrics_text(
@@ -673,17 +757,13 @@ def _format_metrics_text(
         return ""
     lines = []
     for name, metrics in all_metrics.items():
-        rmse_s = _format_metric_value(metrics.get("RMSE"), ".4f")
-        mae_s = _format_metric_value(metrics.get("MAE"), ".4f")
-        mape_value = _format_metric_value(metrics.get("MAPE"), ".2f")
-        mape_s = (
-            f"{mape_value}%" if mape_value != _NOT_AVAILABLE else _NOT_AVAILABLE
-        )
-        wape_s = _format_metric_value(metrics.get("WAPE"), ".2f", percent=True)
-        mase_s = _format_metric_value(metrics.get("MASE"), ".4f")
+        rmse = metrics.get("RMSE", float("nan"))
+        mae = metrics.get("MAE", float("nan"))
+        mape = metrics.get("MAPE", float("nan"))
+        wape = metrics.get("WAPE", float("nan")) * 100
+        mase = metrics.get("MASE", float("nan"))
         lines.append(
-            f"- {name}: RMSE={rmse_s}, MAE={mae_s}, MAPE={mape_s}, "
-            f"WAPE={wape_s}, MASE={mase_s}"
+            f"- {name}: RMSE={rmse:.4f}, MAE={mae:.4f}, MAPE={mape:.2f}%, WAPE={wape:.2f}%, MASE={mase:.4f}"
         )
     return (
         "\n".join(lines)
@@ -811,137 +891,6 @@ def _invoke_llm(
         return None
 
 
-# ── Deterministic policy helpers ──────────────────────────────────────────────
-
-
-def _finite_or_none(value: float | None) -> float | None:
-    """Return the value if finite, otherwise ``None``."""
-    if value is not None and math.isfinite(value):
-        return value
-    return None
-
-
-def _build_adapter_result(
-    name: str,
-    metrics: dict[str, float],
-) -> "ForecastAdapterResult":
-    """Build a :class:`ForecastAdapterResult` from a metrics dict.
-
-    Args:
-        name:    Model name.
-        metrics: Dict of metric values (uppercase keys).
-
-    Returns:
-        A :class:`ForecastAdapterResult` with typed metrics.
-    """
-    from forecasting.contracts import (
-        ForecastAdapterResult,
-        ForecastFitStatus,
-        ForecastMetrics,
-    )
-
-    rmse = _finite_or_none(metrics.get("RMSE"))
-    mae = _finite_or_none(metrics.get("MAE"))
-    mape = _finite_or_none(metrics.get("MAPE"))
-    wape = _finite_or_none(metrics.get("WAPE"))
-    mase = _finite_or_none(metrics.get("MASE"))
-
-    has_finite = any(v is not None for v in (rmse, mae, mape, wape, mase))
-    status = ForecastFitStatus.OK if has_finite else ForecastFitStatus.FAILED
-
-    return ForecastAdapterResult(
-        status=status,
-        forecast=[],
-        lower_ci=[],
-        upper_ci=[],
-        metrics=ForecastMetrics(
-            rmse=rmse,
-            mae=mae,
-            mape=mape,
-            wape=wape,
-            mase=mase,
-        ),
-        fitted_configuration={"model": name},
-    )
-
-
-def _build_candidate_evidence(
-    all_metrics: dict[str, dict[str, float]],
-) -> list[CandidateEvidence]:
-    """Build :class:`CandidateEvidence` objects from the metrics dict.
-
-    The metrics dict uses uppercase keys (``"RMSE"``, ``"MAE"``, etc.) from
-    the forecasting agent. This helper converts them to typed
-    :class:`ForecastAdapterResult`-backed evidence so the deterministic
-    policy can rank them.
-
-    Args:
-        all_metrics: Dict mapping model names to metric dicts.
-
-    Returns:
-        A list of :class:`CandidateEvidence` objects.
-    """
-    candidates: list[CandidateEvidence] = []
-    for name, metrics in all_metrics.items():
-        is_baseline = name.lower().startswith(
-            ("naive", "seasonal naive", "mean", "drift")
-        )
-        adapter_result = _build_adapter_result(name, metrics)
-        candidates.append(
-            CandidateEvidence(
-                name=name,
-                adapter_result=adapter_result,
-                is_baseline=is_baseline,
-            )
-        )
-    return candidates
-
-
-def _build_deterministic_explanation(
-    outcome: SelectionOutcome,
-    stat_result: StatisticalResult,
-    all_metrics: dict[str, dict[str, float]],
-    review_feedback: str | None,
-) -> str:
-    """Build a business-readable explanation for the deterministic selection.
-
-    Args:
-        outcome:        The deterministic selection outcome.
-        stat_result:    Output of the statistical analysis agent.
-        all_metrics:    Dict of all model error metrics.
-        review_feedback: Optional review feedback from a prior run.
-
-    Returns:
-        A concise explanation string.
-    """
-    parts = [f"Selected model: {outcome.selected_model}."]
-    metric = _primary_metric(all_metrics, outcome.selected_model)
-    if metric:
-        metric_name, value = metric
-        evidence_scope = "eligible " if outcome.exclusion_reasons else ""
-        parts.append(
-            f"It had the strongest available {evidence_scope}empirical validation metrics "
-            f"({_format_metric(metric_name, value)}, lower is better)."
-        )
-    parts.append(
-        _statistical_fit_reason(stat_result, outcome.selected_model, selected=True)
-    )
-    if outcome.tie_break_note:
-        parts.append(f"Tie-breaking: {outcome.tie_break_note}")
-    if outcome.exclusion_reasons:
-        excluded = ", ".join(outcome.exclusion_reasons.keys())
-        parts.append(f"Excluded candidates: {excluded}.")
-    if review_feedback:
-        parts.append(
-            "The selection also accounts for statistical review feedback from "
-            "the prior run."
-        )
-    metrics_text = _format_metrics_text(all_metrics)
-    parts.append(f"\n\nValidation metrics considered:\n{metrics_text}")
-    parts.append(f"\n[Statistical Review Feedback]: {review_feedback or 'N/A'}")
-    return " ".join(parts)
-
-
 # ── Public entry point ───────────────────────────────────────────────────────
 
 
@@ -980,49 +929,50 @@ def run_model_selection_agent(
         stat_result, fallback_model, exclude_model
     )
 
-    # ── Deterministic policy when empirical metrics are available ────────
-    # When actual error metrics are available, the deterministic selection
-    # policy is the source of truth. The LLM never decides model rankings.
-    # The policy excludes failed/degraded candidates, ranks by the
-    # configured loss metric, applies tie-breaking (simpler model wins
-    # negligible differences), and retains baselines when no complex model
-    # adds demonstrated value.
+    # ── Deterministic override when empirical metrics are available ────────
+    # During a review-triggered retry, if actual error metrics are available,
+    # deterministically select the best-performing model rather than relying
+    # on the LLM.  This prevents the LLM from re-selecting a suboptimal model
+    # based on statistical properties alone.
     if all_metrics:
-        candidates = _build_candidate_evidence(all_metrics)
-        outcome = select_model_deterministic(
-            candidates,
-            exclude_models=[exclude_model] if exclude_model else None,
-            user_loss_preference=loss_preference,
-        )
-        if outcome.selected_model:
+        best_model = _select_best_metric_model(all_metrics, exclude_model)
+        if best_model:
             logger.info(
-                "Deterministic policy selected '%s' (method=%s, rankable=%d).",
-                outcome.selected_model,
-                outcome.method,
-                len(outcome.ranking),
+                "Deterministic override: selecting best-metric model '%s' "
+                "based on empirical error metrics.",
+                best_model,
             )
             metrics_text = _format_metrics_text(all_metrics)
-            explanation = _build_deterministic_explanation(
-                outcome, stat_result, all_metrics, review_feedback
+            evidence_scope = "eligible " if exclude_model else ""
+            explanation = (
+                "Model re-selected based on "
+                f"{evidence_scope}empirical validation metrics. "
+                + _build_selection_explanation(
+                    best_model, stat_result, all_metrics, review_feedback
+                )
+                + "\n\nValidation metrics considered:\n"
+                + metrics_text
+                + f"\n\n[Statistical Review Feedback]: {review_feedback or 'N/A'}"
             )
             reasons = build_model_rejection_reasons(
-                outcome.selected_model,
+                best_model,
                 stat_result,
                 all_metrics,
-                list(outcome.exclusion_reasons),
+                [exclude_model] if exclude_model else None,
             )
             return ModelSelectionResult(
-                selected_model=outcome.selected_model,
+                selected_model=best_model,
                 explanation=explanation,
                 holt_winters_rejected_reason=reasons["Holt-Winters"],
                 arima_rejected_reason=reasons["ARIMA"],
                 sarima_rejected_reason=reasons["SARIMA"],
                 ewma_rejected_reason=reasons["EWMA"],
+                prophet_rejected_reason=reasons["Prophet"],
                 reasoning_steps=[
                     {
                         "thought": (
-                            "Deterministic selection policy applied with "
-                            "empirical metrics."
+                            "Review-triggered retry with empirical metrics "
+                            "available — selecting best-performing model."
                         ),
                         "observation": metrics_text,
                     },
@@ -1030,21 +980,9 @@ def run_model_selection_agent(
                 token_usage={},
                 selection_method="deterministic",
                 selection_evidence={
-                    "ranking": outcome.ranking,
-                    "exclusion_reasons": outcome.exclusion_reasons,
-                    "tie_break_note": outcome.tie_break_note,
-                    "evidence_summary": outcome.evidence_summary,
+                    "excluded_model": exclude_model,
+                    "loss_preference": loss_preference,
                 },
-                narrative_claims=[
-                    {
-                        "claim": f"Selected {outcome.selected_model} by deterministic ranking.",
-                        "evidence_references": [
-                            "selection_evidence.ranking",
-                            "all_metrics",
-                        ],
-                        "uncertainty": "empirical_backtest_evidence",
-                    }
-                ],
             )
 
     suitability_input = _build_suitability_input(
@@ -1056,13 +994,6 @@ def run_model_selection_agent(
         return _build_heuristic_result(fallback_model, fallback_reasoning, stat_result)
 
     output, token_usage = llm_result
-    validation_warnings = validate_llm_output(
-        output,
-        list(_MODELS),
-        {"all_metrics": all_metrics or {}},
-    )
-    if validation_warnings:
-        logger.warning("Model-selection narrative validation: %s", validation_warnings)
     selected_model = _parse_selected_model(output, fallback_model)
     reasons = _business_selection_reasons(selected_model, stat_result)
     explanation = (
@@ -1080,6 +1011,7 @@ def run_model_selection_agent(
         arima_rejected_reason=reasons["ARIMA"],
         sarima_rejected_reason=reasons["SARIMA"],
         ewma_rejected_reason=reasons["EWMA"],
+        prophet_rejected_reason=reasons["Prophet"],
         reasoning_steps=[
             {
                 "thought": "Assessing suitability metrics for all models...",
@@ -1091,15 +1023,6 @@ def run_model_selection_agent(
             },
         ],
         token_usage=token_usage,
-        selection_method="llm",
-        selection_evidence={"llm_validation_warnings": validation_warnings},
-        narrative_claims=[
-            {
-                "claim": f"LLM interpreted suitability for {selected_model}.",
-                "evidence_references": ["selection_evidence.llm_validation_warnings"],
-                "uncertainty": "llm_interpretation",
-            }
-        ],
     )
 
 
@@ -1135,6 +1058,7 @@ def _build_heuristic_result(
         arima_rejected_reason=reasons["ARIMA"],
         sarima_rejected_reason=reasons["SARIMA"],
         ewma_rejected_reason=reasons["EWMA"],
+        prophet_rejected_reason=reasons["Prophet"],
         reasoning_steps=[
             {
                 "thought": "Model selection agent failed; using heuristic.",
@@ -1142,13 +1066,4 @@ def _build_heuristic_result(
             }
         ],
         token_usage={},
-        selection_method="heuristic",
-        selection_evidence={},
-        narrative_claims=[
-            {
-                "claim": f"Selected {fallback_model} using heuristic fallback.",
-                "evidence_references": ["reasoning_steps"],
-                "uncertainty": "heuristic",
-            }
-        ],
     )

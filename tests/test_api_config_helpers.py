@@ -6,7 +6,6 @@ from pathlib import Path
 import sys
 from typing import Any
 
-from cryptography.fernet import Fernet
 from flask import Flask
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -44,7 +43,6 @@ def test_load_current_api_config_never_decrypts_key(
     monkeypatch: Any,
 ) -> None:
     """The summary may decrypt the username but must not decrypt the API key."""
-    monkeypatch.setenv("FLASK_ENCRYPTION_KEY", Fernet.generate_key().decode())
     app = _app(tmp_path)
 
     with app.app_context():
@@ -79,7 +77,6 @@ def test_save_api_credentials_preserves_existing_key(
     monkeypatch: Any,
 ) -> None:
     """Changing username with a blank key should keep the encrypted key."""
-    monkeypatch.setenv("FLASK_ENCRYPTION_KEY", Fernet.generate_key().decode())
     app = _app(tmp_path)
 
     with app.app_context():
@@ -126,7 +123,6 @@ def test_client_from_api_config_form_uses_stored_key_server_side(
     monkeypatch: Any,
 ) -> None:
     """Testing edited config can preserve the blank key field."""
-    monkeypatch.setenv("FLASK_ENCRYPTION_KEY", Fernet.generate_key().decode())
     app = _app(tmp_path)
 
     with app.app_context():

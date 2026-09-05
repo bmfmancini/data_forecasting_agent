@@ -118,7 +118,29 @@ These endpoints also require auth. They let you manage API users from the admin 
 | `POST` | `/api-users/{id}/rotate` | Rotate a user's key (returns new plaintext key once) |
 | `POST` | `/api-users/{id}/toggle` | Enable or disable a user |
 | `DELETE` | `/api-users/{id}` | Delete a user |
-| `POST` | `/api-users/bootstrap` | One-time bootstrap endpoint (guarded by `X-Admin-Key`) |
+
+## Setup wizard
+
+First-run provisioning. Unauthenticated; the bootstrap endpoint is guarded by an atomic "no users exist yet" check (no preset admin token).
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/setup/status` | Setup state flags (`setup_complete`, `admin_exists`, `llm_configured`, `models_enabled`) — never secrets |
+| `POST` | `/setup/bootstrap` | One-time atomic bootstrap: creates the first admin API user, generates the backend encryption key, enables auth. `409` once any user exists |
+
+## LLM configuration (admin)
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/config/llm` | Masked LLM config (`provider`, `model`, `base_url`, `temperature`, `api_key_set`) — the key is never returned |
+| `PUT` | `/config/llm` | Update LLM config; `api_key` is write-only (omit to keep the stored key) |
+
+## Model registry (admin)
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/models` | List the five forecasting models with enabled state |
+| `PUT` | `/models/{name}` | Enable/disable a model; `400` when disabling the last enabled model |
 
 ## Error responses
 
@@ -132,7 +154,7 @@ All errors return JSON with a `detail` field:
 |---|---|
 | `400` | Bad file, unsupported extension, file too large, empty file, bad preflight options |
 | `401` | Missing or invalid API key headers, or disabled account |
-| `403` | Missing or invalid `X-Admin-Key` on the bootstrap endpoint |
+| `409` | `/setup/bootstrap` called after setup completed |
 | `404` | Unknown `file_id` or `job_id` |
 | `409` | Duplicate username, or bootstrap attempted when users already exist |
 | `422` | Pydantic validation failure (e.g. chat query too long) |

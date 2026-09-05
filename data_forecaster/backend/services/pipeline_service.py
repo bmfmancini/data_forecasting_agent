@@ -161,7 +161,7 @@ def run_pipeline(
         freq:              Frequency string.
         forecast_horizon:  Number of future periods to forecast.
         forced_model:      Optional model override (``"ARIMA"``, ``"SARIMA"``,
-                           ``"Holt-Winters"``).
+                           ``"Holt-Winters"``, ``"Prophet"``).
         user_prompt:       Optional extra instructions for the report agent.
         preflight_options: Optional preflight configuration dict.
         chroma_persist_dir: Path to the ChromaDB persistence directory.
@@ -546,6 +546,11 @@ def _select_model(
             sarima_rejected_reason=(
                 None
                 if forced_model == "SARIMA"
+                else "Not selected (user chose a different model)."
+            ),
+            prophet_rejected_reason=(
+                None
+                if forced_model == "Prophet"
                 else "Not selected (user chose a different model)."
             ),
             reasoning_steps=[

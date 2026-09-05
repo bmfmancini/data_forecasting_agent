@@ -12,6 +12,7 @@ from forecasting.contracts import (
     ForecastMetrics,
 )
 from forecasting.evaluation import evaluate_predictions, make_terminal_holdout
+from forecasting.indexing import normalize_forecast_index
 from forecasting.pmdarima_compat import import_pmdarima
 
 logger = get_logger(__name__)
@@ -67,7 +68,7 @@ def fit_sarima(
         :class:`ForecastAdapterResult` with status, forecast, intervals,
         nullable metrics, and fitted configuration provenance.
     """
-    series = series.dropna().astype(float)
+    series = normalize_forecast_index(series.dropna().astype(float))
 
     # Check if we have enough data for seasonal modeling
     if len(series) < 2 * seasonal_period:

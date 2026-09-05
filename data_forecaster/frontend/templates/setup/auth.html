@@ -1,0 +1,22 @@
+{% extends "setup/base.html" %}
+{% block title %}Enable API Auth — Setup{% endblock %}
+{% block content %}
+<h5 class="mb-1">Step 3 — Enable API authentication</h5>
+<p class="small text-muted mb-3">
+    The backend API is currently open. Enabling authentication requires all
+    clients to present an API key. A strong service-account key has been
+    generated for the frontend↔backend connection and will be used when
+    creating the first admin user in step 5.
+</p>
+<form method="post" novalidate>
+    {{ form.hidden_tag() }}
+    <div class="mb-3 form-check">
+        {{ form.confirm(class="form-check-input") }}
+        {{ form.confirm.label(class="form-check-label") }}
+        {% for error in form.confirm.errors %}<small class="text-danger d-block">{{ error }}</small>{% endfor %}
+    </div>
+    <div class="d-grid">
+        {{ form.submit(class="btn btn-primary") }}
+    </div>
+</form>
+{% endblock %}

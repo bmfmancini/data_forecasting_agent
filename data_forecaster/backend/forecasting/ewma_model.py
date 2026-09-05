@@ -19,6 +19,7 @@ from forecasting.contracts import (
     ForecastMetrics,
 )
 from forecasting.evaluation import evaluate_predictions, make_terminal_holdout
+from forecasting.indexing import normalize_forecast_index
 
 logger = get_logger(__name__)
 
@@ -77,7 +78,7 @@ def fit_ewma(
         :class:`ForecastAdapterResult` with status, forecast, intervals,
         nullable metrics, and fitted configuration provenance.
     """
-    series = series.dropna().astype(float)
+    series = normalize_forecast_index(series.dropna().astype(float))
 
     if len(series) < 3:
         logger.warning(

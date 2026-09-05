@@ -1,0 +1,52 @@
+{% extends "admin/base.html" %}
+{% block title %}Models — Admin{% endblock %}
+{% block header %}Forecasting Models{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-7">
+        <div class="card">
+            <div class="card-body">
+                <p class="small text-muted">
+                    Enable or disable the forecasting models available to the
+                    pipeline. At least one model must remain enabled — the
+                    backend rejects disabling the last enabled model.
+                </p>
+                {% if models %}
+                <form method="post" novalidate id="models-form">
+                    {{ form.hidden_tag() }}
+                    {% for model in models %}
+                    <div class="mb-2 form-check form-switch">
+                        <input class="form-check-input" type="checkbox" role="switch"
+                               id="model-{{ loop.index }}" name="model_enabled"
+                               value="{{ model.name }}" {{ 'checked' if model.enabled }}>
+                        <label class="form-check-label" for="model-{{ loop.index }}">{{ model.display_name }}</label>
+                    </div>
+                    {% endfor %}
+                    <div class="d-flex justify-content-end mt-3">
+                        {{ form.submit(class="btn btn-primary btn-sm") }}
+                    </div>
+                </form>
+                {% else %}
+                <div class="alert alert-warning small mb-0">No models could be loaded from the backend.</div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+    "use strict";
+    var form = document.getElementById("models-form");
+    if (!form) return;
+    form.addEventListener("submit", function (event) {
+        var checked = form.querySelectorAll('input[name="model_enabled"]:checked');
+        if (checked.length === 0) {
+            event.preventDefault();
+            alert("At least one model must remain enabled.");
+        }
+    });
+})();
+</script>
+{% endblock %}

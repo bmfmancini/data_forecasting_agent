@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 
-from cryptography.fernet import Fernet
 from flask import Flask
 from werkzeug.security import check_password_hash
 
@@ -39,12 +38,8 @@ def _app(tmp_path: Path) -> Flask:
     return app
 
 
-def test_init_db_seeds_forced_reset_admin_and_blank_api_config(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
+def test_init_db_seeds_forced_reset_admin_and_blank_api_config(tmp_path: Path) -> None:
     """First boot uses DB-owned admin/API config setup."""
-    monkeypatch.setenv("FLASK_ENCRYPTION_KEY", Fernet.generate_key().decode())
     app = _app(tmp_path)
 
     with app.app_context():
@@ -80,9 +75,8 @@ def test_init_db_seeds_forced_reset_admin_and_blank_api_config(
     assert upload_config["value"] == "100"
 
 
-def test_sync_app_config_applies_upload_limit(tmp_path: Path, monkeypatch) -> None:
+def test_sync_app_config_applies_upload_limit(tmp_path: Path) -> None:
     """The DB-owned upload limit should drive Flask MAX_CONTENT_LENGTH."""
-    monkeypatch.setenv("FLASK_ENCRYPTION_KEY", Fernet.generate_key().decode())
     app = _app(tmp_path)
 
     with app.app_context():
@@ -102,12 +96,8 @@ def test_sync_app_config_applies_upload_limit(tmp_path: Path, monkeypatch) -> No
     assert app.config["MAX_CONTENT_LENGTH"] == 42 * 1024 * 1024
 
 
-def test_init_db_preserves_existing_api_credentials(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
+def test_init_db_preserves_existing_api_credentials(tmp_path: Path) -> None:
     """Repeated initialization should not overwrite API Config."""
-    monkeypatch.setenv("FLASK_ENCRYPTION_KEY", Fernet.generate_key().decode())
     app = _app(tmp_path)
 
     with app.app_context():

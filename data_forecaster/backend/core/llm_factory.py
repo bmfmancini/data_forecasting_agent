@@ -19,7 +19,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_ollama import ChatOllama
 
-import core.config as config
+from core.llm_config_store import get_llm_config
 from core.logging_config import get_logger
 from exceptions import LLMConfigError
 
@@ -45,48 +45,55 @@ def get_llm(temperature: float = 0.0) -> BaseChatModel:
         A configured :class:`BaseChatModel` instance.
 
     Raises:
-        LLMConfigError: When Ollama Cloud is enabled but
-            ``OLLAMA_API_KEY`` is not set.
+        LLMConfigError: When Ollama Cloud is enabled but no API key is
+            configured.
     """
-    if config.USE_OLLAMA and config.USE_OLLAMA_CLOUD:
-        if not config.OLLAMA_API_KEY:
+    config = get_llm_config()
+    if config.provider == "ollama_cloud":
+        if not config.api_key:
             raise LLMConfigError(
-                "USE_OLLAMA_CLOUD is enabled but OLLAMA_API_KEY is not "
-                "set. Create an API key at https://ollama.com/settings/keys "
-                "and set the OLLAMA_API_KEY environment variable."
+                "Ollama Cloud is enabled but no API key is configured. "
+                "Create an API key at https://ollama.com/settings/keys and "
+                "set it via the admin LLM configuration page."
             )
         logger.info(
             "Using Ollama Cloud (model=%s, base_url=%s)",
-            config.OLLAMA_MODEL,
-            config.OLLAMA_BASE_URL,
+            config.model,
+            config.base_url,
         )
         return ChatOllama(
-            model=config.OLLAMA_MODEL,
-            base_url=config.OLLAMA_BASE_URL,
+            model=config.model,
+            base_url=config.base_url,
             temperature=temperature,
-            headers={"Authorization": f"Bearer {config.OLLAMA_API_KEY}"},
+            # ChatOllama passes HTTP settings through ``client_kwargs``.
+            # A top-level ``headers`` argument is ignored by current
+            # langchain-ollama releases, which results in a 401 from Ollama
+            # Cloud despite a successful direct connection test.
+            client_kwargs={
+                "headers": {"Authorization": f"Bearer {config.api_key}"}
+            },
         )
 
-    if config.USE_OLLAMA:
+    if config.provider == "ollama":
         logger.info(
             "Using local Ollama (model=%s, base_url=%s)",
-            config.OLLAMA_MODEL,
-            config.OLLAMA_BASE_URL,
+            config.model,
+            config.base_url,
         )
         return ChatOllama(
-            model=config.OLLAMA_MODEL,
-            base_url=config.OLLAMA_BASE_URL,
+            model=config.model,
+            base_url=config.base_url,
             temperature=temperature,
-            headers=(
-                {"Authorization": f"Bearer {config.OLLAMA_API_KEY}"}
-                if config.OLLAMA_API_KEY
+            client_kwargs=(
+                {"headers": {"Authorization": f"Bearer {config.api_key}"}}
+                if config.api_key
                 else None
             ),
         )
 
-    logger.info("Using Google Gemini (model=%s)", config.GEMINI_MODEL)
+    logger.info("Using Google Gemini (model=%s)", config.model)
     return ChatGoogleGenerativeAI(
-        model=config.GEMINI_MODEL,
-        google_api_key=config.GOOGLE_API_KEY,
+        model=config.model,
+        google_api_key=config.api_key,
         temperature=temperature,
     )

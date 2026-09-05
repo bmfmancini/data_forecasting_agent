@@ -1,0 +1,17 @@
+{% extends "setup/base.html" %}
+{% block title %}Setup Complete — Time Series Forecaster{% endblock %}
+{% block content %}
+<h5 class="mb-1">Step 6 — Done</h5>
+<div class="alert alert-success small mt-3 mb-3">
+    Setup is complete. The backend connection, LLM provider, API
+    authentication, and model selection have all been configured.
+</div>
+<p class="small text-muted">
+    You can now log in with your web application account and start
+    forecasting. LLM and model settings can be changed later from the
+    admin panel.
+</p>
+<div class="d-grid">
+    <a class="btn btn-primary" href="{{ url_for('auth.login') }}">Go to Login</a>
+</div>
+{% endblock %}

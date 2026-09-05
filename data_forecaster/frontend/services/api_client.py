@@ -9,10 +9,11 @@ variable fallback) so all callers remain decoupled from configuration details.
 
 from __future__ import annotations
 
-import base64
+import sqlite3
 from typing import Any
 
 import requests
+from cryptography.fernet import InvalidToken
 from flask import current_app
 
 from db.crypto import decrypt
@@ -478,30 +479,168 @@ class BackendAPIClient:
             verify=self._verify,
         )
 
-    def bootstrap_api_user(
-        self, username: str, api_key: str, admin_key: str
-    ) -> requests.Response:
-        """Create the first API user and enable auth on the backend.
+    def get_setup_status(self) -> requests.Response:
+        """Return the backend's first-run setup status.
 
-        Calls the ``POST /api-users/bootstrap`` endpoint, protected by
-        the deployment-time ``ADMIN_API_KEY`` sent via the ``X-Admin-Key``
-        header.  No API auth headers are required (auth is still off).
-
-        Args:
-            username:   Desired username for the first API user.
-            api_key:    Desired plaintext API key.
-            admin_key:  The ``ADMIN_API_KEY`` deployment secret.
+        Calls the unauthenticated ``GET /setup/status`` endpoint.  The
+        payload contains only completion booleans — never secrets.
 
         Returns:
-            The :class:`requests.Response` from the bootstrap endpoint.
+            The :class:`requests.Response` from ``GET /setup/status``.
+        """
+        return requests.get(
+            f"{self._base_url}/setup/status",
+            timeout=JOB_STATUS_TIMEOUT,
+            verify=self._verify,
+        )
+
+    def setup_bootstrap(
+        self, username: str, api_key: str
+    ) -> requests.Response:
+        """Atomically create the first admin API user and enable auth.
+
+        Calls the one-time ``POST /setup/bootstrap`` endpoint.  No auth
+        headers and no admin key are required — the endpoint returns 409
+        once any API user exists.
+
+        Args:
+            username: Desired username for the first admin API user.
+            api_key:  Desired plaintext API key.
+
+        Returns:
+            The :class:`requests.Response` from ``POST /setup/bootstrap``.
         """
         return requests.post(
-            f"{self._base_url}/api-users/bootstrap",
+            f"{self._base_url}/setup/bootstrap",
             json={"username": username, "api_key": api_key},
-            headers={"X-Admin-Key": admin_key},
             timeout=ANALYSIS_TIMEOUT,
             verify=self._verify,
         )
+
+    # ── LLM Configuration & Model Registry (admin) ──────────────────────
+
+    def get_llm_config(self) -> requests.Response:
+        """Return the masked LLM configuration from the backend.
+
+        The response structurally excludes the API key — only the
+        ``api_key_set`` boolean reveals whether a key is stored.
+
+        Returns:
+            The :class:`requests.Response` from ``GET /config/llm``.
+        """
+        return requests.get(
+            f"{self._base_url}/config/llm",
+            headers=self._headers(),
+            timeout=JOB_STATUS_TIMEOUT,
+            verify=self._verify,
+        )
+
+    def put_llm_config(self, payload: dict[str, Any]) -> requests.Response:
+        """Update the backend LLM configuration.
+
+        Args:
+            payload: Dict with ``provider``, ``model``, ``temperature``,
+                and optionally ``base_url`` and ``api_key``.  Omitting
+                ``api_key`` preserves the stored key (one-way write).
+
+        Returns:
+            The :class:`requests.Response` from ``PUT /config/llm``.
+        """
+        return requests.put(
+            f"{self._base_url}/config/llm",
+            json=payload,
+            headers=self._headers(),
+            timeout=ANALYSIS_TIMEOUT,
+            verify=self._verify,
+        )
+
+    def test_llm_config(self, payload: dict[str, Any]) -> requests.Response:
+        """Test candidate LLM settings without saving them.
+
+        The backend checks provider reachability, credentials, and a real
+        model response in sequence.
+        """
+        return requests.post(
+            f"{self._base_url}/config/llm/test",
+            json=payload,
+            headers=self._headers(),
+            timeout=CHAT_TIMEOUT,
+            verify=self._verify,
+        )
+
+    def get_models(self) -> requests.Response:
+        """List all forecasting models with their enabled state.
+
+        Returns:
+            The :class:`requests.Response` from ``GET /models``.
+        """
+        return requests.get(
+            f"{self._base_url}/models",
+            headers=self._headers(),
+            timeout=JOB_STATUS_TIMEOUT,
+            verify=self._verify,
+        )
+
+    def put_model(self, name: str, enabled: bool) -> requests.Response:
+        """Enable or disable a forecasting model on the backend.
+
+        Args:
+            name:    Canonical model name (e.g. ``"ARIMA"``).
+            enabled: ``True`` to enable, ``False`` to disable.
+
+        Returns:
+            The :class:`requests.Response` from ``PUT /models/{name}``.
+            The backend returns 400 when the change would disable the
+            last enabled model.
+        """
+        return requests.put(
+            f"{self._base_url}/models/{name}",
+            json={"enabled": enabled},
+            headers=self._headers(),
+            timeout=ANALYSIS_TIMEOUT,
+            verify=self._verify,
+        )
+
+
+def resolve_backend_connection() -> tuple[str, bool]:
+    """Resolve the backend base URL and TLS preference for this request.
+
+    The stored ``api_credentials`` row (label ``'default'``) is the source
+    of truth so every gunicorn worker observes the same connection
+    settings.  Values fall back to the application config when the row is
+    absent or incomplete — for example during first-run setup before the
+    wizard's backend step has saved anything.
+
+    Returns:
+        A ``(base_url, verify_ssl)`` tuple.  ``base_url`` may be an empty
+        string when nothing is configured anywhere.
+    """
+    base_url: str = current_app.config.get("BACKEND_URL", "")
+    verify_ssl: bool = bool(current_app.config.get("API_VERIFY_SSL", False))
+
+    try:
+        row = query_db(
+            """
+            SELECT base_url, verify_ssl
+            FROM api_credentials
+            WHERE label = 'default'
+            LIMIT 1
+            """,
+            one=True,
+        )
+    except sqlite3.Error:
+        # The gate may run before the DB is seeded (e.g. fresh volume);
+        # fall back to config-only resolution instead of failing hard.
+        return base_url, verify_ssl
+
+    if row and isinstance(row, dict):
+        stored_url = str(row.get("base_url", "") or "")
+        if stored_url:
+            base_url = stored_url
+        db_verify = row.get("verify_ssl")
+        if db_verify is not None:
+            verify_ssl = bool(db_verify)
+    return base_url, verify_ssl
 
 
 def get_api_client() -> BackendAPIClient:
@@ -515,8 +654,7 @@ def get_api_client() -> BackendAPIClient:
     Returns:
         A configured :class:`BackendAPIClient` instance.
     """
-    base_url: str = current_app.config.get("BACKEND_URL", "")
-    verify_ssl: bool = current_app.config.get("API_VERIFY_SSL", False)
+    base_url, verify_ssl = resolve_backend_connection()
     api_username: str | None = None
     api_key: str | None = None
 
@@ -545,7 +683,9 @@ def get_api_client() -> BackendAPIClient:
             try:
                 api_username = decrypt(str(enc_user))
                 api_key = decrypt(str(enc_pass))
-            except Exception:
+            except (InvalidToken, ValueError, TypeError):
+                # Corrupt credentials (e.g. key rotated) must not break the
+                # client — treat as unauthenticated instead.
                 api_username = None
                 api_key = None
 

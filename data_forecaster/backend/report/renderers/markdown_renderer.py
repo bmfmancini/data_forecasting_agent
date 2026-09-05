@@ -399,4 +399,14 @@ class MarkdownRenderer:
         lines.append(f"| Dataset Frequency | {meta.dataset_frequency} |")
         lines.append(f"| Data Quality Rating | {meta.data_quality_rating} |")
         lines.append(f"| Row Count | {meta.row_count} |")
+        narrative_source = "LLM-generated"
+        if meta.llm_narrative_fallback:
+            sections = ", ".join(
+                section.replace("_", " ") for section in meta.llm_fallback_sections
+            )
+            narrative_source = (
+                "Deterministic fallback used"
+                + (f" ({sections})" if sections else "")
+            )
+        lines.append(f"| Narrative Generation | {narrative_source} |")
         return "\n".join(lines)

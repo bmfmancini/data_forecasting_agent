@@ -7,6 +7,7 @@ from __future__ import annotations
 from flask_wtf import FlaskForm  # type: ignore[import-untyped]
 from wtforms import (
     BooleanField,
+    FloatField,
     IntegerField,
     PasswordField,
     SelectField,
@@ -143,3 +144,61 @@ class APIKeyCreateForm(FlaskForm):  # type: ignore[misc]
     )
     is_admin = BooleanField("Administrator")
     submit = SubmitField("Create API User")
+
+
+class LLMConfigForm(FlaskForm):  # type: ignore[misc]
+    """Form for updating the backend LLM configuration.
+
+    The API key is a write-only field: leaving it blank preserves the
+    key stored on the backend.  The key is forwarded to the backend and
+    never persisted by the frontend.
+
+    Fields:
+        provider:    LLM provider (``gemini``, ``ollama``, ``ollama_cloud``).
+        model:       Model name served by the provider.
+        base_url:    Provider base URL (Ollama providers only).
+        api_key:     New provider API key (optional, write-only).
+        temperature: Sampling temperature.
+        submit:      Submission button.
+    """
+
+    provider = SelectField(
+        "Provider",
+        choices=[
+            ("gemini", "Google Gemini"),
+            ("ollama", "Ollama (local)"),
+            ("ollama_cloud", "Ollama Cloud"),
+        ],
+        validators=[DataRequired()],
+    )
+    model = StringField(
+        "Model",
+        validators=[DataRequired(), Length(min=1, max=128)],
+    )
+    base_url = StringField(
+        "Base URL",
+        validators=[Optional(), URL(require_tld=False)],
+    )
+    api_key = PasswordField(
+        "API Key",
+        validators=[Optional(), Length(max=256)],
+    )
+    temperature = FloatField(
+        "Temperature",
+        validators=[DataRequired(), NumberRange(min=0.0, max=2.0)],
+    )
+    test_llm = SubmitField("Test LLM")
+    submit = SubmitField("Save LLM Configuration")
+
+
+class ModelsForm(FlaskForm):  # type: ignore[misc]
+    """Form for model enablement toggles (CSRF token + submit only).
+
+    The per-model checkboxes are rendered dynamically from the backend's
+    ``GET /models`` response as plain inputs named ``model_enabled``.
+
+    Fields:
+        submit: Submission button.
+    """
+
+    submit = SubmitField("Save Model Selection")

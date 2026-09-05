@@ -9,10 +9,6 @@ from __future__ import annotations
 
 import os
 
-from dotenv import load_dotenv
-
-load_dotenv()
-
 GOOGLE_API_KEY: str | None = os.getenv("GOOGLE_API_KEY")
 GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
 GEMINI_TEMPERATURE: float = float(os.getenv("GEMINI_TEMPERATURE", "0.1"))
@@ -68,12 +64,19 @@ EMBED_MODEL: str = os.getenv(
 FILE_STORAGE_DIR: str = os.getenv("FILE_STORAGE_DIR", "./file_store")
 
 BACKEND_DB_PATH: str = os.getenv("BACKEND_DB_PATH", "./data/backend.db")
+
+# Directory holding the backend's generated secrets (Fernet encryption
+# key, ...).  This MUST be a dedicated named volume in Docker deployments
+# (``secret_data:/app/secrets``) — never a host bind mount, which would
+# leak secrets into the working tree.  The key file is created with mode
+# 0600 by ``core.secret_store``.
+SECRETS_DIR: str = os.getenv("SECRETS_DIR", "./secrets")
+
 API_KEY_ENABLED: bool = os.getenv("API_KEY_ENABLED", "false").lower() == "true"
 
-# Deployment-time secret used to protect the one-time bootstrap endpoint
-# (POST /api-users/bootstrap).  Set this to a strong random value in the
-# backend .env and share it with the admin who will enable API authentication.
-ADMIN_API_KEY: str | None = os.getenv("ADMIN_API_KEY")
+# NOTE: The former ADMIN_API_KEY deployment secret was removed with the
+# retirement of POST /api-users/bootstrap.  First-run provisioning now
+# uses the race-safe POST /setup/bootstrap guarded by "no users exist".
 
 # Pre-shared credentials for the frontend service account.  When both are
 # set, the backend auto-creates a ``frontend`` API user on first startup
@@ -116,20 +119,23 @@ def validate_llm_config() -> None:
     """Validate that at least one LLM provider is properly configured.
 
     Called at startup to fail fast when the backend cannot reach any LLM
-    provider.  Raises ``RuntimeError`` with a descriptive message when
-    the configuration is incomplete.
+    provider.  Reads the effective configuration (DB-backed with env
+    fallback) via :func:`core.llm_config_store.get_llm_config`.
 
     Raises:
         RuntimeError: When no LLM provider is available.
     """
-    if USE_OLLAMA:
-        if USE_OLLAMA_CLOUD and not OLLAMA_API_KEY:
-            raise RuntimeError(
-                "USE_OLLAMA_CLOUD is enabled but OLLAMA_API_KEY is not set. "
-                "Configure it in the backend .env file."
-            )
-    elif not GOOGLE_API_KEY:
+    # Imported here to avoid a circular import at module load time.
+    from core.llm_config_store import get_llm_config
+
+    config = get_llm_config()
+    if config.provider == "ollama_cloud" and not config.api_key:
         raise RuntimeError(
-            "No LLM provider configured. Either set USE_OLLAMA=true with a "
-            "running Ollama instance, or set GOOGLE_API_KEY for Gemini."
+            "Ollama Cloud is enabled but no API key is configured. "
+            "Set it via the admin LLM configuration page."
+        )
+    if config.provider == "gemini" and not config.api_key:
+        raise RuntimeError(
+            "No LLM provider configured. Either configure Ollama, or set a "
+            "Gemini API key via the admin LLM configuration page."
         )

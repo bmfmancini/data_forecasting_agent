@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <title>{% block title %}Setup — Time Series Forecaster{% endblock %}</title>
+    <link href="{{ url_for('static', filename='libs/bootstrap@5.3.3_dist_css_bootstrap.min.css') }}" rel="stylesheet">
+    <link href="{{ url_for('static', filename='css/main.css') }}" rel="stylesheet">
+</head>
+<body class="login-page">
+<div class="login-container" style="max-width: 680px;">
+    <div class="card login-card">
+        <div class="card-body">
+            <h4 class="text-center mb-1">📈 Time Series Forecaster</h4>
+            <p class="text-center small mb-3" style="color:var(--text-muted-custom);">First-run setup wizard</p>
+            {% set steps = [
+                ('setup.backend', 'Backend'),
+                ('setup.llm', 'LLM Provider'),
+                ('setup.auth', 'API Auth'),
+                ('setup.models', 'Models'),
+                ('setup.admin', 'Admin'),
+                ('setup.done', 'Done'),
+            ] %}
+            <div class="d-flex flex-wrap justify-content-center gap-1 mb-4">
+                {% for endpoint, label in steps %}
+                <span class="badge {{ 'text-bg-primary' if request.endpoint == endpoint else 'text-bg-secondary' }}">{{ loop.index }}. {{ label }}</span>
+                {% endfor %}
+            </div>
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    {% for category, message in messages %}
+                        <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                            {{ message }}
+                            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                        </div>
+                    {% endfor %}
+                {% endif %}
+            {% endwith %}
+            {% block content %}{% endblock %}
+        </div>
+    </div>
+</div>
+<script src="{{ url_for('static', filename='libs/bootstrap@5.3.3_dist_js_bootstrap.bundle.min.js') }}"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

@@ -84,6 +84,51 @@ CREATE TABLE IF NOT EXISTS forecast_job_settings (
 INSERT OR IGNORE INTO forecast_job_settings
     (singleton, max_running_jobs_per_user, retention_days, cleanup_enabled)
 VALUES (1, 1, 30, 1);
+
+-- Singleton LLM provider configuration.  The API key is stored as a
+-- Fernet ciphertext (see core/secret_store.py) and is never readable via
+-- the API.  ``version`` is incremented on every write so that cached
+-- readers (core/llm_config_store) can invalidate cheaply.
+CREATE TABLE IF NOT EXISTS llm_config (
+    singleton         INTEGER PRIMARY KEY CHECK (singleton = 1),
+    provider          TEXT    NOT NULL,
+    model             TEXT    NOT NULL,
+    base_url          TEXT,
+    encrypted_api_key TEXT,
+    temperature       REAL    NOT NULL DEFAULT 0.1,
+    version           INTEGER NOT NULL DEFAULT 1,
+    updated_at        TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Enable/disable state for forecasting models.  Seeded with the five
+-- supported models, all enabled.  ``forecasting/registry.py`` is the
+-- canonical catalog; this table holds only mutable state.
+CREATE TABLE IF NOT EXISTS model_config (
+    name     TEXT PRIMARY KEY,
+    enabled  INTEGER NOT NULL DEFAULT 1,
+    priority INTEGER NOT NULL DEFAULT 0
+);
+
+INSERT OR IGNORE INTO model_config (name, enabled, priority) VALUES
+    ('ARIMA',        1, 10),
+    ('SARIMA',       1, 20),
+    ('Holt-Winters', 1, 30),
+    ('EWMA',         1, 40),
+    ('Prophet',      1, 50);
+
+-- Singleton system-wide setup and deployment state.  ``setup_complete``
+-- gates the first-run wizard; once true the DB is authoritative and
+-- env-based service-user reconciliation is skipped.
+CREATE TABLE IF NOT EXISTS system_settings (
+    singleton      INTEGER PRIMARY KEY CHECK (singleton = 1),
+    setup_complete INTEGER NOT NULL DEFAULT 0,
+    worker_mode    TEXT    NOT NULL DEFAULT 'standalone',
+    worker_enrollment_token_hash TEXT,
+    updated_at     TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+INSERT OR IGNORE INTO system_settings (singleton, setup_complete, worker_mode)
+VALUES (1, 0, 'standalone');
 """
 
 
