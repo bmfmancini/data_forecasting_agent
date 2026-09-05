@@ -56,11 +56,16 @@ def _business_context_block(report: ExecutiveReport) -> str:
         return ""
     lines: list[str] = []
     for key, value in context.items():
+        if key == "dated_context":
+            lines.append("- DATED INTERPRETIVE CONTEXT (available for every model): " + json.dumps(value, default=str))
+            lines.append("Use relevant event_matches in historical analysis and forecast outlook to explain calendar coincidences. Include the supplied date, event name, and observed or projected status. Treat declared external values as context even for models without regressors. Do not dismiss context solely because the model cannot ingest it, or claim that indirect seasonality establishes an event effect.")
+            continue
         if key == "known_context" and isinstance(value, dict):
             sub: list[str] = []
             country = value.get("holidays_country")
             if country:
-                sub.append(f"holiday calendar: {country}")
+                region = value.get("holidays_subdivision")
+                sub.append(f"holiday calendar: {country}" + (f" ({region})" if region else ""))
             events_by_type = value.get("events_by_type") or {}
             if events_by_type:
                 parts = [f"{count} {kind}" for kind, count in events_by_type.items()]

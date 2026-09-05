@@ -122,6 +122,8 @@ class HTMLRenderer:
         """Render the historical analysis section."""
         h = report.historical_analysis
         narrative = f"<p>{escape(h.narrative)}</p>" if h.narrative else ""
+        if h.context_notes:
+            narrative += "<p><strong>Calendar and event context:</strong></p><ul>" + "".join(f"<li>{escape(note)}</li>" for note in h.context_notes) + "</ul>"
         return (
             '<section class="report-historical-analysis mb-3">'
             "<h5>Historical Performance & Trend Analysis</h5>"
@@ -177,6 +179,8 @@ class HTMLRenderer:
         f = report.forecast_outlook
         m = f.metrics
         narrative = f"<p>{escape(f.narrative)}</p>" if f.narrative else ""
+        if f.context_notes:
+            narrative += "<p><strong>Calendar and event context:</strong></p><ul>" + "".join(f"<li>{escape(note)}</li>" for note in f.context_notes) + "</ul>"
         final_rmse = f.metrics.final_test_metrics.get("rmse")
         final_mae = f.metrics.final_test_metrics.get("mae")
         provenance = (

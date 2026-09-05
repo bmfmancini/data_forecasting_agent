@@ -41,6 +41,9 @@ class PreflightDecision(BaseModel):
     # ISO codes and ``option_labels`` are display names. ``dates`` renders a
     # textarea of ``YYYY-MM-DD[, label]`` lines. ``covariates`` renders a
     # repeatable name + date:value row builder.
+    detail_key: str | None = None
+    detail_placeholder: str = ""
+    subdivisions: dict[str, list[dict[str, str]]] = Field(default_factory=dict)
     kind: str = "select"
     option_labels: list[str] = Field(default_factory=list)
 

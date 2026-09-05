@@ -98,6 +98,7 @@
       (result.detected_frequency ? '<p class="mb-0 mt-2 small">Detected frequency: <strong>' + escapeHtml(result.detected_frequency) + "</strong></p>" : "") +
       (messages.length ? "<ul class=\"mb-0 mt-2\">" + messages.map(function (message) { return "<li>" + escapeHtml(message) + "</li>"; }).join("") + "</ul>" : "") + "</div>";
     decisions.innerHTML = (result.decisions || []).map(renderDecision).join("");
+    updateHolidaySubdivision(preflightOptions.holidays_subdivision || "");
     updatePreflightContinue();
   }
 
@@ -129,6 +130,16 @@
     var head = '<div class="card mb-3"><div class="card-body"><label class="form-label" for="' + escapeHtml(id) + '">' + escapeHtml(decision.label) + "</label>" +
       '<p class="small text-muted">' + escapeHtml(decision.message) + "</p>";
     var tail = "</div></div>";
+    if (decision.detail_key) {
+      var detailId = id + "-details";
+      tail = '<label class="form-label mt-3" for="' + escapeHtml(detailId) + '">Details (optional)</label>' +
+        '<textarea class="form-control preflight-text" id="' + escapeHtml(detailId) + '" data-key="' + escapeHtml(decision.detail_key) + '" rows="3" placeholder="' + escapeHtml(decision.detail_placeholder || "") + '">' + escapeHtml(preflightOptions[decision.detail_key] || "") + '</textarea>' + tail;
+    }
+    if (decision.kind === "country") {
+      tail = '<div id="pf-subdivision-group" class="mt-3" hidden><label class="form-label" for="pf-holidays_subdivision">State / province / region</label>' +
+        '<select class="form-select preflight-choice" id="pf-holidays_subdivision" data-key="holidays_subdivision"></select>' +
+        '<p class="small text-muted mt-2">Select the region whose holidays affect this series, or use the country calendar without a regional selection.</p></div>' + tail;
+    }
     if (decision.kind === "dates") {
       return head + '<textarea class="form-control preflight-dates" id="' + escapeHtml(id) + '" data-key="' + escapeHtml(decision.key) + '" rows="4" placeholder="2024-11-29, spike, Black Friday&#10;2025-01-01, holiday, New Year">' + escapeHtml(formatEvents(current)) + "</textarea>" + tail;
     }
@@ -141,6 +152,20 @@
     }).join("");
     var placeholder = decision.kind === "country" ? '<option value=""' + (current === "" || current === undefined ? " selected" : "") + ">No holiday calendar</option>" : "";
     return head + '<select class="form-select preflight-choice" id="' + escapeHtml(id) + '" data-key="' + escapeHtml(decision.key) + '">' + placeholder + options + "</select>" + tail;
+  }
+
+  function updateHolidaySubdivision(selected) {
+    var country = document.getElementById("pf-holidays_country");
+    var region = document.getElementById("pf-holidays_subdivision");
+    var group = document.getElementById("pf-subdivision-group");
+    if (!country || !region || !group) return;
+    var decision = (preflight.decisions || []).find(function (item) { return item.key === "holidays_country"; });
+    var regions = ((decision && decision.subdivisions) || {})[country.value] || [];
+    region.innerHTML = '<option value="">Country calendar only</option>' + regions.map(function (item) {
+      return '<option value="' + escapeHtml(item.code) + '"' + (item.code === selected ? ' selected' : '') + '>' + escapeHtml(item.label) + '</option>';
+    }).join("");
+    group.hidden = !country.value || !regions.length;
+    region.disabled = group.hidden;
   }
 
   function formatEvents(value) {
@@ -200,6 +225,7 @@
   function currentPreflightChoices() {
     var choices = {};
     document.querySelectorAll(".preflight-choice").forEach(function (select) { choices[select.dataset.key] = select.value; });
+    document.querySelectorAll(".preflight-text").forEach(function (area) { choices[area.dataset.key] = area.value.trim(); });
     document.querySelectorAll(".preflight-dates").forEach(function (area) { choices[area.dataset.key] = parseEvents(area.value); });
     document.querySelectorAll(".preflight-covariates").forEach(function (area) { choices[area.dataset.key] = parseCovariates(area.value); });
     return choices;
@@ -311,7 +337,7 @@
       postJSON("/api/preflight-choices", { choices: preflightOptions }).then(function () { showStep(3); });
     });
     document.querySelectorAll("[data-wizard-back]").forEach(function (button) { button.addEventListener("click", function () { showStep(Number(button.dataset.wizardBack)); }); });
-    document.addEventListener("change", function (event) { if (event.target.classList.contains("preflight-choice")) updatePreflightContinue(); });
+    document.addEventListener("change", function (event) { if (event.target.id === "pf-holidays_country") updateHolidaySubdivision(""); if (event.target.classList.contains("preflight-choice")) updatePreflightContinue(); });
     var horizon = document.getElementById("inp-horizon");
     if (horizon) horizon.addEventListener("input", function () { document.getElementById("horizon-val").textContent = horizon.value; });
     ["inp-prompt", "inp-horizon", "sel-model"].forEach(function (id) { var field = document.getElementById(id); if (field) field.addEventListener(id === "inp-prompt" ? "blur" : "change", function () { saveSetupState(); }); });

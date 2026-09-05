@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from typing import Any
+
+import pandas as pd
 from report.narrative import _fallback_narrative
 
 from core.logging_config import get_logger
@@ -31,6 +33,7 @@ def run_report_agent(
     preflight_options: dict[str, Any] | None = None,
     statistical_review: StatisticalReviewResult | None = None,
     all_metrics: dict[str, dict[str, float]] | None = None,
+    historical_series: pd.Series | None = None,
 ) -> tuple[
     ExecutiveReport,
     list[dict[str, Any]],
@@ -78,6 +81,7 @@ def run_report_agent(
         statistical_review=statistical_review,
         all_metrics=all_metrics or {},
         preflight_options=preflight_options,
+        historical_series=historical_series,
     )
     reasoning_steps.append(
         {

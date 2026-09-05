@@ -15,6 +15,9 @@ from datetime import datetime, timezone
 from typing import Any
 
 import numpy as np
+import pandas as pd
+
+from report.event_context import build_event_context
 
 from report.models import (
     Appendix,
@@ -94,6 +97,9 @@ _PREFLIGHT_CONTEXT_KEYS: tuple[tuple[str, str], ...] = (
     ("data_domain", "domain"),
     ("units", "units"),
     ("interventions", "interventions"),
+    ("interventions_details", "interventions_details"),
+    ("censoring_or_stockouts_details", "stockouts_details"),
+    ("known_future_covariates_details", "future_information_details"),
     ("censoring_or_stockouts", "stockouts"),
     ("known_future_covariates", "covariates"),
 )
@@ -214,6 +220,7 @@ class ExecutiveReportBuilder:
         statistical_review: StatisticalReviewResult | None,
         all_metrics: dict[str, dict[str, float]],
         preflight_options: dict[str, Any] | None = None,
+        historical_series: pd.Series | None = None,
     ) -> ExecutiveReport:
         """Construct the full :class:`ExecutiveReport` model.
 
@@ -233,6 +240,13 @@ class ExecutiveReportBuilder:
             A populated :class:`ExecutiveReport` with empty narrative fields.
         """
         business_context = _distill_business_context(preflight_options)
+        dated_context, historical_notes, forecast_notes = build_event_context(
+            preflight_options, historical_series,
+            pd.Series(forecast.forecast, index=pd.to_datetime(forecast.forecast_dates), dtype=float),
+        )
+        if dated_context:
+            dated_context["selected_model"] = forecast.model_used
+            business_context["dated_context"] = dated_context
         has_structural_breaks = (
             "change_point_analysis" in statistical.recommended_remediation
         )
@@ -279,7 +293,8 @@ class ExecutiveReportBuilder:
         explainability = self._build_explainability(statistical, forecast, confidence)
         statistical_audit = self._build_statistical_audit(statistical_review)
         historical = self._build_historical_analysis(statistical)
-        forecast_outlook = ForecastOutlook(metrics=forecast_metrics)
+        historical.context_notes = historical_notes
+        forecast_outlook = ForecastOutlook(metrics=forecast_metrics, context_notes=forecast_notes)
         dashboard = self._build_dashboard(
             forecast,
             statistical,
@@ -1368,12 +1383,14 @@ class ExecutiveReportBuilder:
                         category="Model",
                         description=(
                             f"The selected {model_name} model cannot ingest "
-                            f"{what} as inputs; the forecast ignores that context."
+                            f"{what} as inputs. This context is retained for report "
+                            "interpretation but is not a separate input to the forecast."
                         ),
                         potential_impact=(
-                            "Known future drivers (holidays, events, covariates) "
-                            "are not reflected in the numbers, so the forecast may "
-                            "deviate around the affected dates."
+                            "The model may capture recurring patterns indirectly, but "
+                            "does not estimate a separate effect for declared holidays, "
+                            "events, or external factors. Changes to those factors "
+                            "may therefore lead to forecast deviations."
                         ),
                         mitigation=(
                             "Re-run with a model that accepts exogenous regressors "
@@ -1460,6 +1477,8 @@ class ExecutiveReportBuilder:
         country = known.get("holidays_country") if isinstance(known, dict) else None
         if country:
             display = _country_name(country) or country
+            if known.get("holidays_subdivision"):
+                display += f" ({known['holidays_subdivision']})"
             assumptions.append(
                 Assumption(
                     assumption=(

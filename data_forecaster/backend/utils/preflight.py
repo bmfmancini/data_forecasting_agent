@@ -16,7 +16,7 @@ from utils.data_cleaning import (
 
 # Structured business-context decisions are rendered as custom inputs
 # (country dropdown, date list, covariate rows) rather than plain selects.
-from forecasting.known_context import country_list as _country_list
+from forecasting.known_context import country_list as _country_list, subdivision_options
 
 AGGREGATION_OPTIONS = ["Let AI Decide", "sum", "mean", "latest"]
 MISSING_OPTIONS = ["Let AI Decide", "interpolate", "forward-fill", "drop"]
@@ -97,6 +97,10 @@ def run_preflight_checks(
         # Structured business context (Phase: capture). The string decisions
         # above remain the on/off gate; these carry the structured detail.
         "holidays_country": "",
+        "holidays_subdivision": "",
+        "interventions_details": "",
+        "censoring_or_stockouts_details": "",
+        "known_future_covariates_details": "",
         "known_events": [],
         "known_covariates": {},
         "covariates_known_in_advance": False,
@@ -172,6 +176,8 @@ def run_preflight_checks(
             ),
             PreflightDecision(
                 key="interventions",
+                detail_key="interventions_details",
+                detail_placeholder="Describe what happened, when it started and ended, and the expected effect. Add dated events below where dates are known.",
                 label="Known interventions",
                 message="List promotions, outages, policy changes, or other interventions.",
                 options=["None known", "Known events"],
@@ -180,6 +186,8 @@ def run_preflight_checks(
             ),
             PreflightDecision(
                 key="censoring_or_stockouts",
+                detail_key="censoring_or_stockouts_details",
+                detail_placeholder="Describe affected dates or products, stockout periods, and any recording cap or limit.",
                 label="Censoring or stockouts",
                 message="Can recorded values be capped, censored, or limited by stockouts?",
                 options=["None known", "Possible", "Confirmed"],
@@ -188,6 +196,8 @@ def run_preflight_checks(
             ),
             PreflightDecision(
                 key="known_future_covariates",
+                detail_key="known_future_covariates_details",
+                detail_placeholder="Describe the information available, its date coverage, and whether values are confirmed or assumed. Add holiday calendars or dated values below.",
                 label="Future information",
                 message="Are future holidays, prices, schedules, or covariates known?",
                 options=["None", "Available"],
@@ -206,13 +216,14 @@ def run_preflight_checks(
                 key="holidays_country",
                 label="Holiday calendar",
                 message=(
-                    "Select a country to apply its standard holiday calendar. "
+                    "Select a country and, where relevant, a state or province. "
                     "Holidays are expanded automatically; no manual dates needed."
                 ),
                 options=[code for code, _ in _countries],
                 option_labels=[name for _, name in _countries],
                 default="",
                 kind="country",
+                subdivisions=subdivision_options(),
                 allow_custom=True,
             ),
             PreflightDecision(

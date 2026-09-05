@@ -816,3 +816,37 @@ class TestBusinessContextAndConditionalSections:
         )
         risk_text = " ".join(r.description for r in report.risks).lower()
         assert "cannot ingest" not in risk_text
+
+
+@pytest.mark.parametrize("model", ["Holt-Winters", "SARIMA", "EWMA"])
+def test_univariate_reports_receive_dated_context(
+    model, sample_validation, sample_statistical, sample_model_selection, sample_forecast
+):
+    import pandas as pd
+    from report.narrative import _business_context_block
+    from report.renderers.markdown_renderer import MarkdownRenderer
+    from report.renderers.html_renderer import HTMLRenderer
+
+    forecast = sample_forecast.model_copy(update={
+        "model_used": model,
+        "forecast": [10, 30, 12],
+        "forecast_dates": ["2025-12-24", "2025-12-25", "2025-12-26"],
+        "lower_ci": [], "upper_ci": [],
+    })
+    report = ExecutiveReportBuilder().build(
+        sample_validation, sample_statistical, sample_model_selection,
+        forecast, None, {},
+        preflight_options={"holidays_country": "CA", "holidays_subdivision": "ON"},
+        historical_series=pd.Series([10, 25, 12], index=pd.date_range("2024-12-24", periods=3)),
+    )
+    context = _business_context_block(report)
+    assert "Christmas" in context
+    assert '"date": "2025-12-25"' in context
+    assert '"selected_model": "' + model + '"' in context
+    assert report.historical_analysis.context_notes
+    assert report.forecast_outlook.context_notes
+    for rendered in (MarkdownRenderer().render(report), HTMLRenderer().render(report)):
+        assert "Calendar and event context:" in rendered
+        assert "Forecast local peak of 30 on 2025-12-25" in rendered
+        assert "Historical local peak of 25 on 2024-12-25" in rendered
+    assert forecast.forecast == [10, 30, 12]

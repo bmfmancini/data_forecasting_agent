@@ -435,6 +435,7 @@ class HistoricalAnalysis(BaseModel):
     seasonal_period: int | None = None
     dominant_period: float | None = None
     is_stationary: bool
+    context_notes: list[str] = Field(default_factory=list)
     narrative: str = ""
 
 
@@ -450,6 +451,7 @@ class ForecastOutlook(BaseModel):
     """
 
     metrics: ForecastMetrics
+    context_notes: list[str] = Field(default_factory=list)
     narrative: str = ""
 
 

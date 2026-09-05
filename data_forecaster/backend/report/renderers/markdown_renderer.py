@@ -165,6 +165,9 @@ class MarkdownRenderer:
         lines.append(
             f"**Statistical Stability:** {'Stable' if h.is_stationary else 'Changing over time'}"
         )
+        if h.context_notes:
+            lines.extend(["", "**Calendar and event context:**", ""])
+            lines.extend(f"- {note}" for note in h.context_notes)
         if h.narrative:
             lines.append("")
             lines.append(h.narrative)
@@ -211,6 +214,9 @@ class MarkdownRenderer:
         )
         if m.final_test_assessment:
             lines.append(f"**Recent Holdout Assessment:** {m.final_test_assessment}")
+        if report.forecast_outlook.context_notes:
+            lines.extend(["", "**Calendar and event context:**", ""])
+            lines.extend(f"- {note}" for note in report.forecast_outlook.context_notes)
         if report.forecast_outlook.narrative:
             lines.append("")
             lines.append(report.forecast_outlook.narrative)

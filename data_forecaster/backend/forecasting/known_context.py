@@ -108,6 +108,21 @@ def country_list() -> list[tuple[str, str]]:
     return sorted(_COUNTRIES.items(), key=lambda kv: kv[1])
 
 
+def subdivision_options() -> dict[str, list[dict[str, str]]]:
+    """Return supported regions and names from the installed holiday calendars."""
+    result = {}
+    for code, _ in country_list():
+        calendar = _holidays.country_holidays(code)
+        aliases = getattr(calendar, "subdivisions_aliases", {})
+        result[code] = [
+            {"code": region, "label": next(
+                (name for name, target in aliases.items() if target == region), region
+            )}
+            for region in calendar.subdivisions
+        ]
+    return result
+
+
 def country_name(code: str | None) -> str | None:
     """Return the display name for a country code, or ``None`` if unknown."""
     if not code:
@@ -128,7 +143,7 @@ def _valid_date(value: Any) -> str | None:
     return ts.strftime("%Y-%m-%d")
 
 
-def expand_holidays(country: str | None, years: Iterable[int]) -> list[dict[str, str]]:
+def expand_holidays(country: str | None, years: Iterable[int], subdivision: str | None = None) -> list[dict[str, str]]:
     """Expand a country code into dated holiday events.
 
     Args:
@@ -143,8 +158,13 @@ def expand_holidays(country: str | None, years: Iterable[int]) -> list[dict[str,
     if not country:
         return []
     code = str(country).strip().upper()
+    subdivision = str(subdivision).strip() if subdivision else None
+    if subdivision:
+        calendar = _holidays.country_holidays(code)
+        if subdivision not in calendar.subdivisions:
+            raise ValueError(f"Unsupported state/province {subdivision!r} for {code}.")
     try:
-        cal = _holidays.country_holidays(code, years=list(dict.fromkeys(years)))
+        cal = _holidays.country_holidays(code, years=list(dict.fromkeys(years)), subdiv=subdivision)
     except Exception:
         return []
     return [
@@ -167,7 +187,7 @@ def merge_events(
     """
     options = preflight_options or {}
     events: list[dict[str, str]] = []
-    events.extend(expand_holidays(options.get("holidays_country"), years))
+    events.extend(expand_holidays(options.get("holidays_country"), years, options.get("holidays_subdivision")))
     custom = options.get("known_events") or []
     for event in custom:
         if not isinstance(event, dict):
@@ -212,6 +232,7 @@ def summarize_context(preflight_options: dict[str, Any] | None) -> dict[str, Any
     cov_names = list((options.get("known_covariates") or {}).keys())
     return {
         "holidays_country": country if country else None,
+        "holidays_subdivision": options.get("holidays_subdivision") or None if country else None,
         "events_by_type": by_type,
         "event_count": valid_count,
         "covariates": cov_names,
