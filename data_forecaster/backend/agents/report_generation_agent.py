@@ -147,7 +147,6 @@ def run_report_agent(
             "statistical_audit",
             "explainability",
             *["recommendation"] * len(report.recommendations),
-            *["risk"] * len(report.risks),
             *["assumption"] * len(report.assumptions),
         ]
         # Ensure all narrative fields have a fallback value

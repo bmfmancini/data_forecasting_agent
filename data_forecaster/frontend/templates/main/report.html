@@ -6,7 +6,7 @@
 <div class="alert alert-warning">
     ⚠️ Some report narrative used deterministic fallback templates because the LLM was unavailable or its response did not pass validation.
     {% if er and er.metadata.llm_fallback_sections %}
-    Affected sections: {{ er.metadata.llm_fallback_sections | map('replace', '_', ' ') | join(', ') }}.
+    Affected sections: {{ er.metadata.llm_fallback_sections | unique | map('replace', '_', ' ') | join(', ') }}.
     {% endif %}
 </div>
 {% endif %}

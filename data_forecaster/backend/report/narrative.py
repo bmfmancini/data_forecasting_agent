@@ -30,7 +30,6 @@ from prompts.report_generation_prompt import (
     HISTORICAL_ANALYSIS_NARRATIVE_PROMPT,
     MODEL_COMPARISON_NARRATIVE_PROMPT,
     RECOMMENDATION_NARRATIVE_PROMPT,
-    RISK_NARRATIVE_PROMPT,
     STATISTICAL_AUDIT_NARRATIVE_PROMPT,
 )
 from report.models import ExecutiveReport
@@ -121,6 +120,7 @@ def generate_narratives(
         total_usage,
         context_extra,
         fallback_sections,
+        report.metadata.business_context,
     )
 
     # ── Data Quality ──────────────────────────────────────────────────────
@@ -132,6 +132,7 @@ def generate_narratives(
         total_usage,
         context_extra,
         fallback_sections,
+        report.metadata.business_context,
     )
 
     # ── Historical Analysis ───────────────────────────────────────────────
@@ -143,6 +144,7 @@ def generate_narratives(
         total_usage,
         context_extra,
         fallback_sections,
+        report.metadata.business_context,
     )
 
     # ── Forecast Outlook ──────────────────────────────────────────────────
@@ -154,6 +156,7 @@ def generate_narratives(
         total_usage,
         context_extra,
         fallback_sections,
+        report.metadata.business_context,
     )
 
     # ── Model Comparison ──────────────────────────────────────────────────
@@ -165,6 +168,7 @@ def generate_narratives(
         total_usage,
         context_extra,
         fallback_sections,
+        report.metadata.business_context,
     )
 
     # ── Statistical Audit ─────────────────────────────────────────────────
@@ -176,6 +180,7 @@ def generate_narratives(
         total_usage,
         context_extra,
         fallback_sections,
+        report.metadata.business_context,
     )
 
     # ── Explainability ────────────────────────────────────────────────────
@@ -187,6 +192,7 @@ def generate_narratives(
         total_usage,
         context_extra,
         fallback_sections,
+        report.metadata.business_context,
     )
 
     # ── Recommendations ───────────────────────────────────────────────────
@@ -199,18 +205,7 @@ def generate_narratives(
             total_usage,
             context_extra,
             fallback_sections,
-        )
-
-    # ── Risks ─────────────────────────────────────────────────────────────
-    for risk in report.risks:
-        risk.narrative = _generate_section(
-            llm,
-            RISK_NARRATIVE_PROMPT,
-            risk,
-            "risk",
-            total_usage,
-            context_extra,
-            fallback_sections,
+            report.metadata.business_context,
         )
 
     # ── Assumptions ───────────────────────────────────────────────────────
@@ -223,6 +218,7 @@ def generate_narratives(
             total_usage,
             context_extra,
             fallback_sections,
+            report.metadata.business_context,
         )
 
     report.metadata.llm_narrative_fallback = bool(fallback_sections)
@@ -239,6 +235,8 @@ def _generate_section(
     total_usage: dict[str, int],
     extra_instructions: str = "",
     fallback_sections: list[str] | None = None,
+    business_context: dict[str, Any] | None = None,
+    _repair_attempt: bool = False,
 ) -> str:
     """Generate narrative for a single section via the LLM.
 
@@ -252,6 +250,8 @@ def _generate_section(
         total_usage:       Mutable token usage dict to accumulate.
         extra_instructions: Optional extra user instructions.
         fallback_sections: Mutable list used to record fallback sections.
+        business_context: Shared factual evidence supplied to the LLM.
+        _repair_attempt: Internal flag limiting validation correction to one retry.
 
     Returns:
         Narrative text string.
@@ -272,8 +272,11 @@ def _generate_section(
             total_usage[key] += usage.get(key, 0)
         narrative = str(response.content).strip()
         section_data = section.model_dump()
-        valid_models = _models_in_evidence(section_data)
-        validation_warnings = validate_llm_output(narrative, valid_models, section_data)
+        evidence = {**section_data, "business_context": business_context or {}}
+        valid_models = _models_in_evidence(evidence)
+        validation_warnings = validate_llm_output(narrative, valid_models, evidence)
+        if not narrative:
+            validation_warnings.append("The response was empty.")
         if section_name == "data_quality":
             validation_warnings.extend(
                 _unsupported_anomaly_significance_claim(narrative, section_data)
@@ -317,7 +320,16 @@ def _generate_section(
             )
         elif section_name == "assumption":
             validation_warnings.extend(
-                _unsupported_assumption_claims(narrative, section_data)
+                _unsupported_assumption_claims(narrative, evidence)
+            )
+        if validation_warnings and not _repair_attempt:
+            logger.info("Requesting narrative correction for %s: %s", section_name, "; ".join(validation_warnings))
+            return _generate_section(
+                llm, prompt, section, section_name, total_usage,
+                extra_instructions + "\n\nREVISION REQUIRED: The previous response failed these checks: "
+                + "; ".join(validation_warnings)
+                + "\nRewrite from the supplied evidence. Preserve all safeguards. For candidate breaks, first validate dates, effect sizes and persistence; use 'Only if confirmed' before recommending model changes.",
+                fallback_sections, business_context, True,
             )
         if validation_warnings:
             logger.warning(
@@ -349,6 +361,8 @@ def _models_in_evidence(value: Any) -> list[str]:
         "SARIMA",
         "Holt-Winters",
         "EWMA",
+        "Prophet",
+        "Dynamic Regression",
         "Naive",
         "Seasonal Naive",
         "Mean Forecast",
@@ -365,6 +379,8 @@ def _unexpected_model_references(text: str, expected_model: str) -> list[str]:
         "SARIMA",
         "Holt-Winters",
         "EWMA",
+        "Prophet",
+        "Dynamic Regression",
         "Naive",
         "Seasonal Naive",
         "Mean Forecast",
@@ -526,7 +542,7 @@ def _unsupported_change_point_sequencing(
         re.search(
             r"\b(?:only if|if (?:the )?(?:break|shift).{0,30}"
             r"(?:confirmed|durable|persistent)|after validation|"
-            r"once validated|then (?:compare|consider))\b",
+            r"once validated|after confirmation|once confirmed|if confirmed|then (?:compare|consider))\b",
             normalized,
         )
     )
@@ -602,23 +618,33 @@ def _unsupported_assumption_claims(
     An assumption must not assert conditions, interventions, covariates, or
     stockouts that the structured context does not mention.
     """
-    evidence = json.dumps(section_data, default=str).lower()
+    context = section_data.get("business_context") or {}
+    declared = {key: value for key, value in context.items() if value}
+    known = declared.get("known_context")
+    if isinstance(known, dict):
+        declared["known_context"] = {key: value for key, value in known.items() if value}
+    # Rule/instruction strings are not evidence of a declared external factor.
+    dated = declared.get("dated_context")
+    if isinstance(dated, dict):
+        declared["dated_context"] = {key: dated[key] for key in ("dated_events", "event_matches", "declared_covariate_values") if dated.get(key)}
+    evidence = json.dumps({**{key: value for key, value in section_data.items() if key != "business_context"}, "business_context": declared}, default=str).lower()
     normalized = re.sub(r"[‐‑‒–—−]", "-", text).lower()
     warnings: list[str] = []
-    if "interventions" not in evidence and re.search(
+    if not re.search(r"\b(?:promotions?|outages?|policy changes?|interventions?)\b", evidence) and re.search(
         r"\b(?:promotion|outage|policy change|intervention)\b", normalized
     ):
         warnings.append(
             "Assumption narrative introduced interventions not declared in the "
             "structured context."
         )
-    if "covariates" not in evidence and re.search(
-        r"\b(?:covariate|exogenous variable|holiday|price signal)\b", normalized
+    for label, claim_pattern, evidence_pattern in (
+        ("holidays", r"\bholidays?\b", r"\bholidays?\b|holidays_country"),
+        ("covariates", r"\b(?:covariates?|exogenous variables?|price signals?)\b", r"\b(?:covariates?|exogenous variables?|price signals?)\b|declared_covariate_values"),
     ):
-        warnings.append(
-            "Assumption narrative introduced covariates not declared in the "
-            "structured context."
-        )
+        if re.search(claim_pattern, normalized) and not re.search(evidence_pattern, evidence):
+            warnings.append(
+                f"Assumption narrative introduced {label} not declared in the structured context."
+            )
     return warnings
 
 

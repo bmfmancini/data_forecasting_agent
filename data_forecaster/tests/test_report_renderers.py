@@ -309,6 +309,7 @@ def test_business_context_threaded_into_section_prompts(
         _total_usage: dict[str, int],
         extra_instructions: str,
         _fallback_sections: list[str],
+        _business_context: dict,
     ) -> str:
         captured.append(extra_instructions)
         return "narrative"
@@ -341,6 +342,7 @@ def test_no_business_context_leaves_prompts_unchanged(
         _total_usage: dict[str, int],
         extra_instructions: str,
         _fallback_sections: list[str],
+        _business_context: dict,
     ) -> str:
         captured.append(extra_instructions)
         return "narrative"
@@ -382,6 +384,7 @@ def test_structured_known_context_threaded_into_prompts(
         _total_usage: dict[str, int],
         extra_instructions: str,
         _fallback_sections: list[str],
+        _business_context: dict,
     ) -> str:
         captured.append(extra_instructions)
         return "narrative"
@@ -416,6 +419,7 @@ def test_narrative_generation_records_section_fallbacks(
         _total_usage: dict[str, int],
         _extra_instructions: str,
         fallback_sections: list[str],
+        _business_context: dict,
     ) -> str:
         fallback_sections.append(section_name)
         return f"Fallback for {section_name}"
@@ -434,7 +438,6 @@ def test_narrative_generation_records_section_fallbacks(
         "statistical_audit",
         "explainability",
         *["recommendation"] * len(report.recommendations),
-        *["risk"] * len(report.risks),
         *["assumption"] * len(report.assumptions),
     ]
 
