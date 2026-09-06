@@ -19,7 +19,7 @@ Models include ARIMA, SARIMA, Holt-Winters, EWMA, Prophet, dynamic regression, a
 
 Training-window preprocessing prevents validation observations from influencing imputation, clipping, or transformation fitting. Naive, Seasonal Naive, Mean Forecast, and Drift baselines compete alongside enabled model families, eligible transformed variants, recent-window variants, and a simple ensemble. The selection policy accounts for near ties and retains a baseline when complexity does not provide sufficient improvement.
 
-You interact through a Flask web UI with authentication, an admin panel, and role-based access. Outputs include charts, structured reports, Markdown/HTML rendering, PDF export, and data-explorer chat.
+You interact through a Flask web UI with authentication, an admin panel, and role-based access. Outputs include charts, structured reports, Markdown/HTML rendering, PDF export, and data-explorer chat. See a [sample report](docs/forecast_report_sample_airline_passengers-6.pdf) generated from the airline passengers sample dataset.
 
 Read the [architecture and methodology document](docs/architecture-and-methodology.md) for cleaning formulas, statistical tests, model implementations, selection rules, LLM responsibilities, and privacy boundaries.
 
@@ -87,6 +87,7 @@ Detailed docs are split out so this README stays short:
 - [Local development](docs/local-dev.md) — running without Docker, running the test suite
 - [Architecture and methodology](docs/architecture-and-methodology.md) — statistical methods, cleaning, supported models, selection, LLM roles, and privacy
 - [User management scripts](docs/user-management-scripts.md) — CLI runbook for frontend users and backend API users
+- [Sample forecast report](docs/forecast_report_sample_airline_passengers-6.pdf) — full report generated from the airline passengers sample dataset
 
 ## Tech stack
 
