@@ -9,11 +9,15 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import httpx
 
 _GEMINI_BASE_URL = "https://generativelanguage.googleapis.com"
+_ALLOWED_LLM_BASE_ORIGINS = {
+    "http://localhost:11434",
+    "https://api.ollama.com",
+}
 _PING_PROMPT = "Connection test. Reply with exactly: pong"
 _RESPONSE_PREVIEW_LIMIT = 500
 _DIAGNOSTIC_PREVIEW_LIMIT = 500
@@ -111,6 +115,23 @@ def _extract_ollama_text(payload: dict[str, Any]) -> str:
     return str(message.get("content", "")).strip()
 
 
+def _validated_provider_url(base_url: str | None) -> str | None:
+    """Return a canonical provider URL when it matches the server allowlist."""
+    candidate = str(base_url or "").strip().rstrip("/")
+    if not candidate:
+        return None
+    try:
+        parsed = urlsplit(candidate)
+    except ValueError:
+        return None
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+    origin = f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
+    if origin not in _ALLOWED_LLM_BASE_ORIGINS:
+        return None
+    return candidate
+
+
 async def validate_llm_configuration(
     *,
     provider: str,
@@ -131,10 +152,12 @@ async def validate_llm_configuration(
     provider_url = (
         _GEMINI_BASE_URL
         if provider == "gemini"
-        else str(base_url or "").strip().rstrip("/")
+        else _validated_provider_url(base_url)
     )
     if not provider_url:
-        return _failed("Enter a base URL before testing the LLM.")
+        return _failed(
+            "Enter a valid base URL from the server allowlist before testing the LLM."
+        )
     if provider in {"gemini", "ollama_cloud"} and not api_key:
         return _failed("Enter an API key before testing the LLM.")
 
