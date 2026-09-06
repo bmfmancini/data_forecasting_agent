@@ -156,8 +156,15 @@ class ForecastProcedure:
             )
         else:
             fitter = registry.MODELS[self.base_name]["window_fn"]
+            fit_options = self.engine.options
+            if self.base_name in {"Dynamic Regression", "Prophet"}:
+                from forecasting.known_context import options_as_of
+
+                fit_options = options_as_of(
+                    self.engine.options, raw, horizon, self.engine.freq
+                )
             extra = (
-                {"options": self.engine.options}
+                {"options": fit_options}
                 if self.base_name
                 in {"Dynamic Regression", "Intermittent Demand", "Prophet"}
                 else {}
@@ -169,6 +176,14 @@ class ForecastProcedure:
                 freq=self.engine.freq,
                 **extra,
             )
+        if self.base_name in {"Dynamic Regression", "Prophet"}:
+            result.fitted_configuration["predictor_availability"] = fit_options[
+                "predictor_availability"
+            ]
+            if fit_options["predictor_availability"]["assumed_known_ahead"]:
+                result.warnings.append(
+                    "Predictor availability relies on the user's known-ahead declaration; no dated versions were supplied."
+                )
         if transform:
             samples = transform.inverse_transform(np.asarray(result.prediction_samples))
             if not np.isfinite(samples).all():

@@ -123,7 +123,11 @@ class HTMLRenderer:
         h = report.historical_analysis
         narrative = f"<p>{escape(h.narrative)}</p>" if h.narrative else ""
         if h.context_notes:
-            narrative += "<p><strong>Calendar and event context:</strong></p><ul>" + "".join(f"<li>{escape(note)}</li>" for note in h.context_notes) + "</ul>"
+            narrative += (
+                "<p><strong>Calendar and event context:</strong></p><ul>"
+                + "".join(f"<li>{escape(note)}</li>" for note in h.context_notes)
+                + "</ul>"
+            )
         return (
             '<section class="report-historical-analysis mb-3">'
             "<h5>Historical Performance & Trend Analysis</h5>"
@@ -180,7 +184,11 @@ class HTMLRenderer:
         m = f.metrics
         narrative = f"<p>{escape(f.narrative)}</p>" if f.narrative else ""
         if f.context_notes:
-            narrative += "<p><strong>Calendar and event context:</strong></p><ul>" + "".join(f"<li>{escape(note)}</li>" for note in f.context_notes) + "</ul>"
+            narrative += (
+                "<p><strong>Calendar and event context:</strong></p><ul>"
+                + "".join(f"<li>{escape(note)}</li>" for note in f.context_notes)
+                + "</ul>"
+            )
         final_rmse = f.metrics.final_test_metrics.get("rmse")
         final_mae = f.metrics.final_test_metrics.get("mae")
         provenance = (
@@ -204,6 +212,8 @@ class HTMLRenderer:
             )
         if not m.prediction_intervals:
             figure_label = "Point Forecast (prediction intervals unavailable)"
+        elif m.interval_label == "empirically_adjusted_prediction_interval":
+            figure_label = "Forecast with Backtest-Adjusted Prediction Intervals"
         elif m.interval_label == "experimental":
             figure_label = "Forecast with Estimated Prediction Intervals"
         else:
@@ -359,6 +369,9 @@ class HTMLRenderer:
             if intervals[0].interval_label == "experimental"
             else f"Model-Based Prediction Intervals ({confidence_level})"
         )
+        if intervals[0].interval_label == "empirically_adjusted_prediction_interval":
+            interval_heading = "95% Prediction Intervals with Backtest Adjustments"
+        note = report.forecast_outlook.metrics.interval_calibration_note
         rows = "".join(
             f"<tr><td>{escape(pi.date)}</td>"
             f"<td>{pi.forecast}</td>"
@@ -369,6 +382,7 @@ class HTMLRenderer:
         return (
             '<section class="report-prediction-intervals mb-3">'
             f"<h5>{escape(interval_heading)}</h5>"
+            f"<p>{escape(note)}</p>"
             '<table class="table table-sm table-striped">'
             "<thead><tr><th>Date</th><th>Forecast</th>"
             "<th>Lower Bound</th><th>Upper Bound</th></tr></thead>"
@@ -447,9 +461,8 @@ class HTMLRenderer:
             sections = ", ".join(
                 section.replace("_", " ") for section in m.llm_fallback_sections
             )
-            narrative_source = (
-                "Deterministic fallback used"
-                + (f" ({sections})" if sections else "")
+            narrative_source = "Deterministic fallback used" + (
+                f" ({sections})" if sections else ""
             )
         return (
             '<section class="report-metadata mt-4">'

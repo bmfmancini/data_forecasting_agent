@@ -143,9 +143,7 @@ class TestMarkdownRenderer:
         assert "empirical coverage was not evaluated" in section
         assert "model-based 95% planning range" not in section.lower()
 
-    def test_unavailable_intervals_are_explicit(
-        self, sample_report: "object"
-    ) -> None:
+    def test_unavailable_intervals_are_explicit(self, sample_report: "object") -> None:
         report = sample_report.model_copy(deep=True)
         report.forecast_outlook.metrics.prediction_intervals = []
         report.forecast_outlook.metrics.interval_label = "unavailable"
@@ -494,9 +492,7 @@ class TestHTMLRenderer:
         assert "Estimated Prediction Intervals (95%; coverage not evaluated)" in section
         assert "95% (experimental);" not in section
 
-    def test_unavailable_intervals_are_explicit(
-        self, sample_report: "object"
-    ) -> None:
+    def test_unavailable_intervals_are_explicit(self, sample_report: "object") -> None:
         report = sample_report.model_copy(deep=True)
         report.forecast_outlook.metrics.prediction_intervals = []
         report.forecast_outlook.metrics.interval_label = "unavailable"
@@ -532,7 +528,20 @@ class TestHTMLRenderer:
             interval.interval_label = "experimental"
         experimental_html = template.render(
             er=experimental,
-            segments=[],
+            sections=[
+                {
+                    "id": "intervals",
+                    "title": "Intervals",
+                    "segments": [
+                        {
+                            "type": "text",
+                            "html": HTMLRenderer()._render_prediction_intervals(
+                                experimental
+                            ),
+                        }
+                    ],
+                }
+            ],
             llm_fallback=False,
             export_url="#",
             custom_settings=[],
@@ -543,16 +552,32 @@ class TestHTMLRenderer:
         unavailable.forecast_outlook.metrics.prediction_intervals = []
         unavailable_html = template.render(
             er=unavailable,
-            segments=[],
+            sections=[
+                {
+                    "id": "intervals",
+                    "title": "Intervals",
+                    "segments": [
+                        {
+                            "type": "text",
+                            "html": HTMLRenderer()._render_prediction_intervals(
+                                unavailable
+                            ),
+                        }
+                    ],
+                }
+            ],
             llm_fallback=False,
             export_url="#",
             custom_settings=[],
         )
 
-        assert "Estimated 95% Forecast Range (coverage not evaluated)" in experimental_html
-        assert "Model-Based 95% Forecast Range" not in experimental_html
+        assert (
+            "Estimated Prediction Intervals (95%; coverage not evaluated)"
+            in experimental_html
+        )
+        assert "Model-Based Prediction Intervals" not in experimental_html
         assert "Prediction Intervals Unavailable" in unavailable_html
-        assert "Model-Based 95% Forecast Range" not in unavailable_html
+        assert "Model-Based Prediction Intervals" not in unavailable_html
 
     def test_forecast_template_treats_partial_bounds_as_unavailable(self) -> None:
         environment = Environment(
@@ -611,3 +636,17 @@ class TestHTMLRenderer:
 
         assert "Narrative Generation" in html
         assert "Deterministic fallback used (forecast outlook)" in html
+
+
+def test_adjusted_intervals_show_provenance_in_both_renderers(sample_report):
+    metrics = sample_report.forecast_outlook.metrics
+    metrics.interval_label = "empirically_adjusted_prediction_interval"
+    metrics.interval_calibration_note = (
+        "Five earlier errors support this adjustment; coverage is not guaranteed."
+    )
+    for interval in metrics.prediction_intervals:
+        interval.interval_label = metrics.interval_label
+    for renderer in (HTMLRenderer(), MarkdownRenderer()):
+        rendered = renderer.render(sample_report)
+        assert "95% Prediction Intervals with Backtest Adjustments" in rendered
+        assert "coverage is not guaranteed" in rendered

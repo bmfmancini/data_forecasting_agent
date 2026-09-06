@@ -11,7 +11,13 @@ the pre-computed structured fields and LLM-generated narrative strings.
 
 from __future__ import annotations
 
-from report.models import ExecutiveReport, Recommendation, Risk, Assumption, format_metric
+from report.models import (
+    ExecutiveReport,
+    Recommendation,
+    Risk,
+    Assumption,
+    format_metric,
+)
 
 
 def _sanitize_cell(value: str) -> str:
@@ -239,7 +245,11 @@ class MarkdownRenderer:
             if interval_label == "experimental"
             else "Model-Based 95% Prediction Intervals"
         )
+        if interval_label == "empirically_adjusted_prediction_interval":
+            interval_heading = "95% Prediction Intervals with Backtest Adjustments"
         lines.append(f"### {interval_heading}")
+        if m.interval_calibration_note:
+            lines.extend(["", m.interval_calibration_note])
         lines.append("")
         lines.append("| Date | Forecast | Lower Bound | Upper Bound |")
         lines.append("|------|----------|-------------|-------------|")
@@ -253,12 +263,14 @@ class MarkdownRenderer:
             if interval_label == "experimental"
             else "Forecast with Model-Based Prediction Intervals"
         )
+        if interval_label == "empirically_adjusted_prediction_interval":
+            figure_label = "Forecast with Backtest-Adjusted Prediction Intervals"
         lines.append(f"**Figure: {figure_label}**")
         lines.append(
             "The projected values with an estimated 95% planning range; empirical "
             "coverage was not evaluated."
             if interval_label == "experimental"
-            else "The projected values with a model-based 95% planning range."
+            else "The projected values with a nominal 95% planning range."
         )
         lines.append("")
         lines.append("[VISUAL:FORECAST]")
@@ -441,9 +453,8 @@ class MarkdownRenderer:
             sections = ", ".join(
                 section.replace("_", " ") for section in meta.llm_fallback_sections
             )
-            narrative_source = (
-                "Deterministic fallback used"
-                + (f" ({sections})" if sections else "")
+            narrative_source = "Deterministic fallback used" + (
+                f" ({sections})" if sections else ""
             )
         lines.append(f"| Narrative Generation | {narrative_source} |")
         return "\n".join(lines)

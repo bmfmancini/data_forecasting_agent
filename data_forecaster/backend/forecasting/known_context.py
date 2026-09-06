@@ -14,9 +14,9 @@ The preflight wizard captures:
 * ``known_events`` — a list of ``{type, date, label}`` dicts for non-standard
   events the user adds by hand. Expanded country holidays are merged into this
   list server-side as ``type == "holiday"`` entries.
-* ``known_covariates`` — a ``{name: {date: value}}`` dict captured as inline
-  name + date:value rows. This is the exact shape
-  :func:`forecasting.dynamic_regression.design_matrix` already ingests.
+* ``known_covariates`` accepts numeric values with an explicit known-ahead
+  declaration, or dated ``{value, available_at}`` records and revision lists.
+  :func:`options_as_of` resolves these at each training cutoff before fitting.
 
 Models that cannot ingest exogenous regressors (ARIMA, SARIMA, EWMA,
 Holt-Winters) receive no model input here; the structured context is used to
@@ -115,9 +115,13 @@ def subdivision_options() -> dict[str, list[dict[str, str]]]:
         calendar = _holidays.country_holidays(code)
         aliases = getattr(calendar, "subdivisions_aliases", {})
         result[code] = [
-            {"code": region, "label": next(
-                (name for name, target in aliases.items() if target == region), region
-            )}
+            {
+                "code": region,
+                "label": next(
+                    (name for name, target in aliases.items() if target == region),
+                    region,
+                ),
+            }
             for region in calendar.subdivisions
         ]
     return result
@@ -143,7 +147,9 @@ def _valid_date(value: Any) -> str | None:
     return ts.strftime("%Y-%m-%d")
 
 
-def expand_holidays(country: str | None, years: Iterable[int], subdivision: str | None = None) -> list[dict[str, str]]:
+def expand_holidays(
+    country: str | None, years: Iterable[int], subdivision: str | None = None
+) -> list[dict[str, str]]:
     """Expand a country code into dated holiday events.
 
     Args:
@@ -164,7 +170,9 @@ def expand_holidays(country: str | None, years: Iterable[int], subdivision: str 
         if subdivision not in calendar.subdivisions:
             raise ValueError(f"Unsupported state/province {subdivision!r} for {code}.")
     try:
-        cal = _holidays.country_holidays(code, years=list(dict.fromkeys(years)), subdiv=subdivision)
+        cal = _holidays.country_holidays(
+            code, years=list(dict.fromkeys(years)), subdiv=subdivision
+        )
     except Exception:
         return []
     return [
@@ -187,7 +195,11 @@ def merge_events(
     """
     options = preflight_options or {}
     events: list[dict[str, str]] = []
-    events.extend(expand_holidays(options.get("holidays_country"), years, options.get("holidays_subdivision")))
+    events.extend(
+        expand_holidays(
+            options.get("holidays_country"), years, options.get("holidays_subdivision")
+        )
+    )
     custom = options.get("known_events") or []
     for event in custom:
         if not isinstance(event, dict):
@@ -232,7 +244,9 @@ def summarize_context(preflight_options: dict[str, Any] | None) -> dict[str, Any
     cov_names = list((options.get("known_covariates") or {}).keys())
     return {
         "holidays_country": country if country else None,
-        "holidays_subdivision": options.get("holidays_subdivision") or None if country else None,
+        "holidays_subdivision": (
+            options.get("holidays_subdivision") or None if country else None
+        ),
         "events_by_type": by_type,
         "event_count": valid_count,
         "covariates": cov_names,
@@ -319,6 +333,8 @@ def prepare_exog_options(
     every rolling-origin fold (and the final production fit) can reindex it.
     """
     out = dict(options or {})
+    if out and "_declared_context" not in out:
+        out["_declared_context"] = dict(options or {})
     merged = merge_events(options, _years_for(series, horizon, freq))
     if not merged and not (out.get("known_covariates")):
         return out
@@ -366,10 +382,12 @@ def to_known_covariates(
     """
     idx = pd.DatetimeIndex(date_index)
     out: dict[str, dict[str, float]] = {}
+    include_time = bool(idx.tz is not None or (idx != idx.normalize()).any())
     dummies = to_event_dummies(events, idx)
     for column in dummies.columns:
         out[column] = {
-            d.strftime("%Y-%m-%d"): float(v) for d, v in zip(idx, dummies[column])
+            (d.isoformat() if include_time else d.strftime("%Y-%m-%d")): float(v)
+            for d, v in zip(idx, dummies[column])
         }
     for name, series in (user_covariates or {}).items():
         if not isinstance(series, dict):
@@ -377,6 +395,9 @@ def to_known_covariates(
         cleaned: dict[str, float] = {}
         for date, value in series.items():
             normalised = _valid_date(date)
+            if normalised:
+                stamp = pd.Timestamp(date)
+                normalised = stamp.isoformat()
             if not normalised:
                 continue
             try:
@@ -386,10 +407,97 @@ def to_known_covariates(
         if not cleaned:
             continue
         values = pd.Series(cleaned, dtype=float)
-        values.index = pd.to_datetime(values.index)
+        values.index = pd.DatetimeIndex([pd.Timestamp(date) for date in values.index])
         aligned = values.reindex(idx)
         out[str(name)] = {
-            d.strftime("%Y-%m-%d"): (float(v) if pd.notna(v) else float("nan"))
+            (d.isoformat() if include_time else d.strftime("%Y-%m-%d")): (
+                float(v) if pd.notna(v) else float("nan")
+            )
             for d, v in aligned.items()
         }
+    return out
+
+
+def options_as_of(options: dict, series: pd.Series, horizon: int, freq: str) -> dict:
+    """Rebuild predictor inputs from the versions available at this training cutoff.
+
+    Scalar values need an explicit known-ahead declaration. Dated records use
+    {value, available_at}; a list of records represents successive revisions.
+    Custom events without an availability date become known on their event date.
+    """
+    import math
+
+    declared = dict(options.get("_declared_context", options))
+    cutoff = pd.Timestamp(series.index[-1])
+    utc_cutoff = pd.to_datetime(cutoff, utc=True)
+    required = series.index.append(
+        pd.date_range(cutoff, periods=horizon + 1, freq=freq)[1:]
+    )
+    resolved = {}
+    assumed = []
+    for name, values in (declared.get("known_covariates") or {}).items():
+        normalized = {pd.Timestamp(date): value for date, value in values.items()}
+        resolved[name] = {}
+        for date in required:
+            value = normalized.get(pd.Timestamp(date))
+            if isinstance(value, (dict, list)):
+                versions = value if isinstance(value, list) else [value]
+                eligible = []
+                for record in versions:
+                    if not isinstance(record, dict) or not record.get("available_at"):
+                        raise ValueError(
+                            f"Predictor {name!r} requires available_at for each version."
+                        )
+                    available = pd.to_datetime(record["available_at"], utc=True)
+                    number = float(record["value"])
+                    if pd.isna(available) or not math.isfinite(number):
+                        raise ValueError(f"Predictor {name!r} has an invalid version.")
+                    if available <= utc_cutoff:
+                        eligible.append((available, number))
+                if not eligible:
+                    raise ValueError(
+                        f"Predictor {name!r} for {date} was unavailable at {cutoff}."
+                    )
+                # Reject ambiguous revisions instead of relying on input ordering.
+                latest = max(item[0] for item in eligible)
+                latest_values = {
+                    number for available, number in eligible if available == latest
+                }
+                if len(latest_values) != 1:
+                    raise ValueError(
+                        f"Predictor {name!r} has conflicting versions at {latest}."
+                    )
+                number = latest_values.pop()
+            else:
+                if declared.get("covariates_known_in_advance") is not True:
+                    raise ValueError(
+                        f"Predictor {name!r} needs dated availability records or an explicit "
+                        "covariates_known_in_advance declaration."
+                    )
+                number = float(value) if value is not None else float("nan")
+                if not math.isfinite(number):
+                    raise ValueError(
+                        f"Predictor {name!r} needs a finite value for {date}."
+                    )
+                assumed.append(name)
+            resolved[name][date.isoformat()] = number
+    events = []
+    for event in declared.get("known_events") or []:
+        available = event.get("available_at") or event.get("date")
+        if available and pd.to_datetime(available, utc=True) <= utc_cutoff:
+            events.append(event)
+    declared.pop("_declared_context", None)
+    declared["known_covariates"] = resolved
+    declared["known_events"] = events
+    out = prepare_exog_options(declared, series, horizon, freq)
+    out["predictor_availability"] = {
+        "cutoff": cutoff.isoformat(),
+        "policy": "latest_version_available_at_training_cutoff",
+        "assumed_known_ahead": sorted(set(assumed)),
+        "custom_events_included": len(events),
+        "custom_events_excluded": len(
+            options.get("_declared_context", options).get("known_events") or []
+        )
+        - len(events),
+    }
     return out

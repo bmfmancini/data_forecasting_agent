@@ -196,6 +196,7 @@ class ForecastMetrics(BaseModel):
     wape: float | None = None
     mase: float | None = None
     interval_label: str = "prediction_interval"
+    interval_calibration_note: str = ""
     prediction_intervals: list[PredictionInterval] = Field(default_factory=list)
     selection_metrics: dict[str, float | None] = Field(default_factory=dict)
     final_test_metrics: dict[str, object] = Field(default_factory=dict)

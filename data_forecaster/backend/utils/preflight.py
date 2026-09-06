@@ -232,7 +232,7 @@ def run_preflight_checks(
                 message=(
                     "Add custom events that affect the series — spikes, lulls, "
                     "promotions, outages, or non-standard holidays. One per line: "
-                    "YYYY-MM-DD, type, label (e.g. 2024-11-29, spike, Black Friday)."
+                    "YYYY-MM-DD, type, label, available_at. The optional final date records when you knew about the event; otherwise it becomes known on its event date."
                 ),
                 options=[],
                 default=[],
@@ -245,7 +245,7 @@ def run_preflight_checks(
                 message=(
                     "Add named covariates with known future values (e.g. price, "
                     "schedule). Provide a value at every historical and forecast "
-                    "timestamp; the selected model ingests them where supported."
+                    "timestamp as date=value@available_at (for example 2025-01-01=9.99@2024-01-01). Backtests use only values known by their training cutoff."
                 ),
                 options=[],
                 default={},

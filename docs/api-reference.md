@@ -169,3 +169,52 @@ All errors return JSON with a `detail` field:
 | `422` | Pydantic validation failure (e.g. chat query too long) |
 | `500` | Unexpected server error (details logged server-side) |
 | `503` | Worker not ready, or backend unreachable from frontend |
+
+## Predictor availability and monitoring across runs
+
+`preflight_options.known_covariates` supports dated values and revision histories:
+
+```json
+{
+  "known_covariates": {
+    "price": {
+      "2025-01-01": [
+        {"value": 9.99, "available_at": "2024-11-01"},
+        {"value": 10.99, "available_at": "2025-02-01"}
+      ]
+    }
+  },
+  "monitoring_series_id": "store-12-product-8-units"
+}
+```
+
+Supply every historical and forecast timestamp required by the model. Each fit
+uses the latest version available at its training cutoff. A missing eligible
+version fails that candidate’s fold. Scalar predictor values require an explicit
+`covariates_known_in_advance: true` assertion; the fit records that assumption.
+Custom events accept `available_at` too, defaulting to their event date.
+
+`POST /monitoring/compare` accepts a JSON array of 1–100 distinct job IDs:
+
+```json
+["earlier-job-id", "later-job-id"]
+```
+
+The endpoint checks ownership of every job and returns 404 for inaccessible jobs,
+or 422 for invalid or incompatible groups. Jobs must refer to the same owner,
+application user, target columns, units, frequency, aggregation, bounds, and forecast quantile.
+Use the same `monitoring_series_id` across uploads of one continuing series;
+otherwise the comparison requires the same file ID.
+
+The response includes `summary`, `earlier`, `recent`, `alerts`, and `alert_status`.
+It groups complete runs with equal horizon lengths into recent and earlier
+windows, each with at least five runs, 20 observations, and 20 distinct actual
+dates. Alerts remain unavailable until both groups meet those requirements.
+Duplicate forecast origins count once. These are descriptive review rules;
+they neither establish statistical drift nor trigger automatic retraining.
+
+Forecast responses also include `validation_design.interval_calibration`, with
+per-horizon sample counts, empirical interval expansions, and a separate final-test
+coverage/width audit. Five non-overlapping observed backtest errors are required
+per horizon. Unsupported horizons retain their model intervals. The adjustment
+uses selection folds and does not guarantee nominal coverage.

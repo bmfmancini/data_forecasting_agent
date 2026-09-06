@@ -283,6 +283,30 @@ def run_forecasting_agent(
         selected, series, candidates[selected], config
     )
     evaluation.final_test_metrics = final_metrics
+    from forecasting.calibration import (
+        fit_interval_calibration,
+        apply_interval_calibration,
+        audit_interval_calibration,
+    )
+
+    calibration = fit_interval_calibration(evaluation, series)
+    bounds = {
+        "minimum": options.get("minimum_value"),
+        "maximum": options.get("maximum_value"),
+    }
+    calibration["final_test_audit"] = audit_interval_calibration(
+        final_fold, series, calibration, **bounds
+    )
+    result.lower_ci, result.upper_ci, applied_horizons = apply_interval_calibration(
+        result.lower_ci, result.upper_ci, calibration, **bounds
+    )
+    calibration["applied_horizons"] = applied_horizons
+    if applied_horizons:
+        result.interval_label = "empirically_adjusted_prediction_interval"
+    if len(applied_horizons) < forecast_horizon:
+        result.warnings.append(
+            "Interval calibration has insufficient evidence for some horizons; those ranges retain their model-based estimates."
+        )
     final_interval_diagnostics = {}
     if final_fold is not None and final_fold.status == ForecastFitStatus.OK:
         final_actual = series.iloc[final_fold.fold.test_start_index :].tolist()
@@ -318,6 +342,7 @@ def run_forecasting_agent(
     design.update(
         {
             "monitoring_baselines": monitoring_baselines,
+            "frequency": freq,
             "decision_loss": {
                 "requested": loss_preference,
                 "resolved": resolved_loss,
@@ -331,7 +356,7 @@ def run_forecasting_agent(
             "excluded_models": sorted(excluded),
             "final_test_used_for_selection": False,
             "final_test_interval_diagnostics": final_interval_diagnostics,
-            "interval_calibration": "none; model-based intervals audited out of sample",
+            "interval_calibration": calibration,
             "by_horizon_metrics": {
                 str(h): m.model_dump() for h, m in evaluation.by_horizon_metrics.items()
             },
