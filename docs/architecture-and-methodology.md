@@ -170,7 +170,7 @@ An explicit supported user loss takes precedence. In Auto mode, the forecasting 
 1. Exclude procedures with failed or incomplete common-fold evidence, and any explicitly excluded candidates.
 2. Rank by the resolved loss, using other supported metrics as secondary ordering criteria.
 3. Compare the top two candidates. For positive losses, a ratio below 1.05 is treated as practically negligible; prefer the simpler candidate according to the implemented name-based simplicity order.
-4. Retain the best baseline if a selected complex model does not meet the improvement threshold: `baseline loss / complex-model loss >= 1.10`.
+4. Retain the best baseline if a selected complex model does not meet the improvement threshold: `baseline loss / complex-model loss < 1.10`. The complex model is kept only when the ratio is `>= 1.10`.
 5. Fit the selected procedure for production. If it fails, exclude it and rerank the same validation evidence. If none remain eligible, report failure.
 
 The ratio threshold is a policy choice, not a statistical significance test. Its exact formula corresponds to a complex-model error at most about 90.9% of baseline error. The report also records sensitivity winners under alternative supported losses, since changing the objective can change the preferred model.

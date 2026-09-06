@@ -13,6 +13,11 @@ from core.database import transaction
 from forecasting.metrics import calculate_forecast_metrics
 from forecasting.residual_diagnostics import analyze_backtest_errors
 
+# Sentinel for "no job processed yet"; None is a valid resolved frequency
+# (unknown). The first job's resolved value, including None, is the reference
+# that every subsequent job must match.
+_FREQUENCY_UNSET = object()
+
 
 def save_snapshot(job_id: str, forecast: dict[str, Any]) -> None:
     """An issued forecast is immutable, even after actuals become available."""
@@ -129,7 +134,7 @@ def monitor_forecasts(job_ids: list[str], requester: dict) -> dict:
         raise ValueError("Supply 1–100 distinct job IDs.")
     records = []
     identity = None
-    frequency = None
+    frequency = _FREQUENCY_UNSET
     point_quantile = None
     for job_id in job_ids:
         job = get_job(job_id, requester=requester)
@@ -178,7 +183,7 @@ def monitor_forecasts(job_ids: list[str], requester: dict) -> dict:
         dates = pd.DatetimeIndex(snapshot["forecast_dates"])
         if actual_frequency is None and len(dates) >= 3:
             actual_frequency = pd.infer_freq(dates)
-        if frequency is not None and actual_frequency != frequency:
+        if frequency is not _FREQUENCY_UNSET and actual_frequency != frequency:
             raise ValueError("Jobs must use the same forecast frequency.")
         frequency = actual_frequency
         records.append(

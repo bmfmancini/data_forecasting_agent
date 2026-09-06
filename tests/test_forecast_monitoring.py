@@ -292,3 +292,76 @@ def test_comparison_preserves_the_issued_quantile(issued_forecast):
     assert result["summary"]["metrics"]["pinball"] == pytest.approx(4.0)
     with pytest.raises(ValueError, match="same forecast quantile"):
         monitor_forecasts(["job", "quantile"], {"id": 1})
+
+
+def test_comparison_rejects_mixed_declared_and_undeclared_frequency(issued_forecast):
+    from services.forecast_monitoring import monitor_forecasts
+
+    # A one-step vintage cannot have its frequency inferred (<3 dates), so the
+    # first job resolves to None even though its dates are daily.
+    _insert_job(
+        "undeclared",
+        {
+            "file_id": "file",
+            "date_col": "date",
+            "value_col": "value",
+            "forecast_horizon": 1,
+            "forced_model": None,
+            "user_prompt": None,
+            "preflight_options": {},
+        },
+        1,
+        1,
+        "owner",
+        False,
+    )
+    save_snapshot(
+        "undeclared",
+        {
+            **issued_forecast,
+            "forecast_dates": ["2025-01-01"],
+            "forecast": [10.0],
+            "lower_ci": [8.0],
+            "upper_ci": [12.0],
+            "validation_design": {"monitoring_baselines": {"Naive": [8.0]}},
+        },
+    )
+    monitor_forecast("undeclared", {"id": 1}, {"2025-01-01": 11.0})
+
+    # The declared daily vintage must not pass against the None reference.
+    _insert_job(
+        "declared",
+        {
+            "file_id": "file",
+            "date_col": "date",
+            "value_col": "value",
+            "forecast_horizon": 1,
+            "forced_model": None,
+            "user_prompt": None,
+            "preflight_options": {},
+        },
+        1,
+        1,
+        "owner",
+        False,
+    )
+    save_snapshot(
+        "declared",
+        {
+            **issued_forecast,
+            "forecast_dates": ["2025-01-02"],
+            "forecast": [10.0],
+            "lower_ci": [8.0],
+            "upper_ci": [12.0],
+            "validation_design": {
+                "frequency": "D",
+                "monitoring_baselines": {"Naive": [8.0]},
+            },
+        },
+    )
+    monitor_forecast("declared", {"id": 1}, {"2025-01-02": 11.0})
+
+    with pytest.raises(ValueError, match="same forecast frequency"):
+        monitor_forecasts(["undeclared", "declared"], {"id": 1})
+    with pytest.raises(ValueError, match="same forecast frequency"):
+        monitor_forecasts(["declared", "undeclared"], {"id": 1})
