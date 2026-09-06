@@ -126,3 +126,15 @@ def test_init_db_preserves_existing_api_credentials(tmp_path: Path) -> None:
 
     assert decrypt(row["encrypted_username"]) == "admin-user"
     assert decrypt(row["encrypted_password"]) == "admin-key"
+
+
+def test_existing_report_table_gains_edit_storage(tmp_path):
+    app = _app(tmp_path)
+    with app.app_context():
+        init_db()
+        db = get_db()
+        db.execute("ALTER TABLE forecast_reports DROP COLUMN section_edits_json")
+        db.commit()
+        init_db()
+        columns = {row["name"] for row in db.execute("PRAGMA table_info(forecast_reports)")}
+        assert "section_edits_json" in columns

@@ -38,8 +38,11 @@ from blueprints.main import main_bp
 from services.api_client import get_api_client
 from services.pdf_service import report_to_pdf
 from services.report_rendering import render_analysis_report
+from services.report_editing import apply_section_edit, effective_markdown, EditConflict
 from services.report_service import (
     ReportLimitError,
+    edit_report_section_for_user,
+    find_saved_report_id,
     delete_report_for_user,
     get_report_for_user,
     list_reports_for_user,
@@ -409,13 +412,14 @@ def report() -> str:
     Returns:
         Rendered HTML for the report page.
     """
-    result: dict[str, Any] = session.get("analysis_result") or {}
+    result = _current_report_result()
     upload_info: dict[str, Any] = session.get("upload_info") or {}
     return render_analysis_report(
         result,
         str(upload_info.get("filename", "data")),
         url_for("main.report_export"),
         _custom_settings_from_session(),
+        edit_url=url_for("main.report_edit"),
     )
 
 
@@ -428,14 +432,14 @@ def report_export() -> Response:
     Returns:
         A file download response containing the PDF bytes.
     """
-    result: dict[str, Any] = session.get("analysis_result") or {}
+    result = _current_report_result()
     upload_info: dict[str, Any] = session.get("upload_info") or {}
     return _send_report_pdf(result, str(upload_info.get("filename", "data")))
 
 
 def _send_report_pdf(result: dict[str, Any], filename: str) -> Response:
     """Generate a PDF response from a current or persisted final report."""
-    report_text: str = result.get("report", "Report not available.")
+    report_text = effective_markdown(result)
     base_name = filename.rsplit(".", 1)[0] if "." in filename else filename
     pdf_filename = f"forecast_report_{base_name or 'data'}.pdf"
     pdf_bytes = report_to_pdf(
@@ -476,7 +480,59 @@ def saved_report(report_id: int) -> str:
         str(stored["source_filename"]),
         url_for("main.saved_report_export", report_id=report_id),
         stored.get("custom_settings") or [],
+        edit_url=url_for("main.saved_report_edit", report_id=report_id),
     )
+
+
+
+def _current_report_result() -> dict[str, Any]:
+    report_id = session.get("analysis_report_id")
+    if not report_id:
+        current = session.get("analysis_result") or {}
+        original = current.get("original_report", current.get("report", ""))
+        if original:
+            report_id = find_saved_report_id(int(current_user.id), original)
+            if report_id:
+                session["analysis_report_id"] = report_id
+    if report_id:
+        stored = get_report_for_user(int(report_id), int(current_user.id))
+        if stored is not None:
+            return stored
+    return session.get("analysis_result") or {}
+
+
+def _edit_report(report_id: int | None, destination: str) -> Response:
+    values = {key: request.form.get(key, "") for key in ("section_id", "action", "version", "title", "body")}
+    try:
+        if report_id is not None:
+            if not edit_report_section_for_user(report_id, int(current_user.id), **values):
+                abort(404)
+        else:
+            result = dict(session.get("analysis_result") or {})
+            result.setdefault("original_report", result.get("report", ""))
+            result["section_edits"] = apply_section_edit(result, **values)
+            result["report"] = effective_markdown(result)
+            session["analysis_result"] = result
+    except EditConflict as exc:
+        return str(exc), 409
+    except ValueError as exc:
+        return str(exc), 400
+    flash("Report updated.", "success")
+    return redirect(destination)
+
+
+@main_bp.route("/report/edit", methods=["POST"])
+@_login_required
+@analysis_required
+def report_edit() -> Response:
+    _current_report_result()
+    return _edit_report(session.get("analysis_report_id"), url_for("main.report"))
+
+
+@main_bp.route("/reports/<int:report_id>/edit", methods=["POST"])
+@_login_required
+def saved_report_edit(report_id: int) -> Response:
+    return _edit_report(report_id, url_for("main.saved_report", report_id=report_id))
 
 
 @main_bp.route("/reports/<int:report_id>/export", methods=["POST"])
@@ -785,6 +841,7 @@ def _handle_done_job(
     if results_resp.status_code != 200:
         return _handle_error_job(client, job_id, status_data)
     result_data = results_resp.json().get("result", {})
+    session.pop("analysis_report_id", None)
     session["analysis_result"] = result_data
     session["llm_fallback"] = result_data.get("llm_fallback", False)
     session["job_running"] = False
@@ -792,7 +849,7 @@ def _handle_done_job(
     session["analysis_error"] = None
     upload_info: dict[str, Any] = session.get("upload_info") or {}
     try:
-        save_report(
+        session["analysis_report_id"] = save_report(
             user_id=int(current_user.id),
             result=result_data,
             source_filename=str(upload_info.get("filename", "data")),

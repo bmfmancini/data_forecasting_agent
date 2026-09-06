@@ -8,6 +8,7 @@ from typing import Any
 from flask import render_template
 
 from services.markdown_service import markdown_to_safe_html
+from services.report_editing import report_sections
 
 _VISUAL_TAG_RE: re.Pattern[str] = re.compile(r"\[VISUAL:([A-Z_]+)\]")
 
@@ -25,19 +26,26 @@ def render_analysis_report(
     source_filename: str,
     export_url: str,
     custom_settings: list[dict[str, str]] | None = None,
+    edit_url: str | None = None,
 ) -> str:
     """Render a current or persisted final report using shared presentation."""
     executive_report: dict[str, Any] | None = result.get("executive_report")
-    report_md: str = result.get("report", "Report not available.")
-    web_report_md = _remove_web_dashboard_section(report_md)
-    base_name = (
-        source_filename.rsplit(".", 1)[0] if "." in source_filename else source_filename
-    )
-    pdf_filename = f"forecast_report_{base_name or 'data'}.pdf"
+    sections = report_sections(result)
+    for section in sections:
+        body = section["body"]
+        if section["is_dashboard"]:
+            section["tiles"], body = _dashboard_tiles(body)
+            widgets = (executive_report or {}).get("dashboard", {}).get("widgets", [])
+            for tile in section["tiles"]:
+                # Descriptions apply only while the corresponding fact is unchanged.
+                tile["description"] = next((w.get("description", "") for w in widgets
+                    if f"{w.get('icon', '')} {w.get('title', '')}".strip() == tile["label"]
+                    and str(w.get("value", "")) == tile["value"]), "")
+        section["segments"] = _parse_report_segments(body, result)
     return render_template(
         "main/report.html",
-        segments=_parse_report_segments(web_report_md, result),
-        pdf_filename=pdf_filename,
+        sections=sections,
+        edit_url=edit_url,
         er=executive_report,
         llm_fallback=bool(result.get("llm_fallback", False)),
         export_url=export_url,
@@ -78,12 +86,27 @@ def _parse_report_segments(
     return segments
 
 
-def _remove_web_dashboard_section(report_text: str) -> str:
-    """Remove the markdown dashboard section from the web report body."""
-    sections = report_text.split("\n\n---\n\n")
-    filtered = [
-        section
-        for section in sections
-        if not section.lstrip().startswith("## 1. Executive Dashboard")
-    ]
-    return "\n\n---\n\n".join(filtered)
+def _dashboard_tiles(body: str) -> tuple[list[dict[str, str]], str]:
+    """Render the editable dashboard table as tiles without losing added prose."""
+    lines = body.splitlines()
+    for start, line in enumerate(lines):
+        if line.strip().lower() != "| metric | value | status |":
+            continue
+        end = start + 1
+        while end < len(lines) and lines[end].strip().startswith("|"):
+            end += 1
+        rows = lines[start + 1:end]
+        if not rows or not re.fullmatch(r"[\s|:\-]+", rows[0]):
+            continue
+        tiles = []
+        for row in rows[1:]:
+            cells = [cell.strip().replace(r"\|", "|") for cell in re.split(r"(?<!\\)\|", row.strip().strip("|"))]
+            if len(cells) != 3:
+                break
+            label, value, status = cells
+            tiles.append({"label": label, "value": value,
+                          "status": status if status in {"positive", "negative", "warning", "info", "neutral"} else "neutral"})
+        else:
+            if tiles:
+                return tiles, "\n".join(lines[:start] + lines[end:])
+    return [], body

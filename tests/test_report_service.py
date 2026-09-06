@@ -60,3 +60,22 @@ def test_save_report_rolls_back_serialization_failures(
     assert not connection.in_transaction
     count = connection.execute("SELECT COUNT(*) FROM forecast_reports").fetchone()[0]
     assert count == 0
+
+
+def test_owned_section_edits_persist_without_changing_original(tmp_path, monkeypatch):
+    from data_forecaster.frontend.services.report_editing import report_sections, EditConflict
+    connection = _report_db(tmp_path / "reports.db")
+    monkeypatch.setattr(report_service, "get_db", lambda: connection)
+    original = "## Summary\n\nOriginal words."
+    report_id = report_service.save_report(1, {"report": original}, "data.csv", 3)
+    version = report_sections({"report": original})[0]["version"]
+    assert not report_service.edit_report_section_for_user(report_id, 999, "0", "remove", version)
+    assert report_service.edit_report_section_for_user(report_id, 1, "0", "save", version, "Summary", "My wording")
+    with pytest.raises(EditConflict):
+        report_service.edit_report_section_for_user(report_id, 1, "0", "save", version, "Summary", "Stale wording")
+    row = dict(connection.execute("SELECT * FROM forecast_reports WHERE id = ?", (report_id,)).fetchone())
+    decoded = report_service._decode_report(row)
+    assert decoded["original_report"] == original
+    assert "My wording" in decoded["report"]
+    assert "Original words" not in decoded["report"]
+    assert not connection.in_transaction

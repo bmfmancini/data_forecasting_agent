@@ -105,6 +105,9 @@ def init_db() -> None:
     if "custom_settings_json" not in report_columns:
         db.execute("ALTER TABLE forecast_reports ADD COLUMN custom_settings_json TEXT")
 
+    if "section_edits_json" not in report_columns:
+        db.execute("ALTER TABLE forecast_reports ADD COLUMN section_edits_json TEXT")
+
     user_columns = {row["name"] for row in db.execute("PRAGMA table_info(users)")}
     if "session_version" not in user_columns:
         db.execute(
