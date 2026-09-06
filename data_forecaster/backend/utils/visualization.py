@@ -136,6 +136,9 @@ def plot_forecast(series: pd.Series, forecast_result: ForecastResult) -> dict[st
         else "Model-based 95% prediction interval"
     )
 
+    if interval_label == "empirically_adjusted_prediction_interval":
+        ribbon_name = "Nominal 95% prediction interval with backtest adjustments"
+
     fig = go.Figure()
 
     # Historical

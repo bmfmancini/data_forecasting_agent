@@ -594,15 +594,18 @@ def test_recommendation_narrative_guard_preserves_deterministic_sequence() -> No
     assert _unsupported_recommendation_claims(
         "Use future actuals for the first out-of-sample validation.", monitoring
     )
-    assert _fallback_narrative(recommendations[1], "recommendation") == " ".join(
-        part
-        for part in (
-            recommendations[1].recommendation,
-            recommendations[1].rationale,
-            recommendations[1].expected_outcome,
-        )
-        if part
-    ).strip()
+    assert (
+        _fallback_narrative(recommendations[1], "recommendation")
+        == " ".join(
+            part
+            for part in (
+                recommendations[1].recommendation,
+                recommendations[1].rationale,
+                recommendations[1].expected_outcome,
+            )
+            if part
+        ).strip()
+    )
 
 
 def test_forecast_chart_uses_estimated_interval_label() -> None:
@@ -709,8 +712,8 @@ def test_frontend_interval_labels_are_conservative() -> None:
         "data_forecaster/frontend/templates/main/forecast.html"
     ).read_text()
 
-    assert "Model-Based 95% Forecast Range" in template
-    assert "Estimated 95% Forecast Range (coverage not evaluated)" in template
+    # Report sections now come from the shared renderer, rather than inline labels.
+    assert "{{ segment.html | safe }}" in template
     assert "calibrated" not in template.lower()
     assert "Model-based 95% prediction-interval bounds" in forecast_template
     assert "Estimated 95% prediction-interval bounds" in forecast_template
@@ -746,6 +749,7 @@ def test_airline_dynamic_regression_ingests_declared_context() -> None:
                 {"type": "spike", "date": "1958-07-01", "label": "summer spike"},
             ],
             "known_covariates": {"price": price},
+            "covariates_known_in_advance": True,
         },
         series,
         horizon,

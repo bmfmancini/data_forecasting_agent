@@ -136,7 +136,11 @@ def _distill_business_context(
     # type, covariate names). Surfaced so §10–12 narratives can reference the
     # actual declared events even when the selected model cannot ingest them.
     known = _summarize_known_context(preflight_options)
-    if known.get("holidays_country") or known.get("event_count") or known.get("covariates"):
+    if (
+        known.get("holidays_country")
+        or known.get("event_count")
+        or known.get("covariates")
+    ):
         context["known_context"] = known  # type: ignore[assignment]
     return context
 
@@ -165,8 +169,7 @@ def _has_usable_interval_bounds(forecast: ForecastResult) -> bool:
         return all(
             np.isfinite(float(value))
             for value in (
-                forecast.lower_ci[:horizon_dates]
-                + forecast.upper_ci[:horizon_dates]
+                forecast.lower_ci[:horizon_dates] + forecast.upper_ci[:horizon_dates]
             )
         )
     except (TypeError, ValueError):
@@ -241,8 +244,13 @@ class ExecutiveReportBuilder:
         """
         business_context = _distill_business_context(preflight_options)
         dated_context, historical_notes, forecast_notes = build_event_context(
-            preflight_options, historical_series,
-            pd.Series(forecast.forecast, index=pd.to_datetime(forecast.forecast_dates), dtype=float),
+            preflight_options,
+            historical_series,
+            pd.Series(
+                forecast.forecast,
+                index=pd.to_datetime(forecast.forecast_dates),
+                dtype=float,
+            ),
         )
         if dated_context:
             dated_context["selected_model"] = forecast.model_used
@@ -294,7 +302,9 @@ class ExecutiveReportBuilder:
         statistical_audit = self._build_statistical_audit(statistical_review)
         historical = self._build_historical_analysis(statistical)
         historical.context_notes = historical_notes
-        forecast_outlook = ForecastOutlook(metrics=forecast_metrics, context_notes=forecast_notes)
+        forecast_outlook = ForecastOutlook(
+            metrics=forecast_metrics, context_notes=forecast_notes
+        )
         dashboard = self._build_dashboard(
             forecast,
             statistical,
@@ -795,6 +805,16 @@ class ExecutiveReportBuilder:
                     "rolling validation evidence."
                 )
 
+        calibration = forecast.validation_design.get("interval_calibration", {})
+        calibration_note = ""
+        if isinstance(calibration, dict) and calibration.get("method"):
+            applied = calibration.get("applied_horizons", [])
+            calibration_note = (
+                f"Backtest interval adjustment applied at {len(applied)} of {len(forecast.forecast)} horizons. "
+                "Each adjusted horizon uses at least five non-overlapping observed backtest errors. "
+                "Other horizons retain their original model ranges. This empirical correction does not guarantee 95% coverage."
+            )
+
         return ForecastMetrics(
             model_used=forecast.model_used,
             horizon=len(forecast.forecast),
@@ -817,6 +837,7 @@ class ExecutiveReportBuilder:
             mase=round(forecast.mase, 4) if forecast.mase is not None else None,
             interval_label=interval_label,
             prediction_intervals=intervals,
+            interval_calibration_note=calibration_note,
             selection_metrics=forecast.selection_metrics,
             final_test_metrics=forecast.final_test_metrics,
             final_test_assessment=final_test_assessment,
@@ -1082,13 +1103,16 @@ class ExecutiveReportBuilder:
             )
 
         # Recommendation 3: Data quality improvement
-        has_collection_issue = any(
-            (
-                data_quality.missing_values,
-                data_quality.duplicate_timestamps,
-                data_quality.missing_timestamps,
+        has_collection_issue = (
+            any(
+                (
+                    data_quality.missing_values,
+                    data_quality.duplicate_timestamps,
+                    data_quality.missing_timestamps,
+                )
             )
-        ) or not data_quality.is_regular
+            or not data_quality.is_regular
+        )
         if has_collection_issue:
             issue_count = (
                 data_quality.missing_values
@@ -1224,6 +1248,11 @@ class ExecutiveReportBuilder:
                     "untouched holdout and monitor against future actuals "
                     "without inferring a 95% planning range."
                 )
+            elif forecast.interval_label == "empirically_adjusted_prediction_interval":
+                interval_mitigation = (
+                    "Use the backtest-adjusted ranges for planning, then check coverage "
+                    "against future actuals; nominal coverage is not guaranteed."
+                )
             elif forecast.interval_label == "experimental":
                 interval_mitigation = (
                     "Use the estimated 95% prediction intervals (coverage not "
@@ -1277,9 +1306,11 @@ class ExecutiveReportBuilder:
                         "models."
                     ),
                     evidence=[
-                        f"Change-point count: {cp_count}"
-                        if cp_count
-                        else "Candidate breaks detected",
+                        (
+                            f"Change-point count: {cp_count}"
+                            if cp_count
+                            else "Candidate breaks detected"
+                        ),
                     ],
                     severity="Medium",
                 )
@@ -1365,7 +1396,11 @@ class ExecutiveReportBuilder:
         # Regression (covariates). All others are univariate and ignore the
         # declared context, which is then only reflected in this report.
         known = (business_context or {}).get("known_context")
-        if isinstance(known, dict) and (known.get("covariates") or known.get("holidays_country") or known.get("event_count")):
+        if isinstance(known, dict) and (
+            known.get("covariates")
+            or known.get("holidays_country")
+            or known.get("event_count")
+        ):
             model_name = forecast.model_used or ""
             exog_capable = model_name in {"Prophet", "Dynamic Regression"}
             if not exog_capable:

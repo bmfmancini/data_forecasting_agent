@@ -832,6 +832,21 @@ def get_job_status(
 # ── Chat ──────────────────────────────────────────────────────────────────────
 
 
+@app.post("/monitoring/compare")
+def compare_forecast_monitoring(
+    job_ids: list[str], _user: Annotated[dict, Depends(require_api_key)]
+) -> dict:
+    """Compare up to 100 forecast runs belonging to the same series."""
+    from services.forecast_monitoring import monitor_forecasts
+
+    try:
+        return monitor_forecasts(job_ids, _user)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (ValueError, TypeError, OverflowError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 @app.get("/jobs/{job_id}/monitoring")
 def get_forecast_monitoring(
     job_id: str, _user: Annotated[dict, Depends(require_api_key)]

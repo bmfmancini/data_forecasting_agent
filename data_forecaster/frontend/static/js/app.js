@@ -141,10 +141,10 @@
         '<p class="small text-muted mt-2">Select the region whose holidays affect this series, or use the country calendar without a regional selection.</p></div>' + tail;
     }
     if (decision.kind === "dates") {
-      return head + '<textarea class="form-control preflight-dates" id="' + escapeHtml(id) + '" data-key="' + escapeHtml(decision.key) + '" rows="4" placeholder="2024-11-29, spike, Black Friday&#10;2025-01-01, holiday, New Year">' + escapeHtml(formatEvents(current)) + "</textarea>" + tail;
+      return head + '<textarea class="form-control preflight-dates" id="' + escapeHtml(id) + '" data-key="' + escapeHtml(decision.key) + '" rows="4" placeholder="2024-11-29, promotion, Black Friday, 2024-09-01">' + escapeHtml(formatEvents(current)) + "</textarea>" + tail;
     }
     if (decision.kind === "covariates") {
-      return head + '<textarea class="form-control preflight-covariates" id="' + escapeHtml(id) + '" data-key="' + escapeHtml(decision.key) + '" rows="4" placeholder="price: 2024-01-01=9.99, 2024-02-01=9.99&#10;promo: 2024-11-29=1, 2024-12-01=0">' + escapeHtml(formatCovariates(current)) + "</textarea>" + tail;
+      return head + '<textarea class="form-control preflight-covariates" id="' + escapeHtml(id) + '" data-key="' + escapeHtml(decision.key) + '" rows="4" placeholder="price: 2024-01-01=9.99@2023-12-01, 2024-02-01=9.99@2023-12-01">' + escapeHtml(formatCovariates(current)) + "</textarea>" + tail;
     }
     // kind == "select" or "country": a plain dropdown (country codes carry labels).
     var options = (decision.options || []).map(function (option) {
@@ -173,7 +173,8 @@
     return value.map(function (event) {
       if (!event || !event.date) return "";
       var line = event.date + ", " + (event.type || "intervention");
-      if (event.label && event.label !== event.type) line += ", " + event.label;
+      line += ", " + (event.label || event.type);
+      if (event.available_at) line += ", " + event.available_at;
       return line;
     }).filter(Boolean).join("\n");
   }
@@ -186,8 +187,11 @@
       var parts = line.split(",").map(function (p) { return p.trim(); });
       if (!_DATE_RE.test(parts[0] || "")) return;
       var type = (parts[1] || "intervention").toLowerCase() || "intervention";
+      var available = parts.length > 3 && _DATE_RE.test(parts[parts.length - 1]) ? parts.pop() : null;
       var label = parts.slice(2).join(",").trim() || type;
-      events.push({ type: type, date: parts[0], label: label });
+      var event = { type: type, date: parts[0], label: label };
+      if (available) event.available_at = available;
+      events.push(event);
     });
     return events;
   }
@@ -196,7 +200,7 @@
     if (!value || typeof value !== "object" || Array.isArray(value)) return "";
     return Object.keys(value).map(function (name) {
       var series = value[name] || {};
-      var pairs = Object.keys(series).map(function (date) { return date + "=" + series[date]; }).join(", ");
+      var pairs = Object.keys(series).map(function (date) { var item = series[date]; return date + "=" + (item && typeof item === "object" ? item.value + "@" + item.available_at : item); }).join(", ");
       return name + ": " + pairs;
     }).join("\n");
   }
@@ -214,8 +218,11 @@
       rest.split(",").forEach(function (pair) {
         var kv = pair.split("=");
         var date = (kv[0] || "").trim();
-        var val = parseFloat((kv[1] || "").trim());
-        if (_DATE_RE.test(date) && isFinite(val)) series[date] = val;
+        var parts = (kv[1] || "").trim().split("@");
+        var val = Number(parts[0]);
+        if (_DATE_RE.test(date) && parts[0] && isFinite(val)) {
+          series[date] = parts.length > 1 ? { value: val, available_at: parts[1].trim() } : val;
+        }
       });
       if (Object.keys(series).length) covariates[name] = series;
     });

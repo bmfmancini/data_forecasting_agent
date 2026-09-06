@@ -26,6 +26,8 @@
 {% set interval_label = interval_state.label %}
 {% if interval_label == 'unavailable' %}
 <p style="color:var(--text-muted-custom);">Prediction-interval bounds are unavailable for this forecast.</p>
+{% elif interval_label == 'empirically_adjusted_prediction_interval' %}
+<p style="color:var(--text-muted-custom);">Nominal 95% prediction-interval bounds with backtest adjustments where enough history is available. Coverage is not guaranteed.</p>
 {% elif interval_label == 'experimental' %}
 <p style="color:var(--text-muted-custom);">Estimated 95% prediction-interval bounds (coverage not evaluated).</p>
 {% else %}
