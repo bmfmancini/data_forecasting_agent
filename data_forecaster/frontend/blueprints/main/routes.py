@@ -514,9 +514,11 @@ def _edit_report(report_id: int | None, destination: str) -> Response:
             result["report"] = effective_markdown(result)
             session["analysis_result"] = result
     except EditConflict as exc:
-        return str(exc), 409
+        current_app.logger.warning("Report edit conflict for user_id=%s report_id=%s", current_user.id, report_id, exc_info=True)
+        return "Report could not be updated due to a version conflict. Please refresh and try again.", 409
     except ValueError as exc:
-        return str(exc), 400
+        current_app.logger.warning("Invalid report edit input for user_id=%s report_id=%s", current_user.id, report_id, exc_info=True)
+        return "Invalid report edit request.", 400
     flash("Report updated.", "success")
     return redirect(destination)
 
