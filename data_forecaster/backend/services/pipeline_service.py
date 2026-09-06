@@ -214,6 +214,7 @@ def run_pipeline(
         user_prompt,
         preflight_options,
         _progress,
+        historical_series=statistical_stage.series,
     )
     visualization_stage = _build_visualizations(
         statistical_stage.series,
@@ -438,6 +439,11 @@ def _run_forecast_stages(
                             "interventions",
                             "censoring_or_stockouts",
                             "known_future_covariates",
+                            "interventions_details",
+                            "censoring_or_stockouts_details",
+                            "known_future_covariates_details",
+                            "holidays_country",
+                            "holidays_subdivision",
                             "aggregation",
                             "minimum_value",
                             "maximum_value",
@@ -742,6 +748,7 @@ def _run_report_stage(
     user_prompt: str | None,
     preflight_options: dict[str, Any] | None,
     progress: ProgressCallback,
+    historical_series: pd.Series | None = None,
 ) -> ReportStageOutput:
     """Generate and render the executive report."""
     logger.info("Agent 5: Report Generation")
@@ -758,6 +765,7 @@ def _run_report_stage(
             preflight_options=preflight_options,
             statistical_review=forecast_stage.statistical_review,
             all_metrics=forecast_stage.all_metrics,
+            historical_series=historical_series,
         )
     )
     report_md, report_html = _render_report_outputs(executive_report)

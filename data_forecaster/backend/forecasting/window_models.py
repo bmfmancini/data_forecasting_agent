@@ -152,24 +152,47 @@ def fit_ewma_window(train, horizon, *, seasonal_period=1, freq=None):
     )
 
 
-def fit_prophet_window(train, horizon, *, seasonal_period=1, freq=None):
+def fit_prophet_window(train, horizon, *, seasonal_period=1, freq=None, options=None):
     from forecasting.prophet_compat import import_prophet
-    from forecasting.prophet_model import _to_history_frame, _future_frame
+    from forecasting.prophet_model import (
+        _align_regressor,
+        _future_frame,
+        _to_history_frame,
+        prophet_predictive_samples,
+    )
 
     if len(train) < 3:
         raise ValueError("Prophet requires at least three training observations.")
     history = _to_history_frame(train)
-    model = import_prophet().Prophet(interval_width=0.95, uncertainty_samples=0)
+    options = options or {}
+    holidays = options.get("prophet_holidays")
+    regressors = options.get("prophet_regressors") or {}
+
+    # Attach exogenous regressor columns to the history frame. Only dict-valued
+    # entries with at least one finite value are included; the rest are skipped
+    # so a malformed entry never blocks the fit.
+    regressor_names: list[str] = []
+    for name, values in regressors.items():
+        if not isinstance(values, dict) or not values:
+            continue
+        history[name] = _align_regressor(values, history["ds"])
+        regressor_names.append(name)
+
+    prophet_kwargs = {"interval_width": 0.95, "uncertainty_samples": 0}
+    if holidays is not None and not holidays.empty:
+        prophet_kwargs["holidays"] = holidays
+    model = import_prophet().Prophet(**prophet_kwargs)
+    for name in regressor_names:
+        model.add_regressor(name)
     model.fit(history)
     future = _future_frame(history, horizon, freq)
+    for name in regressor_names:
+        future[name] = _align_regressor(regressors[name], future["ds"])
     prediction = model.predict(future)
-    # Prophet's uncertainty sampler uses global numpy state. Run a deterministic
-    # sampler under a lock and restore that state for concurrent forecast jobs.
-    from forecasting.prophet_model import prophet_predictive_samples
-
     paths = prophet_predictive_samples(model, future)
     lo, hi = path_intervals(paths)
     fitted = model.predict(history)["yhat"].to_numpy()
+    ingested = bool(regressor_names) or (holidays is not None and not holidays.empty)
     return _result(
         "Prophet",
         prediction["yhat"],
@@ -179,6 +202,9 @@ def fit_prophet_window(train, horizon, *, seasonal_period=1, freq=None):
         {
             "interval_width": 0.95,
             "sample_method": "prophet_predictive_samples",
+            "ingested_exog": ingested,
+            "regressors": regressor_names,
+            "holidays": bool(holidays is not None and not holidays.empty),
         },
         paths,
     )

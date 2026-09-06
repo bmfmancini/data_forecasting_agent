@@ -14,6 +14,10 @@ from utils.data_cleaning import (
     time_index_quality,
 )
 
+# Structured business-context decisions are rendered as custom inputs
+# (country dropdown, date list, covariate rows) rather than plain selects.
+from forecasting.known_context import country_list as _country_list, subdivision_options
+
 AGGREGATION_OPTIONS = ["Let AI Decide", "sum", "mean", "latest"]
 MISSING_OPTIONS = ["Let AI Decide", "interpolate", "forward-fill", "drop"]
 FREQUENCY_OPTIONS = ["Let AI Decide", "D", "W", "MS", "QS", "YS"]
@@ -90,6 +94,16 @@ def run_preflight_checks(
         "aggregation": "As provided",
         "minimum_value": None,
         "maximum_value": None,
+        # Structured business context (Phase: capture). The string decisions
+        # above remain the on/off gate; these carry the structured detail.
+        "holidays_country": "",
+        "holidays_subdivision": "",
+        "interventions_details": "",
+        "censoring_or_stockouts_details": "",
+        "known_future_covariates_details": "",
+        "known_events": [],
+        "known_covariates": {},
+        "covariates_known_in_advance": False,
     }
 
     if duplicate_ts:
@@ -162,6 +176,8 @@ def run_preflight_checks(
             ),
             PreflightDecision(
                 key="interventions",
+                detail_key="interventions_details",
+                detail_placeholder="Describe what happened, when it started and ended, and the expected effect. Add dated events below where dates are known.",
                 label="Known interventions",
                 message="List promotions, outages, policy changes, or other interventions.",
                 options=["None known", "Known events"],
@@ -170,6 +186,8 @@ def run_preflight_checks(
             ),
             PreflightDecision(
                 key="censoring_or_stockouts",
+                detail_key="censoring_or_stockouts_details",
+                detail_placeholder="Describe affected dates or products, stockout periods, and any recording cap or limit.",
                 label="Censoring or stockouts",
                 message="Can recorded values be capped, censored, or limited by stockouts?",
                 options=["None known", "Possible", "Confirmed"],
@@ -178,10 +196,60 @@ def run_preflight_checks(
             ),
             PreflightDecision(
                 key="known_future_covariates",
+                detail_key="known_future_covariates_details",
+                detail_placeholder="Describe the information available, its date coverage, and whether values are confirmed or assumed. Add holiday calendars or dated values below.",
                 label="Future information",
                 message="Are future holidays, prices, schedules, or covariates known?",
                 options=["None", "Available"],
                 default="None",
+                allow_custom=True,
+            ),
+        ]
+    )
+    # Structured business-context inputs. These render as custom widgets on
+    # the frontend (country dropdown, date list, covariate rows) rather than
+    # plain selects, and carry the detail the string gates above only hint at.
+    _countries = _country_list()
+    decisions.extend(
+        [
+            PreflightDecision(
+                key="holidays_country",
+                label="Holiday calendar",
+                message=(
+                    "Select a country and, where relevant, a state or province. "
+                    "Holidays are expanded automatically; no manual dates needed."
+                ),
+                options=[code for code, _ in _countries],
+                option_labels=[name for _, name in _countries],
+                default="",
+                kind="country",
+                subdivisions=subdivision_options(),
+                allow_custom=True,
+            ),
+            PreflightDecision(
+                key="known_events",
+                label="Known events",
+                message=(
+                    "Add custom events that affect the series — spikes, lulls, "
+                    "promotions, outages, or non-standard holidays. One per line: "
+                    "YYYY-MM-DD, type, label (e.g. 2024-11-29, spike, Black Friday)."
+                ),
+                options=[],
+                default=[],
+                kind="dates",
+                allow_custom=True,
+            ),
+            PreflightDecision(
+                key="known_covariates",
+                label="Future-known covariates",
+                message=(
+                    "Add named covariates with known future values (e.g. price, "
+                    "schedule). Provide a value at every historical and forecast "
+                    "timestamp; the selected model ingests them where supported."
+                ),
+                options=[],
+                default={},
+                kind="covariates",
                 allow_custom=True,
             ),
         ]

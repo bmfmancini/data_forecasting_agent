@@ -14,6 +14,11 @@ from __future__ import annotations
 from html import escape
 
 from report.models import ExecutiveReport, format_metric
+from report.renderers.markdown_renderer import (
+    _assumption_fallback_text,
+    _recommendation_fallback_text,
+    _recommendation_title,
+)
 from report.rules import DASHBOARD_STATUS_COLORS
 
 
@@ -117,6 +122,8 @@ class HTMLRenderer:
         """Render the historical analysis section."""
         h = report.historical_analysis
         narrative = f"<p>{escape(h.narrative)}</p>" if h.narrative else ""
+        if h.context_notes:
+            narrative += "<p><strong>Calendar and event context:</strong></p><ul>" + "".join(f"<li>{escape(note)}</li>" for note in h.context_notes) + "</ul>"
         return (
             '<section class="report-historical-analysis mb-3">'
             "<h5>Historical Performance & Trend Analysis</h5>"
@@ -172,6 +179,8 @@ class HTMLRenderer:
         f = report.forecast_outlook
         m = f.metrics
         narrative = f"<p>{escape(f.narrative)}</p>" if f.narrative else ""
+        if f.context_notes:
+            narrative += "<p><strong>Calendar and event context:</strong></p><ul>" + "".join(f"<li>{escape(note)}</li>" for note in f.context_notes) + "</ul>"
         final_rmse = f.metrics.final_test_metrics.get("rmse")
         final_mae = f.metrics.final_test_metrics.get("mae")
         provenance = (
@@ -284,23 +293,24 @@ class HTMLRenderer:
     # ── Risks ─────────────────────────────────────────────────────────────
 
     def _render_risks(self, report: ExecutiveReport) -> str:
-        """Render the risks section."""
+        """Render the risks section as a prose paragraph + evidence bullets."""
         if not report.risks:
             return ""
         blocks: list[str] = []
         for risk in report.risks:
             evidence_items = "".join(f"<li>{escape(ev)}</li>" for ev in risk.evidence)
             evidence = (
-                f'<ul class="small text-muted">{evidence_items}</ul>'
+                f'<p>Supporting evidence:</p><ul class="small text-muted">{evidence_items}</ul>'
                 if evidence_items
                 else ""
             )
+            description = f"<p>{escape(risk.description)}</p>" if risk.title else ""
             blocks.append(
                 f'<div class="risk-block mb-2">'
-                f"<h6>{escape(risk.category)} — {escape(risk.severity)}</h6>"
-                f"<p><strong>Risk:</strong> {escape(risk.description)}</p>"
-                f"<p class='small'><strong>Potential Impact:</strong> {escape(risk.potential_impact)}</p>"
-                f"<p class='small'><strong>Mitigation:</strong> {escape(risk.mitigation)}</p>"
+                f"<h6>{escape(risk.title or risk.description)}</h6>"
+                f"{description}"
+                f"<p><strong>Business implication:</strong> {escape(risk.potential_impact)}</p>"
+                f"<p><strong>Recommended action:</strong> {escape(risk.mitigation)}</p>"
                 f"{evidence}"
                 f"</div>"
             )
@@ -314,12 +324,11 @@ class HTMLRenderer:
     # ── Assumptions ───────────────────────────────────────────────────────
 
     def _render_assumptions(self, report: ExecutiveReport) -> str:
-        """Render the assumptions section."""
+        """Render the assumptions section as numbered flowing prose."""
         if not report.assumptions:
             return ""
         items = "".join(
-            f"<li><strong>{escape(a.assumption)}</strong>"
-            f"<p class='small text-muted'><em>Consequence if false: {escape(a.consequence_if_false)}</em></p></li>"
+            f"<li>{escape(a.narrative or _assumption_fallback_text(a))}</li>"
             for a in report.assumptions
         )
         return (
@@ -370,7 +379,7 @@ class HTMLRenderer:
     # ── Recommendations ───────────────────────────────────────────────────
 
     def _render_recommendations(self, report: ExecutiveReport) -> str:
-        """Render recommendations as structured blocks with evidence."""
+        """Render recommendations as a title + narrative paragraph + evidence."""
         if not report.recommendations:
             return ""
         blocks: list[str] = []
@@ -382,18 +391,17 @@ class HTMLRenderer:
                 for ev in rec.supporting_evidence
             )
             evidence = (
-                f'<ul class="small text-muted">{evidence_items}</ul>'
+                f'<p>Supporting evidence:</p><ul class="small text-muted">{evidence_items}</ul>'
                 if evidence_items
                 else ""
             )
-            text = rec.narrative if rec.narrative else rec.recommendation
+            narrative = rec.narrative or _recommendation_fallback_text(rec)
+            title = _recommendation_title(rec)
             blocks.append(
                 f'<div class="recommendation-block mb-2">'
                 f'<span class="badge bg-{color}">{escape(rec.priority)}</span> '
-                f"<strong>{escape(text)}</strong>"
-                f"<p class='small'>{escape(rec.rationale)}</p>"
-                f"<p class='small'><em>Expected outcome: "
-                f"{escape(rec.expected_outcome)}</em></p>"
+                f"<strong>{escape(title)}</strong>"
+                f"<p>{escape(narrative)}</p>"
                 f"{evidence}"
                 f"</div>"
             )

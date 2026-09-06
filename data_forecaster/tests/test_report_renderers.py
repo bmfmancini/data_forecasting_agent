@@ -189,7 +189,7 @@ class TestMarkdownRenderer:
         renderer = MarkdownRenderer()
         md = renderer.render(sample_report)
         assert "## 11. Executive Recommendations" in md
-        assert "Supporting Evidence" in md
+        assert "Evidence" in md
         assert "MAPE" in md
 
     def test_metadata_table(self, sample_report: "object") -> None:
@@ -230,6 +230,178 @@ class TestMarkdownRenderer:
         ), "Rendered markdown contains fabricated financial figures."
 
 
+# ── Section 10–12 flowing-prose / fallback tests ─────────────────────────────
+
+
+class TestSectionFallbackProse:
+    """Risks/Recommendations/Assumptions render as merged prose without labels."""
+
+    def test_risks_fallback_merges_seeds_without_labels(
+        self, sample_report: "object"
+    ) -> None:
+        md = MarkdownRenderer().render(sample_report)
+        assert "## 10. Strategic Risks" in md
+        # Horizon length must not be presented as measured accuracy decay.
+        assert "The horizon alone does not establish how accuracy changes" in md
+        assert "Refresh the forecast as actual results arrive" in md
+        assert "### Longer-term commitments need updated forecasts" in md
+        assert "**Business implication:**" in md
+        assert "**Recommended action:**" in md
+        assert "### Model — Low" not in md
+        # Old field labels must not appear.
+        assert "**Risk:**" not in md
+        assert "**Potential Impact:**" not in md
+        assert "**Mitigation:**" not in md
+
+    def test_recommendations_fallback_merges_seeds_without_labels(
+        self, sample_report: "object"
+    ) -> None:
+        md = MarkdownRenderer().render(sample_report)
+        assert "## 11. Executive Recommendations" in md
+        assert "**Action:**" not in md
+        assert "**Rationale:**" not in md
+        assert "**Expected Outcome:**" not in md
+        # Evidence bullets are still present.
+        assert "**Evidence:**" in md
+
+    def test_assumptions_fallback_merges_seeds_without_labels(
+        self, sample_report: "object"
+    ) -> None:
+        md = MarkdownRenderer().render(sample_report)
+        assert "## 12. Critical Business Assumptions" in md
+        assert "Consequence if false" not in md
+        # Numbered flowing sentences are rendered.
+        assert "1. " in md
+
+    def test_html_risks_recommendations_drop_labels(
+        self, sample_report: "object"
+    ) -> None:
+        html = HTMLRenderer().render(sample_report)
+        assert "<h6>Longer-term commitments need updated forecasts</h6>" in html
+        assert "<strong>Business implication:</strong>" in html
+        assert "<strong>Recommended action:</strong>" in html
+        assert "Model — Low" not in html
+        assert "<strong>Risk:</strong>" not in html
+        assert "<strong>Potential Impact:</strong>" not in html
+        assert "<strong>Mitigation:</strong>" not in html
+        assert "Expected outcome:" not in html
+        assert "Consequence if false" not in html
+
+
+def test_business_context_threaded_into_section_prompts(
+    sample_report: "object", monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Distilled business context is appended to every section prompt."""
+    monkeypatch.setattr(narrative, "get_llm", lambda **_kwargs: object())
+    monkeypatch.setattr(
+        narrative, "get_llm_config", lambda: SimpleNamespace(temperature=0.0)
+    )
+    report = sample_report.model_copy(deep=True)
+    report.metadata.business_context = {"domain": "Retail sales", "units": "USD"}
+
+    captured: list[str] = []
+
+    def capture(
+        _llm: object,
+        _prompt: object,
+        _section: object,
+        _section_name: str,
+        _total_usage: dict[str, int],
+        extra_instructions: str,
+        _fallback_sections: list[str],
+        _business_context: dict,
+    ) -> str:
+        captured.append(extra_instructions)
+        return "narrative"
+
+    monkeypatch.setattr(narrative, "_generate_section", capture)
+    narrative.generate_narratives(report)
+
+    assert captured, "no section prompts were invoked"
+    for extra in captured:
+        assert "BUSINESS CONTEXT" in extra
+        assert "Retail sales" in extra
+        assert "USD" in extra
+
+
+def test_no_business_context_leaves_prompts_unchanged(
+    sample_report: "object", monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When no context was distilled, prompts carry no business-context block."""
+    monkeypatch.setattr(narrative, "get_llm", lambda **_kwargs: object())
+    monkeypatch.setattr(
+        narrative, "get_llm_config", lambda: SimpleNamespace(temperature=0.0)
+    )
+    captured: list[str] = []
+
+    def capture(
+        _llm: object,
+        _prompt: object,
+        _section: object,
+        _section_name: str,
+        _total_usage: dict[str, int],
+        extra_instructions: str,
+        _fallback_sections: list[str],
+        _business_context: dict,
+    ) -> str:
+        captured.append(extra_instructions)
+        return "narrative"
+
+    monkeypatch.setattr(narrative, "_generate_section", capture)
+    narrative.generate_narratives(sample_report)
+
+    assert captured
+    for extra in captured:
+        assert "BUSINESS CONTEXT" not in extra
+
+
+def test_structured_known_context_threaded_into_prompts(
+    sample_report: "object", monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Holidays, custom events, and covariates render as a nested context block."""
+    monkeypatch.setattr(narrative, "get_llm", lambda **_kwargs: object())
+    monkeypatch.setattr(
+        narrative, "get_llm_config", lambda: SimpleNamespace(temperature=0.0)
+    )
+    report = sample_report.model_copy(deep=True)
+    report.metadata.business_context = {
+        "domain": "Retail sales",
+        "known_context": {
+            "holidays_country": "US",
+            "events_by_type": {"spike": 1, "lull": 1},
+            "event_count": 2,
+            "covariates": ["price"],
+        },
+    }
+
+    captured: list[str] = []
+
+    def capture(
+        _llm: object,
+        _prompt: object,
+        _section: object,
+        _section_name: str,
+        _total_usage: dict[str, int],
+        extra_instructions: str,
+        _fallback_sections: list[str],
+        _business_context: dict,
+    ) -> str:
+        captured.append(extra_instructions)
+        return "narrative"
+
+    monkeypatch.setattr(narrative, "_generate_section", capture)
+    narrative.generate_narratives(report)
+
+    assert captured
+    for extra in captured:
+        assert "BUSINESS CONTEXT" in extra
+        assert "known context" in extra
+        assert "holiday calendar: US" in extra
+        assert "1 spike" in extra
+        assert "1 lull" in extra
+        assert "declared covariates: price" in extra
+
+
 def test_narrative_generation_records_section_fallbacks(
     sample_report: "object", monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -247,6 +419,7 @@ def test_narrative_generation_records_section_fallbacks(
         _total_usage: dict[str, int],
         _extra_instructions: str,
         fallback_sections: list[str],
+        _business_context: dict,
     ) -> str:
         fallback_sections.append(section_name)
         return f"Fallback for {section_name}"
@@ -265,6 +438,7 @@ def test_narrative_generation_records_section_fallbacks(
         "statistical_audit",
         "explainability",
         *["recommendation"] * len(report.recommendations),
+        *["assumption"] * len(report.assumptions),
     ]
 
 
