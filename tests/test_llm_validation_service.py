@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Self
 
 import httpx
 import pytest
-
 from services import llm_validation_service as service
 
 
@@ -25,10 +24,10 @@ class _FakeClient:
         self.responses = responses
         self.calls: list[tuple[str, str, dict[str, Any]]] = []
 
-    async def __aenter__(self) -> _FakeClient:
+    async def __aenter__(self) -> Self:
         return self
 
-    async def __aexit__(self, *args: Any) -> None:
+    async def __aexit__(self, *args: object) -> None:
         return None
 
     async def _request(self, method: str, url: str, **kwargs: Any) -> _Response:
@@ -63,7 +62,7 @@ async def test_ollama_validation_runs_all_three_stages(monkeypatch: Any) -> None
     result = await service.validate_llm_configuration(
         provider="ollama_cloud",
         model="llama-test",
-        base_url="https://ollama.example/",
+        base_url="https://ollama.com/",
         api_key="secret-key",
     )
 
@@ -73,9 +72,9 @@ async def test_ollama_validation_runs_all_three_stages(monkeypatch: Any) -> None
     assert result.llm_responded is True
     assert result.response == "pong"
     assert [call[1] for call in client.calls] == [
-        "https://ollama.example",
-        "https://ollama.example/api/tags",
-        "https://ollama.example/api/chat",
+        "https://ollama.com",
+        "https://ollama.com/api/tags",
+        "https://ollama.com/api/chat",
     ]
     assert client.calls[1][2]["headers"]["Authorization"] == "Bearer secret-key"
     assert client.calls[2][2]["json"]["think"] is False
@@ -90,7 +89,7 @@ async def test_invalid_credentials_stop_before_ping(monkeypatch: Any) -> None:
     result = await service.validate_llm_configuration(
         provider="ollama_cloud",
         model="llama-test",
-        base_url="https://ollama.example",
+        base_url="https://ollama.com",
         api_key="invalid-key",
     )
 
@@ -103,14 +102,14 @@ async def test_invalid_credentials_stop_before_ping(monkeypatch: Any) -> None:
 
 @pytest.mark.asyncio
 async def test_unreachable_url_stops_before_credentials(monkeypatch: Any) -> None:
-    request = httpx.Request("GET", "https://offline.example")
+    request = httpx.Request("GET", "http://localhost:11434")
     client = _FakeClient([httpx.ConnectError("offline", request=request)])
     _install_client(monkeypatch, client)
 
     result = await service.validate_llm_configuration(
         provider="ollama",
         model="llama-test",
-        base_url="https://offline.example",
+        base_url="http://localhost:11434",
         api_key=None,
     )
 
@@ -135,7 +134,7 @@ async def test_model_rejection_returns_safe_provider_diagnostic(
     result = await service.validate_llm_configuration(
         provider="ollama",
         model="missing-model",
-        base_url="https://ollama.example",
+        base_url="https://ollama.com",
         api_key=None,
     )
 
@@ -157,9 +156,140 @@ async def test_ping_auth_rejection_marks_credentials_invalid(monkeypatch: Any) -
     result = await service.validate_llm_configuration(
         provider="ollama_cloud",
         model="llama-test",
-        base_url="https://ollama.example",
+        base_url="https://ollama.com",
         api_key="invalid-key",
     )
 
     assert result.credentials_valid is False
     assert result.diagnostic == "HTTP 401: invalid API key"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        None,
+        "",
+        "http://169.254.169.254/latest/meta-data/",
+        "http://127.0.0.1:8080",
+        "https://attacker.example",
+        "https://ollama.com.attacker.example",
+        "https://ollama.com@attacker.example",
+        "https://user:password@ollama.com",
+        "https://ollama.com:444",
+        "https://ollama.com/api/delete",
+        "https://ollama.com?url=http://attacker.example",
+        "https://ollama.com#fragment",
+        "https://ollama.com\\@attacker.example",
+        "https://olla\nma.com",
+        "file:///etc/passwd",
+        "http://[broken",
+    ],
+)
+async def test_untrusted_urls_make_no_requests(monkeypatch, base_url):
+    client = _FakeClient([])
+    _install_client(monkeypatch, client)
+    result = await service.validate_llm_configuration(
+        provider="ollama", model="test", base_url=base_url, api_key="stored-secret"
+    )
+    assert not result.ok
+    assert "allowlist" in result.message
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "http://localhost:11434",
+        "http://host.docker.internal:11434",
+        "https://ollama.com",
+        "https://api.ollama.com",
+    ],
+)
+async def test_supported_deployment_urls(monkeypatch, base_url):
+    client = _FakeClient(
+        [
+            _Response(200, {}),
+            _Response(200, {}),
+            _Response(200, {"message": {"content": "pong"}}),
+        ]
+    )
+    _install_client(monkeypatch, client)
+    result = await service.validate_llm_configuration(
+        provider="ollama", model="test", base_url=base_url + "/", api_key=None
+    )
+    assert result.ok
+    assert client.calls[2][1] == base_url + "/api/chat"
+
+
+@pytest.mark.asyncio
+async def test_custom_endpoint_requires_server_configuration(monkeypatch):
+    base_url = "http://ollama.internal:11434/proxy"
+    client = _FakeClient(
+        [
+            _Response(200, {}),
+            _Response(200, {}),
+            _Response(200, {"message": {"content": "pong"}}),
+        ]
+    )
+    _install_client(monkeypatch, client)
+    args = {
+        "provider": "ollama",
+        "model": "test",
+        "base_url": base_url,
+        "api_key": None,
+    }
+    assert not (await service.validate_llm_configuration(**args)).ok
+    assert client.calls == []
+    monkeypatch.setattr(service.settings, "OLLAMA_BASE_URL", base_url + "/")
+    assert (await service.validate_llm_configuration(**args)).ok
+    assert client.calls[2][1] == base_url + "/api/chat"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["gemini", "ollama_cloud"])
+@pytest.mark.parametrize("redirect_stage", [0, 1, 2])
+async def test_redirects_never_reach_another_destination(
+    monkeypatch, provider, redirect_stage
+):
+    # Use real HTTPX redirect handling with an in-memory transport.
+    requests = []
+    origin = (
+        "https://generativelanguage.googleapis.com"
+        if provider == "gemini"
+        else "https://ollama.com"
+    )
+
+    def handler(request):
+        requests.append(request)
+        if len(requests) - 1 == redirect_stage:
+            return httpx.Response(
+                307, headers={"Location": "http://169.254.169.254/latest/meta-data/"}
+            )
+        return httpx.Response(
+            200,
+            json={
+                "message": {"content": "pong"},
+                "candidates": [{"content": {"parts": [{"text": "pong"}]}}],
+            },
+        )
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        service.httpx,
+        "AsyncClient",
+        lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs),
+    )
+    result = await service.validate_llm_configuration(
+        provider=provider, model="test", base_url=origin, api_key="stored-secret"
+    )
+    assert all(
+        request.url.copy_with(path="", query=None, fragment=None) == httpx.URL(origin)
+        for request in requests
+    )
+    if redirect_stage:
+        assert not result.ok
+        assert len(requests) == redirect_stage + 1
+    else:
+        assert result.ok  # A redirect still proves reachability; its target is ignored.

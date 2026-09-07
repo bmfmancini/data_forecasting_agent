@@ -80,6 +80,15 @@ export OLLAMA_BASE_URL=http://localhost:11434
 export OLLAMA_MODEL=llama3
 ```
 
+The LLM connection test accepts `http://localhost:11434`,
+`http://host.docker.internal:11434`, `https://ollama.com`, and
+`https://api.ollama.com`. For a custom Ollama endpoint, set `OLLAMA_BASE_URL`
+in the backend environment and restart the backend before testing that URL
+in the admin UI. The test matches the complete base URL (ignoring surrounding
+whitespace and trailing slashes) and does not follow redirects. A reverse proxy
+path is supported when it is part of the server-configured URL. Saving a URL
+through the admin API does not add it to the test's allowlist.
+
 ## Useful tips
 
 - The backend uses `--reload` which watches for file changes and auto-restarts. Great for iterating on agents or API endpoints.

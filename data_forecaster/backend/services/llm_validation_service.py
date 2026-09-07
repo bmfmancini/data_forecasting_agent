@@ -9,13 +9,16 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from typing import Any
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote
 
 import httpx
+from core import config as settings
 
 _GEMINI_BASE_URL = "https://generativelanguage.googleapis.com"
 _ALLOWED_LLM_BASE_ORIGINS = {
     "http://localhost:11434",
+    "http://host.docker.internal:11434",
+    "https://ollama.com",
     "https://api.ollama.com",
 }
 _PING_PROMPT = "Connection test. Reply with exactly: pong"
@@ -116,20 +119,22 @@ def _extract_ollama_text(payload: dict[str, Any]) -> str:
 
 
 def _validated_provider_url(base_url: str | None) -> str | None:
-    """Return a canonical provider URL when it matches the server allowlist."""
+    """Select a trusted base URL, never returning the request's URL.
+
+    Custom deployments may trust an endpoint through the server environment.
+    Do not use the API-editable database configuration as an allowlist source.
+    Exact matching also prevents user-controlled paths, queries and fragments.
+    """
     candidate = str(base_url or "").strip().rstrip("/")
     if not candidate:
         return None
-    try:
-        parsed = urlsplit(candidate)
-    except ValueError:
-        return None
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        return None
-    origin = f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
-    if origin not in _ALLOWED_LLM_BASE_ORIGINS:
-        return None
-    return candidate
+    allowed_urls = _ALLOWED_LLM_BASE_ORIGINS | {
+        settings.OLLAMA_BASE_URL.strip().rstrip("/")
+    }
+    for trusted_url in allowed_urls:
+        if candidate == trusted_url:
+            return trusted_url
+    return None
 
 
 async def validate_llm_configuration(
@@ -150,9 +155,7 @@ async def validate_llm_configuration(
         return _failed("Enter a model name before testing the LLM.")
 
     provider_url = (
-        _GEMINI_BASE_URL
-        if provider == "gemini"
-        else _validated_provider_url(base_url)
+        _GEMINI_BASE_URL if provider == "gemini" else _validated_provider_url(base_url)
     )
     if not provider_url:
         return _failed(
@@ -166,9 +169,7 @@ async def validate_llm_configuration(
         headers["Authorization"] = f"Bearer {api_key}"
 
     timeout = httpx.Timeout(30.0, connect=5.0)
-    async with httpx.AsyncClient(
-        timeout=timeout, follow_redirects=True
-    ) as client:
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
         try:
             # Any HTTP response proves that the configured host is reachable.
             await client.get(provider_url)
@@ -208,9 +209,7 @@ async def validate_llm_configuration(
                         "x-goog-api-key": str(api_key),
                     },
                     json={
-                        "contents": [
-                            {"parts": [{"text": _PING_PROMPT}]}
-                        ],
+                        "contents": [{"parts": [{"text": _PING_PROMPT}]}],
                         "generationConfig": {
                             "maxOutputTokens": _PING_MAX_OUTPUT_TOKENS
                         },
@@ -222,9 +221,7 @@ async def validate_llm_configuration(
                     headers=headers,
                     json={
                         "model": model.strip(),
-                        "messages": [
-                            {"role": "user", "content": _PING_PROMPT}
-                        ],
+                        "messages": [{"role": "user", "content": _PING_PROMPT}],
                         "stream": False,
                         # Reasoning models such as gpt-oss can consume a very
                         # small generation budget entirely in hidden thinking,
