@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-_BACKEND = str(Path(__file__).resolve().parent.parent / "data_forecaster" / "backend")
+_BACKEND = str(Path(__file__).resolve().parents[2] / "data_forecaster" / "backend")
 if _BACKEND not in sys.path:
     sys.path.insert(0, _BACKEND)
 

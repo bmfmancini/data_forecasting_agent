@@ -8,7 +8,7 @@ from typing import Any
 
 from flask import Flask
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 BACKEND_ROOT = REPO_ROOT / "data_forecaster" / "backend"
 FRONTEND_ROOT = REPO_ROOT / "data_forecaster" / "frontend"
 if str(FRONTEND_ROOT) in sys.path:

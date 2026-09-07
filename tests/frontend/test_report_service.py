@@ -13,7 +13,7 @@ from data_forecaster.frontend.services import report_service
 
 def _report_db(path: Path) -> sqlite3.Connection:
     schema = (
-        Path(__file__).resolve().parents[1]
+        Path(__file__).resolve().parents[2]
         / "data_forecaster"
         / "frontend"
         / "db"
