@@ -49,8 +49,9 @@ The frontend is now at `http://localhost:5000`. Log in with `admin` / `admin`.
 ```bash
 cd data_forecasting_agent
 
-# Install development test dependencies in your activated environment
-pip install 'pytest==8.3.*' 'pytest-asyncio==0.24.*'
+# Install development test dependencies (PEP 735 `dev` group in pyproject.toml)
+uv pip install --group dev
+# Or with plain pip: pip install pytest pytest-asyncio httpx
 
 # All tests
 python -m pytest tests/ data_forecaster/tests/

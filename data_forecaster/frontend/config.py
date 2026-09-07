@@ -106,6 +106,7 @@ class ProductionConfig(BaseConfig):
     SESSION_COOKIE_HTTPONLY: bool = True
     SESSION_COOKIE_SAMESITE: str = "Lax"
 
+
 class TestingConfig(BaseConfig):
     """Configuration for automated testing."""
 

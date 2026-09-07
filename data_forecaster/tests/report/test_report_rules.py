@@ -43,9 +43,7 @@ class TestDataQualityRating:
 
     def test_anomaly_threshold_limits_good_rating_to_fair(self) -> None:
         assert (
-            data_quality_rating(
-                0, 0, 0, 0, True, OUTLIER_REVIEW_RATIO_THRESHOLD
-            )
+            data_quality_rating(0, 0, 0, 0, True, OUTLIER_REVIEW_RATIO_THRESHOLD)
             == "Good"
         )
         assert (

@@ -8,7 +8,7 @@ from typing import Any
 
 from flask import Flask
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 BACKEND_ROOT = REPO_ROOT / "data_forecaster" / "backend"
 FRONTEND_ROOT = REPO_ROOT / "data_forecaster" / "frontend"
 if str(FRONTEND_ROOT) in sys.path:
@@ -102,14 +102,12 @@ def test_save_api_credentials_preserves_existing_key(
             preserve_existing_key=True,
         )
 
-        row = db.execute(
-            """
+        row = db.execute("""
             SELECT base_url, timeout, verify_ssl, encrypted_username,
                    encrypted_password
             FROM api_credentials
             WHERE label = 'default'
-            """
-        ).fetchone()
+            """).fetchone()
 
     assert row["base_url"] == "https://new-backend"
     assert row["timeout"] == 45

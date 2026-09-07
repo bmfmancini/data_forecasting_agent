@@ -139,7 +139,7 @@ def fit_dynamic_window(train, horizon, *, seasonal_period=1, freq=None, options=
             "selection_criterion": "aicc",
             "predictor_uncertainty_included": False,
             "ingested_exog": bool(ingested),
-            "regressors": [n[len("input_"):] for n in ingested],
+            "regressors": [n[len("input_") :] for n in ingested],
         },
         samples,
     )

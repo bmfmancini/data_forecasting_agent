@@ -13,7 +13,6 @@ from pathlib import Path
 
 from cryptography.fernet import Fernet
 
-
 _INSTANCE_DIR = Path(__file__).resolve().parents[1] / "instance"
 _KEY_FILE = _INSTANCE_DIR / ".encryption_key"
 _LEGACY_ENV_FILE = Path(__file__).resolve().parents[1] / ".env"

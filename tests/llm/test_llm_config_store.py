@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-_BACKEND = str(Path(__file__).resolve().parent.parent / "data_forecaster" / "backend")
+_BACKEND = str(Path(__file__).resolve().parents[2] / "data_forecaster" / "backend")
 if _BACKEND not in sys.path:
     sys.path.insert(0, _BACKEND)
 
@@ -138,9 +138,7 @@ class TestDbBackedConfig:
 
     def test_unknown_provider_rejected(self, db):
         with pytest.raises(ValueError, match="Unknown LLM provider"):
-            llm_config_store.put_llm_config(
-                "bogus", "m", None, None, 0.1, db_path=db
-            )
+            llm_config_store.put_llm_config("bogus", "m", None, None, 0.1, db_path=db)
 
     def test_is_configured(self, db):
         assert llm_config_store.is_configured(db) is False

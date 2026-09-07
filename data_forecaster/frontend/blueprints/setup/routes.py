@@ -79,7 +79,9 @@ def _response_detail(resp: requests.Response) -> str:
         return "Unknown error."
 
 
-def _render(template: str, status_code: int = 200, **context: Any) -> str | tuple[str, int]:
+def _render(
+    template: str, status_code: int = 200, **context: Any
+) -> str | tuple[str, int]:
     """Render a wizard template with an optional non-200 status code."""
     rendered = render_template(template, **context)
     return rendered if status_code == 200 else (rendered, status_code)
@@ -123,8 +125,7 @@ def backend() -> str | tuple[str, int] | Response:
         resp = probe.get_setup_status()
     except requests.RequestException as exc:
         flash(
-            f"Could not connect to backend: "
-            f"{sanitize_connection_error(str(exc))}",
+            f"Could not connect to backend: " f"{sanitize_connection_error(str(exc))}",
             "danger",
         )
         return _render(_TEMPLATE_BACKEND, 200, form=form)
@@ -187,8 +188,7 @@ def _submit_llm_config(form: LLMProviderForm) -> str | tuple[str, int] | None:
         test_resp = client.test_llm_config(payload)
     except requests.RequestException as exc:
         flash(
-            f"Could not connect to backend: "
-            f"{sanitize_connection_error(str(exc))}",
+            f"Could not connect to backend: " f"{sanitize_connection_error(str(exc))}",
             "danger",
         )
         return _render(_TEMPLATE_LLM, 200, form=form)
@@ -301,8 +301,7 @@ def _fetch_model_list(client: BackendAPIClient) -> list[dict[str, Any]]:
         resp = client.get_models()
     except requests.RequestException as exc:
         flash(
-            f"Could not connect to backend: "
-            f"{sanitize_connection_error(str(exc))}",
+            f"Could not connect to backend: " f"{sanitize_connection_error(str(exc))}",
             "danger",
         )
         return []
@@ -427,8 +426,7 @@ def admin() -> str | tuple[str, int] | Response:
         resp = client.setup_bootstrap(username, api_key)
     except requests.RequestException as exc:
         flash(
-            f"Could not connect to backend: "
-            f"{sanitize_connection_error(str(exc))}",
+            f"Could not connect to backend: " f"{sanitize_connection_error(str(exc))}",
             "danger",
         )
         return _render(_TEMPLATE_ADMIN, 200, form=form)
@@ -439,8 +437,7 @@ def admin() -> str | tuple[str, int] | Response:
         return redirect(url_for("setup.done"))
     if resp.status_code != 200:
         flash(
-            f"Bootstrap failed (HTTP {resp.status_code}): "
-            f"{_response_detail(resp)}",
+            f"Bootstrap failed (HTTP {resp.status_code}): " f"{_response_detail(resp)}",
             "danger",
         )
         return _render(_TEMPLATE_ADMIN, 200, form=form)

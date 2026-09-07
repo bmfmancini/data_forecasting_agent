@@ -82,9 +82,7 @@ def _forecast(model: str) -> ForecastResult:
 
 def test_metric_text_does_not_scale_mape_twice() -> None:
     """MAPE is already percentage points while WAPE is stored as a ratio."""
-    text = _format_metrics_text(
-        {"Holt-Winters": {"MAPE": 3.6606, "WAPE": 0.0365}}
-    )
+    text = _format_metrics_text({"Holt-Winters": {"MAPE": 3.6606, "WAPE": 0.0365}})
 
     assert "MAPE=3.66%" in text
     assert "WAPE=3.65%" in text
@@ -152,7 +150,9 @@ def test_review_retry_describes_best_eligible_model_and_exclusion_once() -> None
     assert "eligible empirical validation metrics" in result.explanation
     assert result.explanation.count("[Statistical Review Feedback]") == 1
     assert result.holt_winters_rejected_reason is not None
-    assert "Excluded following statistical review" in result.holt_winters_rejected_reason
+    assert (
+        "Excluded following statistical review" in result.holt_winters_rejected_reason
+    )
 
 
 def test_retry_preserves_exclusion_and_synchronizes_final_model(
@@ -185,7 +185,9 @@ def test_retry_preserves_exclusion_and_synchronizes_final_model(
         assert kwargs["loss_preference"] == "mase"
         return retry_selection
 
-    def fake_forecast(*args: Any, **kwargs: Any) -> tuple[ForecastResult, dict[str, dict[str, float]]]:
+    def fake_forecast(
+        *args: Any, **kwargs: Any
+    ) -> tuple[ForecastResult, dict[str, dict[str, float]]]:
         captured["exclude_models"] = kwargs["exclude_models"]
         return _forecast("SARIMA"), {"SARIMA": {"MASE": 0.8}}
 
@@ -217,6 +219,6 @@ def test_retry_preserves_exclusion_and_synchronizes_final_model(
     assert captured["exclude_models"] == ["Holt-Winters"]
     assert output.model_selection.selected_model == output.forecast.model_used
     assert output.model_selection.selected_model == "SARIMA"
-    assert output.model_selection.explanation.count(
-        "[Statistical Review Feedback]"
-    ) == 1
+    assert (
+        output.model_selection.explanation.count("[Statistical Review Feedback]") == 1
+    )

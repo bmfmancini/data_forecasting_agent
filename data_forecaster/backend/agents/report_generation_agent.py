@@ -178,9 +178,7 @@ def run_report_agent(
             for rec in report.recommendations
         ]
         report.risks = [
-            risk.model_copy(
-                update={"narrative": _fallback_narrative(risk, "risk")}
-            )
+            risk.model_copy(update={"narrative": _fallback_narrative(risk, "risk")})
             for risk in report.risks
         ]
         report.assumptions = [

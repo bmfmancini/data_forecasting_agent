@@ -36,9 +36,7 @@ CONFIDENCE_DEDUCTIONS: dict[str, int] = {
     "review_warn": env_int("CONF_DEDUCT_REVIEW_WARN", 10),
     "review_fail": env_int("CONF_DEDUCT_REVIEW_FAIL", 20),
     "structural_breaks": env_int("CONF_DEDUCT_STRUCTURAL_BREAKS", 5),
-    "recent_holdout_degradation": env_int(
-        "CONF_DEDUCT_RECENT_HOLDOUT_DEGRADATION", 10
-    ),
+    "recent_holdout_degradation": env_int("CONF_DEDUCT_RECENT_HOLDOUT_DEGRADATION", 10),
 }
 
 # The latest untouched holdout is considered materially weaker when its RMSE
@@ -67,6 +65,7 @@ def recent_holdout_rmse_ratio(
     ):
         return None
     return float(final_test_rmse / pooled_rolling_rmse)
+
 
 # Anomaly screening is reported separately from the collection-quality rating.
 # Crossing this threshold triggers explicit anomaly-risk language but does not
@@ -250,11 +249,7 @@ def data_quality_rating(
         and issues_count <= good["max_issues"]
         and is_regular
     ):
-        return (
-            "Fair"
-            if outlier_ratio > OUTLIER_REVIEW_RATIO_THRESHOLD
-            else "Good"
-        )
+        return "Fair" if outlier_ratio > OUTLIER_REVIEW_RATIO_THRESHOLD else "Good"
     if (
         missing <= fair["max_missing"]
         and duplicates <= fair["max_duplicates"]

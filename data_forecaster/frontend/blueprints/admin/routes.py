@@ -155,15 +155,13 @@ def users() -> str:
     Returns:
         Rendered HTML for the user management list page.
     """
-    rows = query_db(
-        """
+    rows = query_db("""
         SELECT u.id, u.username, r.name AS role, u.active, u.created_at,
                u.must_change_password
         FROM users u
         JOIN roles r ON r.id = u.role_id
         ORDER BY u.id
-        """
-    )
+        """)
     user_list: list[dict[str, Any]] = rows if isinstance(rows, list) else []
     return render_template("admin/users.html", users=user_list)
 
@@ -941,8 +939,7 @@ def _submit_llm_config_update(
         resp = client.put_llm_config(payload)
     except requests.RequestException as exc:
         flash(
-            f"Could not connect to backend: "
-            f"{_sanitise_connection_error(str(exc))}",
+            f"Could not connect to backend: " f"{_sanitise_connection_error(str(exc))}",
             "danger",
         )
         return False
@@ -1041,7 +1038,9 @@ def llm_config() -> str | Response:
                 llm_test_result=test_result,
             )
         if not test_result.get("ok"):
-            flash(str(test_result.get("message", "LLM connection test failed.")), "danger")
+            flash(
+                str(test_result.get("message", "LLM connection test failed.")), "danger"
+            )
             return render_template(
                 "admin/llm_config.html",
                 form=form,

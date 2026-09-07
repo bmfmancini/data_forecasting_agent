@@ -129,8 +129,7 @@ def run_bootstrap(
         if cursor.rowcount == 0:
             connection.rollback()
             raise SetupAlreadyCompleteError(
-                "API users already exist — setup bootstrap is no longer "
-                "available."
+                "API users already exist — setup bootstrap is no longer " "available."
             )
         connection.execute(
             "UPDATE system_settings SET setup_complete = 1,"
