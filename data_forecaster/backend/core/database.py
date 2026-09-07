@@ -114,6 +114,17 @@ CREATE TABLE IF NOT EXISTS llm_config (
     updated_at        TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Separate from candidate LLM settings: only authenticated administrators
+-- may change which destinations connection tests can contact.
+CREATE TABLE IF NOT EXISTS llm_url_allowlist (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    origins_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+INSERT OR IGNORE INTO llm_url_allowlist (singleton, origins_json) VALUES
+    (1, '["http://localhost:11434", "http://host.docker.internal:11434", "https://ollama.com", "https://api.ollama.com"]');
+
 -- Enable/disable state for forecasting models.  Seeded with the five
 -- supported models, all enabled.  ``forecasting/registry.py`` is the
 -- canonical catalog; this table holds only mutable state.

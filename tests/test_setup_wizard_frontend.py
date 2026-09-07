@@ -73,6 +73,7 @@ def backend_state() -> dict[str, Any]:
             "configured": False,
         },
         "last_model_error": False,
+        "allowed_origins": ["http://localhost:11434", "https://ollama.com"],
         "llm_test": {
             "ok": True,
             "url_reachable": True,
@@ -92,6 +93,8 @@ def mock_backend(
     """Patch the requests module used by the API client with a fake backend."""
 
     def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
+        if url.endswith("/config/llm/allowed-origins"):
+            return _FakeResponse(200, {"origins": backend_state["allowed_origins"]})
         if url.endswith("/setup/status"):
             return _FakeResponse(
                 200,
@@ -131,6 +134,11 @@ def mock_backend(
         url: str, json: dict[str, Any] | None = None, **kwargs: Any
     ) -> _FakeResponse:
         body = json or {}
+        if url.endswith("/config/llm/allowed-origins"):
+            if backend_state.get("allowlist_error"):
+                return _FakeResponse(400, {"detail": "Invalid allowed URL."})
+            backend_state["allowed_origins"] = body["origins"]
+            return _FakeResponse(200, body)
         if "/models/" in url:
             if backend_state["last_model_error"] and body.get("enabled") is False:
                 return _FakeResponse(
@@ -580,3 +588,97 @@ class TestReportSectionEditing:
         version = report_sections(stored)[0]["version"]
         admin_client.post(url + "/edit", data={"section_id": "0", "version": version, "action": "remove"})
         assert b'class="report-tile-grid"' not in admin_client.get(url).data
+
+
+class TestAllowedLLMURLs:
+    def test_admin_sees_defaults_and_can_save_without_testing_llm(
+        self, admin_client, backend_state
+    ):
+        response = admin_client.get("/admin/llm-allowed-urls")
+        assert response.status_code == 200
+        assert b"http://localhost:11434" in response.data
+        assert b"https://ollama.com" in response.data
+        backend_state["llm_test"] = {"ok": False}
+        response = admin_client.post(
+            "/admin/llm-allowed-urls",
+            data={
+                "origins": "https://one.example\n\n http://two.internal:11434/proxy \n"
+            },
+            follow_redirects=True,
+        )
+        assert response.status_code == 200
+        assert backend_state["allowed_origins"] == [
+            "https://one.example",
+            "http://two.internal:11434/proxy",
+        ]
+        assert b"Allowed LLM URLs saved." in response.data
+        assert not backend_state["llm_config"]["configured"]
+
+    def test_admin_can_remove_every_url(self, admin_client, backend_state):
+        assert (
+            admin_client.post(
+                "/admin/llm-allowed-urls", data={"origins": ""}
+            ).status_code
+            == 302
+        )
+        assert backend_state["allowed_origins"] == []
+
+    def test_rejected_save_preserves_input_and_saved_policy(
+        self, admin_client, backend_state
+    ):
+        backend_state["allowlist_error"] = True
+        response = admin_client.post(
+            "/admin/llm-allowed-urls",
+            data={"origins": "https://invalid.example?query=yes"},
+        )
+        assert response.status_code == 200
+        assert b"https://invalid.example?query=yes" in response.data
+        assert b"Invalid allowed URL." in response.data
+        assert backend_state["allowed_origins"] == [
+            "http://localhost:11434",
+            "https://ollama.com",
+        ]
+
+    @pytest.mark.parametrize("method", ["GET", "POST"])
+    def test_regular_user_cannot_view_or_change_urls(
+        self, app, admin_client, backend_state, method
+    ):
+        with app.app_context():
+            execute_db("UPDATE users SET role_id = 2 WHERE id = 1")
+        response = admin_client.open(
+            "/admin/llm-allowed-urls",
+            method=method,
+            data={"origins": "https://attacker.example"},
+        )
+        assert response.status_code == 302
+        assert b"https://ollama.com" not in response.data
+        assert backend_state["allowed_origins"] == [
+            "http://localhost:11434",
+            "https://ollama.com",
+        ]
+
+    @pytest.mark.parametrize("method", ["GET", "POST"])
+    def test_anonymous_user_cannot_access_urls(self, client, backend_state, method):
+        backend_state["setup_complete"] = True
+        response = client.open(
+            "/admin/llm-allowed-urls",
+            method=method,
+            data={"origins": "https://attacker.example"},
+        )
+        assert response.status_code == 302
+        assert "/auth/login" in response.headers["Location"]
+        assert backend_state["allowed_origins"] == [
+            "http://localhost:11434",
+            "https://ollama.com",
+        ]
+
+    def test_save_requires_csrf_token(self, app, admin_client, backend_state):
+        app.config["WTF_CSRF_ENABLED"] = True
+        response = admin_client.post(
+            "/admin/llm-allowed-urls", data={"origins": "https://attacker.example"}
+        )
+        assert response.status_code == 400
+        assert backend_state["allowed_origins"] == [
+            "http://localhost:11434",
+            "https://ollama.com",
+        ]

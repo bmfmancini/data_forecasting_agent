@@ -12,15 +12,9 @@ from typing import Any
 from urllib.parse import quote
 
 import httpx
-from core import config as settings
+from core.llm_url_allowlist import get_allowed_origins
 
 _GEMINI_BASE_URL = "https://generativelanguage.googleapis.com"
-_ALLOWED_LLM_BASE_ORIGINS = {
-    "http://localhost:11434",
-    "http://host.docker.internal:11434",
-    "https://ollama.com",
-    "https://api.ollama.com",
-}
 _PING_PROMPT = "Connection test. Reply with exactly: pong"
 _RESPONSE_PREVIEW_LIMIT = 500
 _DIAGNOSTIC_PREVIEW_LIMIT = 500
@@ -121,17 +115,14 @@ def _extract_ollama_text(payload: dict[str, Any]) -> str:
 def _validated_provider_url(base_url: str | None) -> str | None:
     """Select a trusted base URL, never returning the request's URL.
 
-    Custom deployments may trust an endpoint through the server environment.
-    Do not use the API-editable database configuration as an allowlist source.
+    Only the separately saved administrator allowlist grants trust; candidate
+    or saved provider settings cannot add their own destination to the list.
     Exact matching also prevents user-controlled paths, queries and fragments.
     """
     candidate = str(base_url or "").strip().rstrip("/")
     if not candidate:
         return None
-    allowed_urls = _ALLOWED_LLM_BASE_ORIGINS | {
-        settings.OLLAMA_BASE_URL.strip().rstrip("/")
-    }
-    for trusted_url in allowed_urls:
+    for trusted_url in get_allowed_origins():
         if candidate == trusted_url:
             return trusted_url
     return None
@@ -159,7 +150,8 @@ async def validate_llm_configuration(
     )
     if not provider_url:
         return _failed(
-            "Enter a valid base URL from the server allowlist before testing the LLM."
+            "This base URL is not in the allowlist. Add it under Admin > LLM Config "
+            "> Manage allowed URLs before testing the LLM."
         )
     if provider in {"gemini", "ollama_cloud"} and not api_key:
         return _failed("Enter an API key before testing the LLM.")

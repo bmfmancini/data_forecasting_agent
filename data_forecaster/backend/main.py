@@ -40,10 +40,15 @@ from auth.api_key_db import (
     set_user_admin,
     set_user_enabled,
 )
-from auth.dependency import require_admin_api_key, require_api_key
+from auth.dependency import (
+    require_admin_api_key,
+    require_api_key,
+    require_verified_admin_api_key,
+)
 from core.config import set_api_key_enabled
 from core.database import init_database
 from core.llm_config_store import get_llm_config, is_configured, put_llm_config
+from core.llm_url_allowlist import get_allowed_origins, put_allowed_origins
 from forecasting import registry
 from core.logging_config import get_logger
 from schemas import (
@@ -69,6 +74,7 @@ from schemas import (
     ModelsResponse,
     ModelUpdateRequest,
     LLMConfigResponse,
+    LLMAllowedOrigins,
     LLMConfigTestResponse,
     LLMConfigUpdateRequest,
     UploadResponse,
@@ -1035,6 +1041,32 @@ def models_update(
 
 
 # ── LLM Configuration (admin) ────────────────────────────────────────────────
+
+
+@app.get("/config/llm/allowed-origins", response_model=LLMAllowedOrigins)
+def llm_allowed_origins_get(
+    _user: Annotated[dict, Depends(require_verified_admin_api_key)],
+) -> dict[str, Any]:
+    """Read the allowlist, requiring admin credentials even when auth is disabled."""
+    return {"origins": get_allowed_origins()}
+
+
+@app.put("/config/llm/allowed-origins", response_model=LLMAllowedOrigins)
+def llm_allowed_origins_put(
+    request: LLMAllowedOrigins,
+    _user: Annotated[dict, Depends(require_verified_admin_api_key)],
+) -> dict[str, Any]:
+    """Save allowed destinations separately from candidate provider settings."""
+    try:
+        origins = put_allowed_origins(request.origins)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="Enter exact HTTP(S) base URLs without credentials, wildcards, "
+            "queries, or fragments (maximum 2048 characters per URL).",
+        ) from exc
+    logger.info("LLM URL allowlist updated by admin user_id=%s", _user["id"])
+    return {"origins": origins}
 
 
 @app.get("/config/llm", response_model=LLMConfigResponse)
