@@ -510,6 +510,12 @@ class ModelUpdateRequest(BaseModel):
 # ── LLM Configuration Schemas ────────────────────────────────────────────────
 
 
+class LLMAllowedOrigins(BaseModel):
+    """Complete allowlist; an empty list disables Ollama connection tests."""
+
+    origins: list[str] = Field(max_length=100)
+
+
 class LLMConfigResponse(BaseModel):
     """Masked LLM configuration — the API key is structurally absent.
 

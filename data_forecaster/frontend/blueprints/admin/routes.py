@@ -32,6 +32,7 @@ from blueprints.admin.forms import (
     APIConfigForm,
     APIKeyCreateForm,
     LLMConfigForm,
+    LLMAllowedOriginsForm,
     ModelsForm,
     UserCreateForm,
     UserEditForm,
@@ -1069,6 +1070,47 @@ def llm_config() -> str | Response:
         llm_config=config,
         llm_test_result=None,
     )
+
+
+@admin_bp.route("/llm-allowed-urls", methods=["GET", "POST"])
+@admin_required
+def llm_allowed_urls() -> str | Response:
+    """Let administrators manage destinations before testing LLM settings."""
+    form = LLMAllowedOriginsForm()
+    client = get_api_client()
+    loaded = request.method == "POST"
+    try:
+        if form.validate_on_submit():
+            origins = [
+                line.strip()
+                for line in (form.origins.data or "").splitlines()
+                if line.strip()
+            ]
+            response = client.put_llm_allowed_origins(origins)
+            if response.status_code == 200:
+                flash("Allowed LLM URLs saved.", "success")
+                return redirect(url_for("admin.llm_allowed_urls"))
+            flash(
+                f"Could not save allowed URLs: {_backend_error_detail(response)}",
+                "danger",
+            )
+        elif request.method == "GET":
+            response = client.get_llm_allowed_origins()
+            if response.status_code == 200:
+                form.origins.data = "\n".join(response.json()["origins"])
+                loaded = True
+            else:
+                flash(
+                    "Could not load allowed URLs. Verify the backend admin credentials in API Config.",
+                    "danger",
+                )
+    except requests.RequestException:
+        flash(
+            "Backend unreachable. Allowed URLs could not be loaded or saved.", "danger"
+        )
+    except (ValueError, KeyError, TypeError):
+        flash("Backend returned an invalid allowed URLs response.", "danger")
+    return render_template("admin/llm_allowed_urls.html", form=form, loaded=loaded)
 
 
 @admin_bp.route("/models", methods=["GET", "POST"])

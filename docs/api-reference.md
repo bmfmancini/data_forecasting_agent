@@ -142,6 +142,8 @@ First-run provisioning. Unauthenticated; the bootstrap endpoint is guarded by an
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/config/llm` | Masked LLM config (`provider`, `model`, `base_url`, `temperature`, `api_key_set`) — the key is never returned |
+| `GET` | `/config/llm/allowed-origins` | Saved connection-test allowlist (`origins` array); always requires verified admin credentials |
+| `PUT` | `/config/llm/allowed-origins` | Replace allowlist with `{"origins": ["https://ollama.com"]}` (up to 100 exact HTTP(S) base URLs); always requires verified admin credentials |
 | `PUT` | `/config/llm` | Update LLM config; `api_key` is write-only (omit to keep the stored key) |
 
 ## Model registry (admin)

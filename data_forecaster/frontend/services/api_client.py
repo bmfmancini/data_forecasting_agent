@@ -519,6 +519,25 @@ class BackendAPIClient:
 
     # ── LLM Configuration & Model Registry (admin) ──────────────────────
 
+    def get_llm_allowed_origins(self) -> requests.Response:
+        """Fetch the administrator-managed destination allowlist."""
+        return requests.get(
+            f"{self._base_url}/config/llm/allowed-origins",
+            headers=self._headers(),
+            timeout=JOB_STATUS_TIMEOUT,
+            verify=self._verify,
+        )
+
+    def put_llm_allowed_origins(self, origins: list[str]) -> requests.Response:
+        """Replace the destination allowlist using administrator credentials."""
+        return requests.put(
+            f"{self._base_url}/config/llm/allowed-origins",
+            json={"origins": origins},
+            headers=self._headers(),
+            timeout=JOB_STATUS_TIMEOUT,
+            verify=self._verify,
+        )
+
     def get_llm_config(self) -> requests.Response:
         """Return the masked LLM configuration from the backend.
 

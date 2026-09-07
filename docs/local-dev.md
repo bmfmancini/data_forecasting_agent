@@ -80,14 +80,20 @@ export OLLAMA_BASE_URL=http://localhost:11434
 export OLLAMA_MODEL=llama3
 ```
 
-The LLM connection test accepts `http://localhost:11434`,
+The LLM connection test initially allows `http://localhost:11434`,
 `http://host.docker.internal:11434`, `https://ollama.com`, and
-`https://api.ollama.com`. For a custom Ollama endpoint, set `OLLAMA_BASE_URL`
-in the backend environment and restart the backend before testing that URL
-in the admin UI. The test matches the complete base URL (ignoring surrounding
-whitespace and trailing slashes) and does not follow redirects. A reverse proxy
-path is supported when it is part of the server-configured URL. Saving a URL
-through the admin API does not add it to the test's allowlist.
+`https://api.ollama.com`. Administrators can edit these under **Admin → LLM
+Config → Manage allowed URLs**, one URL per line. Save the list before testing
+a custom server. Changes persist across restarts and apply immediately to new
+tests; deleted defaults are not restored. An empty list blocks Ollama tests.
+Gemini always uses its fixed provider address.
+
+The test matches the complete base URL (ignoring surrounding whitespace and
+trailing slashes) and does not follow redirects. Include a reverse proxy path
+in the allowed URL when needed. Saving provider settings or changing
+`OLLAMA_BASE_URL` does not grant access to a new destination. Both the UI and
+the backend allowlist endpoints require admin access; the latter require valid
+admin API credentials even when general API authentication is disabled.
 
 ## Useful tips
 

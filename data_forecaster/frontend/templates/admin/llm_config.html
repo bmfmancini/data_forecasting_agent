@@ -80,7 +80,7 @@
                         {% for error in form.model.errors %}<small class="text-danger d-block">{{ error }}</small>{% endfor %}
                     </div>
                     <div class="mb-3">{{ form.base_url.label(class="form-label") }}{{ form.base_url(class="form-control", placeholder="http://host.docker.internal:11434") }}
-                        <small class="text-muted">Only required for Ollama providers.</small>
+                        <small class="text-muted">Only required for Ollama providers. <a href="{{ url_for('admin.llm_allowed_urls') }}">Manage allowed URLs</a>.</small>
                         {% for error in form.base_url.errors %}<small class="text-danger d-block">{{ error }}</small>{% endfor %}
                     </div>
                     <div class="mb-3">{{ form.api_key.label(class="form-label") }}{{ form.api_key(class="form-control", value="", placeholder="•••••• (leave blank to keep current)") }}

@@ -47,6 +47,11 @@ def require_api_key(request: Request) -> dict[str, Any]:
     if not settings.API_KEY_ENABLED:
         return {}
 
+    return _authenticate_api_key(request)
+
+
+def _authenticate_api_key(request: Request) -> dict[str, Any]:
+    """Authenticate credentials regardless of the optional global auth toggle."""
     username: str | None = request.headers.get("X-API-Username")
     api_key: str | None = request.headers.get("X-API-Key")
 
@@ -68,6 +73,14 @@ def require_api_key(request: Request) -> dict[str, Any]:
             detail="Unauthorized",
         )
 
+    return user
+
+
+def require_verified_admin_api_key(request: Request) -> dict[str, Any]:
+    """Always require a verified admin for security policy reads and writes."""
+    user = _authenticate_api_key(request)
+    if not user.get("is_admin"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     return user
 
 

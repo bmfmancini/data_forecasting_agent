@@ -6,7 +6,16 @@ from typing import Any, Self
 
 import httpx
 import pytest
+from core import config as settings
+from core.database import init_database
+from core.llm_url_allowlist import put_allowed_origins
 from services import llm_validation_service as service
+
+
+@pytest.fixture(autouse=True)
+def isolated_allowlist(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "BACKEND_DB_PATH", str(tmp_path / "backend.db"))
+    init_database()
 
 
 class _Response:
@@ -224,7 +233,7 @@ async def test_supported_deployment_urls(monkeypatch, base_url):
 
 
 @pytest.mark.asyncio
-async def test_custom_endpoint_requires_server_configuration(monkeypatch):
+async def test_custom_endpoint_requires_saved_allowlist(monkeypatch):
     base_url = "http://ollama.internal:11434/proxy"
     client = _FakeClient(
         [
@@ -242,7 +251,7 @@ async def test_custom_endpoint_requires_server_configuration(monkeypatch):
     }
     assert not (await service.validate_llm_configuration(**args)).ok
     assert client.calls == []
-    monkeypatch.setattr(service.settings, "OLLAMA_BASE_URL", base_url + "/")
+    put_allowed_origins([base_url + "/"])
     assert (await service.validate_llm_configuration(**args)).ok
     assert client.calls[2][1] == base_url + "/api/chat"
 

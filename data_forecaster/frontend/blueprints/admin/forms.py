@@ -13,10 +13,18 @@ from wtforms import (
     SelectField,
     StringField,
     SubmitField,
+    TextAreaField,
 )
 from wtforms.validators import DataRequired, Length, NumberRange, Optional, Regexp, URL
 
 from blueprints.auth.forms import PASSWORD_COMPLEXITY_MESSAGE, PASSWORD_COMPLEXITY_RE
+
+
+class LLMAllowedOriginsForm(FlaskForm):
+    """Edit trusted LLM destinations independently of connection testing."""
+
+    origins = TextAreaField("Allowed base URLs", validators=[Length(max=205000)])
+    submit = SubmitField("Save allowed URLs")
 
 
 class UserCreateForm(FlaskForm):  # type: ignore[misc]
