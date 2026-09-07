@@ -153,9 +153,7 @@ class TestLLMConfigValidation:
                 "api_key": "stored-secret",
             },
         )
-        validator = AsyncMock(
-            return_value=LLMValidationResult(message="failed")
-        )
+        validator = AsyncMock(return_value=LLMValidationResult(message="failed"))
         monkeypatch.setattr(main, "validate_llm_configuration", validator)
 
         client.post(

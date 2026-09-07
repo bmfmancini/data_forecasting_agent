@@ -45,21 +45,17 @@ def test_init_db_seeds_forced_reset_admin_and_blank_api_config(tmp_path: Path) -
     with app.app_context():
         init_db()
         db = get_db()
-        user = db.execute(
-            """
+        user = db.execute("""
             SELECT username, password_hash, must_change_password
             FROM users
             WHERE username = 'admin'
-            """
-        ).fetchone()
-        api_config = db.execute(
-            """
+            """).fetchone()
+        api_config = db.execute("""
             SELECT base_url, timeout, verify_ssl, encrypted_username,
                    encrypted_password
             FROM api_credentials
             WHERE label = 'default'
-            """
-        ).fetchone()
+            """).fetchone()
         upload_config = db.execute(
             "SELECT value FROM app_config WHERE key = 'max_upload_mb'"
         ).fetchone()
@@ -82,13 +78,11 @@ def test_sync_app_config_applies_upload_limit(tmp_path: Path) -> None:
     with app.app_context():
         init_db()
         db = get_db()
-        db.execute(
-            """
+        db.execute("""
             UPDATE app_config
             SET value = '42'
             WHERE key = 'max_upload_mb'
-            """
-        )
+            """)
         db.commit()
 
         _sync_app_config_from_db(app)
@@ -116,13 +110,11 @@ def test_init_db_preserves_existing_api_credentials(tmp_path: Path) -> None:
 
         init_db()
 
-        row = db.execute(
-            """
+        row = db.execute("""
             SELECT encrypted_username, encrypted_password
             FROM api_credentials
             WHERE label = 'default'
-            """
-        ).fetchone()
+            """).fetchone()
 
     assert decrypt(row["encrypted_username"]) == "admin-user"
     assert decrypt(row["encrypted_password"]) == "admin-key"
@@ -136,5 +128,7 @@ def test_existing_report_table_gains_edit_storage(tmp_path):
         db.execute("ALTER TABLE forecast_reports DROP COLUMN section_edits_json")
         db.commit()
         init_db()
-        columns = {row["name"] for row in db.execute("PRAGMA table_info(forecast_reports)")}
+        columns = {
+            row["name"] for row in db.execute("PRAGMA table_info(forecast_reports)")
+        }
         assert "section_edits_json" in columns

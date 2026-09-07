@@ -81,6 +81,7 @@ class TestPreflightDecisionSchema:
         assert decision.kind == "country"
         assert decision.option_labels == ["United States", "Canada"]
 
+
 def test_detail_fields_and_country_regions():
     response = run_preflight_checks(_df(), "date", "value", 5)
     decisions = {d.key: d for d in response.decisions}
@@ -88,4 +89,6 @@ def test_detail_fields_and_country_regions():
         assert decisions[key].detail_key == key + "_details"
         assert decisions[key].detail_placeholder
         assert response.defaults[key + "_details"] == ""
-    assert {"code": "ON", "label": "Ontario"} in decisions["holidays_country"].subdivisions["CA"]
+    assert {"code": "ON", "label": "Ontario"} in decisions[
+        "holidays_country"
+    ].subdivisions["CA"]

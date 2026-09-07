@@ -192,13 +192,11 @@ def rename_report_for_user(report_id: int, user_id: int, title: str) -> bool:
 
 def list_report_owners() -> list[dict[str, Any]]:
     """List application users who currently own at least one report."""
-    rows = query_db(
-        """
+    rows = query_db("""
         SELECT u.id, u.username, COUNT(fr.id) AS report_count
         FROM users u JOIN forecast_reports fr ON fr.user_id = u.id
         GROUP BY u.id, u.username ORDER BY u.username COLLATE NOCASE
-        """
-    )
+        """)
     return rows if isinstance(rows, list) else []
 
 
@@ -222,8 +220,15 @@ def delete_all_reports_for_admin(user_id: int) -> int:
     return cursor.rowcount
 
 
-def edit_report_section_for_user(report_id: int, user_id: int, section_id: str,
-                                 action: str, version: str, title: str = "", body: str = "") -> bool:
+def edit_report_section_for_user(
+    report_id: int,
+    user_id: int,
+    section_id: str,
+    action: str,
+    version: str,
+    title: str = "",
+    body: str = "",
+) -> bool:
     """Atomically update an owned section, checking for concurrent edits."""
     connection = get_db()
     try:
@@ -235,11 +240,21 @@ def edit_report_section_for_user(report_id: int, user_id: int, section_id: str,
         if row is None:
             connection.rollback()
             return False
-        edits = apply_section_edit({"original_report": row["report_markdown"],
-                                    "section_edits": json.loads(row["section_edits_json"] or "{}")},
-                                   section_id, action, version, title, body)
-        connection.execute("UPDATE forecast_reports SET section_edits_json = ? WHERE id = ? AND user_id = ?",
-                           (json.dumps(edits), report_id, user_id))
+        edits = apply_section_edit(
+            {
+                "original_report": row["report_markdown"],
+                "section_edits": json.loads(row["section_edits_json"] or "{}"),
+            },
+            section_id,
+            action,
+            version,
+            title,
+            body,
+        )
+        connection.execute(
+            "UPDATE forecast_reports SET section_edits_json = ? WHERE id = ? AND user_id = ?",
+            (json.dumps(edits), report_id, user_id),
+        )
         connection.commit()
         return True
     except Exception:
@@ -249,8 +264,12 @@ def edit_report_section_for_user(report_id: int, user_id: int, section_id: str,
 
 def find_saved_report_id(user_id: int, original_markdown: str) -> int | None:
     """Reconnect a current report from a session created before edit support."""
-    row = get_db().execute(
-        "SELECT id FROM forecast_reports WHERE user_id = ? AND report_markdown = ? ORDER BY id DESC LIMIT 1",
-        (user_id, original_markdown),
-    ).fetchone()
+    row = (
+        get_db()
+        .execute(
+            "SELECT id FROM forecast_reports WHERE user_id = ? AND report_markdown = ? ORDER BY id DESC LIMIT 1",
+            (user_id, original_markdown),
+        )
+        .fetchone()
+    )
     return int(row["id"]) if row else None

@@ -213,9 +213,7 @@ def _refit_full_series_arima(
             else ForecastFitStatus.DEGRADED
         )
         failure_reason = (
-            None
-            if metrics.rmse is not None
-            else metrics.unavailable_reasons.get("all")
+            None if metrics.rmse is not None else metrics.unavailable_reasons.get("all")
         )
 
         return ForecastAdapterResult(

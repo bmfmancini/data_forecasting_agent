@@ -38,9 +38,16 @@ def render_analysis_report(
             widgets = (executive_report or {}).get("dashboard", {}).get("widgets", [])
             for tile in section["tiles"]:
                 # Descriptions apply only while the corresponding fact is unchanged.
-                tile["description"] = next((w.get("description", "") for w in widgets
-                    if f"{w.get('icon', '')} {w.get('title', '')}".strip() == tile["label"]
-                    and str(w.get("value", "")) == tile["value"]), "")
+                tile["description"] = next(
+                    (
+                        w.get("description", "")
+                        for w in widgets
+                        if f"{w.get('icon', '')} {w.get('title', '')}".strip()
+                        == tile["label"]
+                        and str(w.get("value", "")) == tile["value"]
+                    ),
+                    "",
+                )
         section["segments"] = _parse_report_segments(body, result)
     return render_template(
         "main/report.html",
@@ -95,17 +102,30 @@ def _dashboard_tiles(body: str) -> tuple[list[dict[str, str]], str]:
         end = start + 1
         while end < len(lines) and lines[end].strip().startswith("|"):
             end += 1
-        rows = lines[start + 1:end]
+        rows = lines[start + 1 : end]
         if not rows or not re.fullmatch(r"[\s|:\-]+", rows[0]):
             continue
         tiles = []
         for row in rows[1:]:
-            cells = [cell.strip().replace(r"\|", "|") for cell in re.split(r"(?<!\\)\|", row.strip().strip("|"))]
+            cells = [
+                cell.strip().replace(r"\|", "|")
+                for cell in re.split(r"(?<!\\)\|", row.strip().strip("|"))
+            ]
             if len(cells) != 3:
                 break
             label, value, status = cells
-            tiles.append({"label": label, "value": value,
-                          "status": status if status in {"positive", "negative", "warning", "info", "neutral"} else "neutral"})
+            tiles.append(
+                {
+                    "label": label,
+                    "value": value,
+                    "status": (
+                        status
+                        if status
+                        in {"positive", "negative", "warning", "info", "neutral"}
+                        else "neutral"
+                    ),
+                }
+            )
         else:
             if tiles:
                 return tiles, "\n".join(lines[:start] + lines[end:])

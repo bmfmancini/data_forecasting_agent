@@ -22,7 +22,6 @@ from forecasting.known_context import (
     to_prophet_holidays,
 )
 
-
 # ── Country helpers ────────────────────────────────────────────────────────────
 
 
@@ -230,8 +229,7 @@ class TestPrepareExogOptions:
                 ],
                 "known_covariates": {
                     "price": {
-                        str(d.date()): float(i)
-                        for i, d in enumerate(series.index)
+                        str(d.date()): float(i) for i, d in enumerate(series.index)
                     }
                 },
             },
@@ -251,7 +249,9 @@ class TestPrepareExogOptions:
         out = prepare_exog_options(
             {
                 "known_covariates": {
-                    "price": {str(d.date()): float(i) for i, d in enumerate(series.index)}
+                    "price": {
+                        str(d.date()): float(i) for i, d in enumerate(series.index)
+                    }
                 }
             },
             series,
@@ -263,17 +263,28 @@ class TestPrepareExogOptions:
         # No holidays declared → no prophet_holidays frame.
         assert "prophet_holidays" not in out
 
+
 def test_provincial_holidays_reach_model_inputs():
-    ontario = merge_events({"holidays_country": "CA", "holidays_subdivision": "ON"}, [2025])
-    quebec = merge_events({"holidays_country": "CA", "holidays_subdivision": "QC"}, [2025])
+    ontario = merge_events(
+        {"holidays_country": "CA", "holidays_subdivision": "ON"}, [2025]
+    )
+    quebec = merge_events(
+        {"holidays_country": "CA", "holidays_subdivision": "QC"}, [2025]
+    )
     assert any(e["date"] == "2025-02-17" for e in ontario)
     assert not any(e["date"] == "2025-02-17" for e in quebec)
     assert any(e["date"] == "2025-06-24" for e in quebec)
     assert not any(e["date"] == "2025-06-24" for e in ontario)
-    assert summarize_context({"holidays_country": "CA", "holidays_subdivision": "ON"})["holidays_subdivision"] == "ON"
+    assert (
+        summarize_context({"holidays_country": "CA", "holidays_subdivision": "ON"})[
+            "holidays_subdivision"
+        ]
+        == "ON"
+    )
 
 
 def test_invalid_subdivision_is_not_silently_ignored():
     import pytest
+
     with pytest.raises(ValueError, match="Unsupported state/province"):
         expand_holidays("CA", [2025], "INVALID")

@@ -138,9 +138,7 @@ class TestDbBackedConfig:
 
     def test_unknown_provider_rejected(self, db):
         with pytest.raises(ValueError, match="Unknown LLM provider"):
-            llm_config_store.put_llm_config(
-                "bogus", "m", None, None, 0.1, db_path=db
-            )
+            llm_config_store.put_llm_config("bogus", "m", None, None, 0.1, db_path=db)
 
     def test_is_configured(self, db):
         assert llm_config_store.is_configured(db) is False

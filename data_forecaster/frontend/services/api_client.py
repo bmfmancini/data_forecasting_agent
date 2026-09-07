@@ -494,9 +494,7 @@ class BackendAPIClient:
             verify=self._verify,
         )
 
-    def setup_bootstrap(
-        self, username: str, api_key: str
-    ) -> requests.Response:
+    def setup_bootstrap(self, username: str, api_key: str) -> requests.Response:
         """Atomically create the first admin API user and enable auth.
 
         Calls the one-time ``POST /setup/bootstrap`` endpoint.  No auth

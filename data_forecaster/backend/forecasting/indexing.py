@@ -32,7 +32,5 @@ def normalize_forecast_index(series: pd.Series) -> pd.Series:
     ):
         return series
 
-    logger.warning(
-        "Unsupported forecasting index detected; using a positional index."
-    )
+    logger.warning("Unsupported forecasting index detected; using a positional index.")
     return pd.Series(series.to_numpy(dtype=float), name=series.name)

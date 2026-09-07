@@ -47,9 +47,7 @@ _MODELS: list[dict[str, Any]] = [
 class _FakeResponse:
     """Minimal stand-in for :class:`requests.Response`."""
 
-    def __init__(
-        self, status_code: int, payload: dict[str, Any] | None = None
-    ) -> None:
+    def __init__(self, status_code: int, payload: dict[str, Any] | None = None) -> None:
         self.status_code = status_code
         self._payload = payload or {}
 
@@ -125,8 +123,10 @@ def mock_backend(
             backend_state["setup_complete"] = True
             return _FakeResponse(
                 200,
-                {"user": {"username": (json or {})["username"]},
-                 "setup_complete": True},
+                {
+                    "user": {"username": (json or {})["username"]},
+                    "setup_complete": True,
+                },
             )
         return _FakeResponse(404, {"detail": "Not found"})
 
@@ -169,9 +169,7 @@ def mock_backend(
 @pytest.fixture
 def app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Create a testing Flask app with an isolated database."""
-    monkeypatch.setattr(
-        "config.TestingConfig.DATABASE", str(tmp_path / "frontend.db")
-    )
+    monkeypatch.setattr("config.TestingConfig.DATABASE", str(tmp_path / "frontend.db"))
     application = create_app("testing")
     application.config["BACKEND_URL"] = _BACKEND_URL
     return application
@@ -188,9 +186,7 @@ def admin_client(app, mock_backend: dict[str, Any]):
     """Test client logged in as the seeded admin with setup complete."""
     mock_backend["setup_complete"] = True
     with app.app_context():
-        execute_db(
-            "UPDATE users SET must_change_password = 0 WHERE username = 'admin'"
-        )
+        execute_db("UPDATE users SET must_change_password = 0 WHERE username = 'admin'")
     test_client = app.test_client()
     with test_client.session_transaction() as sess:
         sess["_user_id"] = "1"
@@ -322,9 +318,7 @@ class TestSetupWizard:
         assert resp.status_code == 200
         assert b"Backend API Base URL" in resp.data
 
-    def test_bootstrap_submit_stores_encrypted_credentials(
-        self, app, client
-    ) -> None:
+    def test_bootstrap_submit_stores_encrypted_credentials(self, app, client) -> None:
         resp = client.post(
             "/setup/backend",
             data={"base_url": _BACKEND_URL},
@@ -531,10 +525,15 @@ class TestAdminConfigPages:
 
 
 class TestReportSectionEditing:
-    def test_current_report_edits_and_pdf_share_saved_content(self, admin_client, app, monkeypatch):
+    def test_current_report_edits_and_pdf_share_saved_content(
+        self, admin_client, app, monkeypatch
+    ):
         from blueprints.main import routes
         from services.report_editing import report_sections
-        original = "## 1. Summary\n\nOriginal words.\n\n---\n\n## 2. Risk\n\nRisk words."
+
+        original = (
+            "## 1. Summary\n\nOriginal words.\n\n---\n\n## 2. Risk\n\nRisk words."
+        )
         with app.app_context():
             report_id = routes.save_report(1, {"report": original}, "data.csv", 3)
         with admin_client.session_transaction() as sess:
@@ -544,30 +543,67 @@ class TestReportSectionEditing:
         assert page.status_code == 200
         assert b"Edit section" in page.data
         version = report_sections({"report": original})[0]["version"]
-        response = admin_client.post("/report/edit", data={"section_id": "0", "version": version, "action": "save", "title": "Summary", "body": "Edited <script>alert(1)</script> wording."})
+        response = admin_client.post(
+            "/report/edit",
+            data={
+                "section_id": "0",
+                "version": version,
+                "action": "save",
+                "title": "Summary",
+                "body": "Edited <script>alert(1)</script> wording.",
+            },
+        )
         assert response.status_code == 302
         page = admin_client.get(f"/reports/{report_id}")
         assert b"Edited" in page.data
         assert b"<script>alert(1)</script>" not in page.data
         risk_version = report_sections({"report": original})[1]["version"]
-        assert admin_client.post(f"/reports/{report_id}/edit", data={"section_id": "1", "version": risk_version, "action": "remove"}).status_code == 302
+        assert (
+            admin_client.post(
+                f"/reports/{report_id}/edit",
+                data={"section_id": "1", "version": risk_version, "action": "remove"},
+            ).status_code
+            == 302
+        )
         captured = []
-        monkeypatch.setattr(routes, "report_to_pdf", lambda text, **kwargs: captured.append(text) or b"%PDF-test")
+        monkeypatch.setattr(
+            routes,
+            "report_to_pdf",
+            lambda text, **kwargs: captured.append(text) or b"%PDF-test",
+        )
         assert admin_client.post("/report/export").status_code == 200
         assert "Edited" in captured[0]
         assert "Risk words" not in captured[0]
-        assert admin_client.post("/report/edit", data={"section_id": "0", "version": version, "action": "remove"}).status_code == 409
+        assert (
+            admin_client.post(
+                "/report/edit",
+                data={"section_id": "0", "version": version, "action": "remove"},
+            ).status_code
+            == 409
+        )
 
     def test_other_users_report_cannot_be_edited(self, admin_client, app):
         from blueprints.main import routes
+
         with app.app_context():
-            user_id = execute_db("INSERT INTO users (username, password_hash, role_id) VALUES ('other', 'hash', 1)")
-            report_id = routes.save_report(user_id, {"report": "## Summary\n\nPrivate"}, "data.csv", 3)
-        assert admin_client.post(f"/reports/{report_id}/edit", data={"section_id": "0", "action": "remove"}).status_code == 404
+            user_id = execute_db(
+                "INSERT INTO users (username, password_hash, role_id) VALUES ('other', 'hash', 1)"
+            )
+            report_id = routes.save_report(
+                user_id, {"report": "## Summary\n\nPrivate"}, "data.csv", 3
+            )
+        assert (
+            admin_client.post(
+                f"/reports/{report_id}/edit",
+                data={"section_id": "0", "action": "remove"},
+            ).status_code
+            == 404
+        )
 
     def test_dashboard_tiles_follow_edits_and_removal(self, admin_client, app):
         from blueprints.main import routes
         from services.report_editing import report_sections
+
         body = "| Metric | Value | Status |\n|---|---|---|\n| Model | SARIMA | info |"
         original = "## 1. Executive Dashboard\n\n" + body
         with app.app_context():
@@ -578,7 +614,16 @@ class TestReportSectionEditing:
         assert b"<table>" not in page.data
         version = report_sections({"report": original})[0]["version"]
         edited = body.replace("SARIMA", "Revised wording") + "\n\nAn analyst note."
-        admin_client.post(url + "/edit", data={"section_id": "0", "version": version, "action": "save", "title": "My dashboard", "body": edited})
+        admin_client.post(
+            url + "/edit",
+            data={
+                "section_id": "0",
+                "version": version,
+                "action": "save",
+                "title": "My dashboard",
+                "body": edited,
+            },
+        )
         page = admin_client.get(url)
         assert b'<div class="report-tile-value">Revised wording</div>' in page.data
         assert b"An analyst note." in page.data
@@ -586,7 +631,10 @@ class TestReportSectionEditing:
         with app.app_context():
             stored = routes.get_report_for_user(report_id, 1)
         version = report_sections(stored)[0]["version"]
-        admin_client.post(url + "/edit", data={"section_id": "0", "version": version, "action": "remove"})
+        admin_client.post(
+            url + "/edit",
+            data={"section_id": "0", "version": version, "action": "remove"},
+        )
         assert b'class="report-tile-grid"' not in admin_client.get(url).data
 
 

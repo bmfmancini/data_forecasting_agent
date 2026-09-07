@@ -56,15 +56,22 @@ def _business_context_block(report: ExecutiveReport) -> str:
     lines: list[str] = []
     for key, value in context.items():
         if key == "dated_context":
-            lines.append("- DATED INTERPRETIVE CONTEXT (available for every model): " + json.dumps(value, default=str))
-            lines.append("Use relevant event_matches in historical analysis and forecast outlook to explain calendar coincidences. Include the supplied date, event name, and observed or projected status. Treat declared external values as context even for models without regressors. Do not dismiss context solely because the model cannot ingest it, or claim that indirect seasonality establishes an event effect.")
+            lines.append(
+                "- DATED INTERPRETIVE CONTEXT (available for every model): "
+                + json.dumps(value, default=str)
+            )
+            lines.append(
+                "Use relevant event_matches in historical analysis and forecast outlook to explain calendar coincidences. Include the supplied date, event name, and observed or projected status. Treat declared external values as context even for models without regressors. Do not dismiss context solely because the model cannot ingest it, or claim that indirect seasonality establishes an event effect."
+            )
             continue
         if key == "known_context" and isinstance(value, dict):
             sub: list[str] = []
             country = value.get("holidays_country")
             if country:
                 region = value.get("holidays_subdivision")
-                sub.append(f"holiday calendar: {country}" + (f" ({region})" if region else ""))
+                sub.append(
+                    f"holiday calendar: {country}" + (f" ({region})" if region else "")
+                )
             events_by_type = value.get("events_by_type") or {}
             if events_by_type:
                 parts = [f"{count} {kind}" for kind, count in events_by_type.items()]
@@ -79,8 +86,9 @@ def _business_context_block(report: ExecutiveReport) -> str:
         lines.append(f"- {key}: {value}")
     if not lines:
         return ""
-    return "\n\nBUSINESS CONTEXT (user-supplied; cite only when relevant):\n" + "\n".join(
-        lines
+    return (
+        "\n\nBUSINESS CONTEXT (user-supplied; cite only when relevant):\n"
+        + "\n".join(lines)
     )
 
 
@@ -323,13 +331,24 @@ def _generate_section(
                 _unsupported_assumption_claims(narrative, evidence)
             )
         if validation_warnings and not _repair_attempt:
-            logger.info("Requesting narrative correction for %s: %s", section_name, "; ".join(validation_warnings))
+            logger.info(
+                "Requesting narrative correction for %s: %s",
+                section_name,
+                "; ".join(validation_warnings),
+            )
             return _generate_section(
-                llm, prompt, section, section_name, total_usage,
-                extra_instructions + "\n\nREVISION REQUIRED: The previous response failed these checks: "
+                llm,
+                prompt,
+                section,
+                section_name,
+                total_usage,
+                extra_instructions
+                + "\n\nREVISION REQUIRED: The previous response failed these checks: "
                 + "; ".join(validation_warnings)
                 + "\nRewrite from the supplied evidence. Preserve all safeguards. For candidate breaks, first validate dates, effect sizes and persistence; use 'Only if confirmed' before recommending model changes.",
-                fallback_sections, business_context, True,
+                fallback_sections,
+                business_context,
+                True,
             )
         if validation_warnings:
             logger.warning(
@@ -486,8 +505,7 @@ def _contradictory_data_quality_rating(
     patterns = (
         r"\b(?:overall\s+)?data quality(?:\s+rating)?\s*"
         r"(?:is|was|remains|:)\s*(?:rated\s+)?(?P<rating>good|fair|poor)\b",
-        r"\boverall rating\s*(?:is|was|remains|:)\s*"
-        r"(?P<rating>good|fair|poor)\b",
+        r"\boverall rating\s*(?:is|was|remains|:)\s*" r"(?P<rating>good|fair|poor)\b",
     )
     for pattern in patterns:
         for match in re.finditer(pattern, normalized):
@@ -535,9 +553,9 @@ def _unsupported_change_point_sequencing(
         for term in ("validate", "validation", "confirm")
         if term in normalized
     ]
-    validation_first = bool(validation_positions) and min(
-        validation_positions
-    ) < min(option_positions)
+    validation_first = bool(validation_positions) and min(validation_positions) < min(
+        option_positions
+    )
     conditional = bool(
         re.search(
             r"\b(?:only if|if (?:the )?(?:break|shift).{0,30}"
@@ -597,9 +615,7 @@ def _unsupported_risk_claims(
     Preserves the change-point validation-first sequencing on structural-break
     risks and blocks fabricated financial impacts.
     """
-    warnings: list[str] = list(
-        _unsupported_change_point_sequencing(text, section_data)
-    )
+    warnings: list[str] = list(_unsupported_change_point_sequencing(text, section_data))
     normalized = re.sub(r"\s+", " ", text).lower()
     if re.search(r"\$[\d.,]+\s*(million|billion|thousand|m|b|k)\b", normalized):
         warnings.append(
@@ -622,26 +638,48 @@ def _unsupported_assumption_claims(
     declared = {key: value for key, value in context.items() if value}
     known = declared.get("known_context")
     if isinstance(known, dict):
-        declared["known_context"] = {key: value for key, value in known.items() if value}
+        declared["known_context"] = {
+            key: value for key, value in known.items() if value
+        }
     # Rule/instruction strings are not evidence of a declared external factor.
     dated = declared.get("dated_context")
     if isinstance(dated, dict):
-        declared["dated_context"] = {key: dated[key] for key in ("dated_events", "event_matches", "declared_covariate_values") if dated.get(key)}
-    evidence = json.dumps({**{key: value for key, value in section_data.items() if key != "business_context"}, "business_context": declared}, default=str).lower()
+        declared["dated_context"] = {
+            key: dated[key]
+            for key in ("dated_events", "event_matches", "declared_covariate_values")
+            if dated.get(key)
+        }
+    evidence = json.dumps(
+        {
+            **{
+                key: value
+                for key, value in section_data.items()
+                if key != "business_context"
+            },
+            "business_context": declared,
+        },
+        default=str,
+    ).lower()
     normalized = re.sub(r"[‐‑‒–—−]", "-", text).lower()
     warnings: list[str] = []
-    if not re.search(r"\b(?:promotions?|outages?|policy changes?|interventions?)\b", evidence) and re.search(
-        r"\b(?:promotion|outage|policy change|intervention)\b", normalized
-    ):
+    if not re.search(
+        r"\b(?:promotions?|outages?|policy changes?|interventions?)\b", evidence
+    ) and re.search(r"\b(?:promotion|outage|policy change|intervention)\b", normalized):
         warnings.append(
             "Assumption narrative introduced interventions not declared in the "
             "structured context."
         )
     for label, claim_pattern, evidence_pattern in (
         ("holidays", r"\bholidays?\b", r"\bholidays?\b|holidays_country"),
-        ("covariates", r"\b(?:covariates?|exogenous variables?|price signals?)\b", r"\b(?:covariates?|exogenous variables?|price signals?)\b|declared_covariate_values"),
+        (
+            "covariates",
+            r"\b(?:covariates?|exogenous variables?|price signals?)\b",
+            r"\b(?:covariates?|exogenous variables?|price signals?)\b|declared_covariate_values",
+        ),
     ):
-        if re.search(claim_pattern, normalized) and not re.search(evidence_pattern, evidence):
+        if re.search(claim_pattern, normalized) and not re.search(
+            evidence_pattern, evidence
+        ):
             warnings.append(
                 f"Assumption narrative introduced {label} not declared in the structured context."
             )

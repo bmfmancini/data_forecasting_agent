@@ -734,7 +734,10 @@ class TestBusinessContextAndConditionalSections:
         assert "holiday calendar" in joined.lower()
         # The structured context is threaded into business_context for narration.
         assert "known_context" in report.metadata.business_context
-        assert report.metadata.business_context["known_context"]["holidays_country"] == "US"
+        assert (
+            report.metadata.business_context["known_context"]["holidays_country"]
+            == "US"
+        )
 
     def test_custom_events_assumption_when_declared(
         self,
@@ -801,7 +804,9 @@ class TestBusinessContextAndConditionalSections:
         sample_all_metrics: dict[str, dict[str, float]],
     ) -> None:
         # Dynamic Regression can ingest exog; no "cannot ingest" risk should fire.
-        exog_forecast = sample_forecast.model_copy(update={"model_used": "Dynamic Regression"})
+        exog_forecast = sample_forecast.model_copy(
+            update={"model_used": "Dynamic Regression"}
+        )
         report = self._build(
             sample_validation,
             sample_statistical,
@@ -820,24 +825,37 @@ class TestBusinessContextAndConditionalSections:
 
 @pytest.mark.parametrize("model", ["Holt-Winters", "SARIMA", "EWMA"])
 def test_univariate_reports_receive_dated_context(
-    model, sample_validation, sample_statistical, sample_model_selection, sample_forecast
+    model,
+    sample_validation,
+    sample_statistical,
+    sample_model_selection,
+    sample_forecast,
 ):
     import pandas as pd
     from report.narrative import _business_context_block
     from report.renderers.markdown_renderer import MarkdownRenderer
     from report.renderers.html_renderer import HTMLRenderer
 
-    forecast = sample_forecast.model_copy(update={
-        "model_used": model,
-        "forecast": [10, 30, 12],
-        "forecast_dates": ["2025-12-24", "2025-12-25", "2025-12-26"],
-        "lower_ci": [], "upper_ci": [],
-    })
+    forecast = sample_forecast.model_copy(
+        update={
+            "model_used": model,
+            "forecast": [10, 30, 12],
+            "forecast_dates": ["2025-12-24", "2025-12-25", "2025-12-26"],
+            "lower_ci": [],
+            "upper_ci": [],
+        }
+    )
     report = ExecutiveReportBuilder().build(
-        sample_validation, sample_statistical, sample_model_selection,
-        forecast, None, {},
+        sample_validation,
+        sample_statistical,
+        sample_model_selection,
+        forecast,
+        None,
+        {},
         preflight_options={"holidays_country": "CA", "holidays_subdivision": "ON"},
-        historical_series=pd.Series([10, 25, 12], index=pd.date_range("2024-12-24", periods=3)),
+        historical_series=pd.Series(
+            [10, 25, 12], index=pd.date_range("2024-12-24", periods=3)
+        ),
     )
     context = _business_context_block(report)
     assert "Christmas" in context

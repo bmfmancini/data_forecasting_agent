@@ -484,7 +484,6 @@ def saved_report(report_id: int) -> str:
     )
 
 
-
 def _current_report_result() -> dict[str, Any]:
     report_id = session.get("analysis_report_id")
     if not report_id:
@@ -502,10 +501,15 @@ def _current_report_result() -> dict[str, Any]:
 
 
 def _edit_report(report_id: int | None, destination: str) -> Response:
-    values = {key: request.form.get(key, "") for key in ("section_id", "action", "version", "title", "body")}
+    values = {
+        key: request.form.get(key, "")
+        for key in ("section_id", "action", "version", "title", "body")
+    }
     try:
         if report_id is not None:
-            if not edit_report_section_for_user(report_id, int(current_user.id), **values):
+            if not edit_report_section_for_user(
+                report_id, int(current_user.id), **values
+            ):
                 abort(404)
         else:
             result = dict(session.get("analysis_result") or {})
@@ -514,10 +518,23 @@ def _edit_report(report_id: int | None, destination: str) -> Response:
             result["report"] = effective_markdown(result)
             session["analysis_result"] = result
     except EditConflict as exc:
-        current_app.logger.warning("Report edit conflict for user_id=%s report_id=%s", current_user.id, report_id, exc_info=True)
-        return "Report could not be updated due to a version conflict. Please refresh and try again.", 409
+        current_app.logger.warning(
+            "Report edit conflict for user_id=%s report_id=%s",
+            current_user.id,
+            report_id,
+            exc_info=True,
+        )
+        return (
+            "Report could not be updated due to a version conflict. Please refresh and try again.",
+            409,
+        )
     except ValueError as exc:
-        current_app.logger.warning("Invalid report edit input for user_id=%s report_id=%s", current_user.id, report_id, exc_info=True)
+        current_app.logger.warning(
+            "Invalid report edit input for user_id=%s report_id=%s",
+            current_user.id,
+            report_id,
+            exc_info=True,
+        )
         return "Invalid report edit request.", 400
     flash("Report updated.", "success")
     return redirect(destination)
