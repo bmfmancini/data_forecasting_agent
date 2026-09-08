@@ -51,6 +51,7 @@ from core.llm_config_store import get_llm_config, is_configured, put_llm_config
 from core.llm_url_allowlist import get_allowed_origins, put_allowed_origins
 from forecasting import registry
 from core.logging_config import get_logger
+from core.system_settings_store import is_llm_enabled, set_llm_enabled
 from schemas import (
     APIKeyRotatedResponse,
     APIUserCreateRequest,
@@ -74,6 +75,7 @@ from schemas import (
     ModelsResponse,
     ModelUpdateRequest,
     LLMConfigResponse,
+    LLMEnabledRequest,
     LLMAllowedOrigins,
     LLMConfigTestResponse,
     LLMConfigUpdateRequest,
@@ -293,17 +295,19 @@ def auth_check(
 def llm_health_endpoint() -> dict[str, Any]:
     """Return a minimal LLM liveness status.
 
-    The public response is intentionally limited to ``llm_configured``
-    and ``llm_reachable`` booleans so that provider names, configuration
-    details, and error messages are not exposed to unauthenticated
-    callers.  The full :func:`llm_health` result is available for
-    internal/server-side use only.
+    The public response is intentionally limited to ``llm_enabled``,
+    ``llm_configured``, and ``llm_reachable`` booleans so that provider
+    names, configuration details, and error messages are not exposed to
+    unauthenticated callers.  The full :func:`llm_health` result is
+    available for internal/server-side use only.
 
     Returns:
-        A JSON dict with keys ``llm_configured`` and ``llm_reachable``.
+        A JSON dict with keys ``llm_enabled``, ``llm_configured``, and
+        ``llm_reachable``.
     """
     full = llm_health()
     return {
+        "llm_enabled": full.get("llm_enabled", True),
         "llm_configured": full.get("llm_configured", False),
         "llm_reachable": full.get("llm_reachable", False),
     }
@@ -358,17 +362,27 @@ def llm_health() -> dict[str, Any]:
 
     Returns:
         dict: A dictionary with keys:
+            - "llm_enabled": bool indicating the deployment-wide AI switch.
             - "llm_configured": bool indicating if an LLM provider is configured.
             - "llm_reachable": bool indicating if the LLM is reachable.
             - "llm_provider": str indicating the configured LLM provider ("gemini" or "ollama").
             - "error": str containing error message if any, otherwise None.
+
+    When AI features are disabled deployment-wide, no provider probe is
+    made — the endpoint returns immediately without any network call.
     """
     result: dict[str, Any] = {
+        "llm_enabled": False,
         "llm_configured": False,
         "llm_reachable": False,
         "llm_provider": None,
         "error": None,
     }
+
+    if not is_llm_enabled():
+        result["error"] = "AI features are disabled."
+        return result
+    result["llm_enabled"] = True
 
     config = get_llm_config()
     if config.provider in ("ollama", "ollama_cloud"):
@@ -710,6 +724,19 @@ def analyze(
     if not is_queue_ready():
         raise HTTPException(status_code=503, detail="Service not ready.")
 
+    # The effective mode is what runs: a per-run Traditional Forecasting
+    # request, or the deployment-wide switch already being off.  The job
+    # worker re-checks the global setting again at execution time.
+    traditional = body.traditional_mode or not is_llm_enabled()
+    if traditional and not body.forced_model:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Traditional Forecasting requires selecting a specific "
+                "forecast model; auto selection is disabled."
+            ),
+        )
+
     stored = get_file(body.file_id, requester=_user)
     if stored is None:
         raise HTTPException(
@@ -726,6 +753,7 @@ def analyze(
             value_col=value_col,
             forecast_horizon=body.forecast_horizon,
             forced_model=body.forced_model,
+            traditional_mode=traditional,
             user_prompt=body.user_prompt,
             preflight_options=body.preflight_options,
             owner_id=_user.get("id"),
@@ -888,6 +916,7 @@ def record_forecast_actuals(
     responses={
         404: {"description": "Session data not found"},
         500: {"description": "Chat agent processing error"},
+        503: {"description": "AI features are disabled on this deployment"},
     },
 )
 async def chat_explorer(
@@ -895,6 +924,14 @@ async def chat_explorer(
     _user: Annotated[dict, Depends(require_api_key)],
 ) -> ChatResponse:
     """Allow users to chat with the agent about the uploaded data and results."""
+    if not is_llm_enabled():
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "AI chat is disabled on this deployment (Traditional "
+                "Forecasting mode)."
+            ),
+        )
     if request.file_id:
         stored = get_file(request.file_id, requester=_user)
         if not stored:
@@ -1086,6 +1123,7 @@ def llm_config_get(
         "temperature": config.temperature,
         "api_key_set": config.api_key is not None,
         "configured": is_configured(),
+        "llm_enabled": is_llm_enabled(),
     }
 
 
@@ -1140,6 +1178,34 @@ def llm_config_put(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return llm_config_get(_user)
+
+
+@app.put(
+    "/config/llm/enabled",
+    response_model=LLMConfigResponse,
+)
+def llm_enabled_put(
+    request: LLMEnabledRequest,
+    _user: Annotated[dict, Depends(require_admin_api_key)],
+) -> dict[str, Any]:
+    """Set the deployment-wide "Enable AI features" switch.
+
+    Disabling forces Traditional Forecasting for all forecasts, disables
+    chat and AI narratives, and hides the per-run toggle; users cannot
+    override.  The flag lives in ``system_settings`` (independent of
+    provider configuration) and is read live — no restart is required.
+
+    Like ``PUT /config/llm``, this is callable during the setup wizard
+    while auth is off, so a fresh install can be marked Traditional
+    Forecasting before any admin user is configured.
+    """
+    set_llm_enabled(request.enabled)
+    logger.info(
+        "AI features %s by admin user_id=%s",
+        "enabled" if request.enabled else "disabled",
+        _user.get("id"),
+    )
     return llm_config_get(_user)
 
 

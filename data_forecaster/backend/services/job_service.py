@@ -12,6 +12,7 @@ from typing import Any, cast
 import core.config as settings
 from core.database import get_connection
 from core.logging_config import get_logger
+from core.system_settings_store import is_llm_enabled
 from schemas import AnalysisResponse
 from services.file_service import get_file, release_file, reserve_file
 
@@ -148,6 +149,7 @@ def create_job(
     forced_model: str | None,
     user_prompt: str | None,
     preflight_options: dict[str, Any] | None,
+    traditional_mode: bool = False,
     owner_id: int | None = None,
     application_user_id: int | None = None,
     application_username: str | None = None,
@@ -161,6 +163,7 @@ def create_job(
         "value_col": value_col,
         "forecast_horizon": forecast_horizon,
         "forced_model": forced_model,
+        "traditional_mode": bool(traditional_mode),
         "user_prompt": user_prompt,
         "preflight_options": preflight_options or {},
     }
@@ -204,9 +207,9 @@ def _insert_job(
             INSERT INTO forecast_jobs (
                 job_id, backend_owner_id, application_user_id,
                 application_username, application_user_is_admin, file_id, date_col,
-                value_col, forecast_horizon, forced_model, user_prompt,
-                preflight_options, status, step
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+                value_col, forecast_horizon, forced_model, traditional_mode,
+                user_prompt, preflight_options, status, step
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
             """,
             (
                 job_id,
@@ -219,6 +222,7 @@ def _insert_job(
                 request_data["value_col"],
                 request_data["forecast_horizon"],
                 request_data["forced_model"],
+                int(bool(request_data.get("traditional_mode", False))),
                 request_data["user_prompt"],
                 json.dumps(request_data["preflight_options"]),
                 "Queued — waiting for an available slot…",
@@ -388,6 +392,23 @@ async def _run_job(job_id: str, job: dict[str, Any]) -> None:
         release_file(str(job["file_id"]))
         return
 
+    # Re-check the deployment-wide setting at worker execution: an
+    # administrator may have disabled AI after this job was queued.  The
+    # effective mode is what runs, never the request's intent alone.
+    traditional = bool(job.get("traditional_mode", 0)) or not is_llm_enabled()
+    if traditional and not job["forced_model"]:
+        # A queued Auto-selection job that can no longer run: fail loudly
+        # with a clear explanation — never silently select a model.
+        _set_job_error(
+            job_id,
+            "AI features were disabled by an administrator before this "
+            "forecast started. Traditional Forecasting requires selecting a "
+            "specific forecast model — please choose a model and run the "
+            "forecast again.",
+        )
+        release_file(str(job["file_id"]))
+        return
+
     def run_pipeline_sync() -> AnalysisResponse:
         return _run_pipeline(
             df=stored["df"],
@@ -397,6 +418,7 @@ async def _run_job(job_id: str, job: dict[str, Any]) -> None:
             freq=stored["freq"],
             forecast_horizon=int(job["forecast_horizon"]),
             forced_model=job["forced_model"],
+            traditional_mode=traditional,
             user_prompt=job["user_prompt"],
             preflight_options=json.loads(str(job["preflight_options"])),
             chroma_persist_dir=settings.CHROMA_PERSIST_DIR,

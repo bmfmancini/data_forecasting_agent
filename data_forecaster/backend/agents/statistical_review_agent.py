@@ -760,11 +760,14 @@ def run_statistical_review_agent(
     model_selection: ModelSelectionResult,
     forecast_result: ForecastResult,
     all_metrics: dict[str, dict[str, float]],
+    use_llm: bool = True,
 ) -> StatisticalReviewResult:
     """Run the statistical review (QA) agent over pipeline outputs.
 
     Performs deterministic consistency pre-checks and then invokes an LLM
     to produce a structured review with verdict, flags, and endorsements.
+    With ``use_llm=False`` (Traditional Forecasting) the review is the
+    deterministic pre-check only — no LLM client is constructed.
 
     Args:
         stat_result:       Output of the statistical analysis agent.
@@ -772,6 +775,8 @@ def run_statistical_review_agent(
         forecast_result:   Output of the forecasting agent.
         all_metrics:       Dict of all model metrics, e.g.
                            ``{"ARIMA": {"RMSE": x, "MAE": y, "MAPE": z}, ...}``.
+        use_llm:           When ``False``, skip the LLM review and return the
+                           deterministic pre-check verdict.
 
     Returns:
         A :class:`StatisticalReviewResult` with verdict, flags, endorsements,
@@ -798,80 +803,100 @@ def run_statistical_review_agent(
     reasoning_steps: list[dict[str, Any]] = []
     narrative_uncertainty = "deterministic_precheck"
 
-    try:
-        llm = get_llm(temperature=0)
-        chain = prompt | llm
-        inputs = {
-            "statistical_profile": statistical_profile,
-            "model_selection": model_selection_text,
-            "forecast_results": forecast_text,
-            "all_metrics": all_metrics_text,
-            "pre_check_flags": pre_check_text,
-        }
-        response = chain.invoke(inputs)
-        output = response.content
-        token_usage = extract_token_usage(
-            response, input_text=estimate_input_text(prompt, inputs)
-        )
-        logger.info("Statistical review LLM output: %s", output[:200])
-
-        verdict = _parse_verdict(output)
-        narrative_uncertainty = "validated_llm_interpretation"
-        llm_flags = _parse_flags(output)
-        endorsements = _parse_endorsements(output)
-        summary = _parse_summary(output)
-
-        validation_warnings = validate_llm_output(
-            output,
-            list(all_metrics),
-            {
-                "all_metrics": all_metrics,
-                "selected_model": model_selection.selected_model,
-            },
-        )
-        for warning in validation_warnings:
-            llm_flags.append(
-                {
-                    "agent": "statistical",
-                    "severity": "warning",
-                    "issue": f"Unsupported LLM review claim: {warning}",
-                    "recommendation": "Use only the supplied deterministic evidence.",
-                }
+    if use_llm:
+        try:
+            chain = prompt | get_llm(temperature=0)
+            inputs = {
+                "statistical_profile": statistical_profile,
+                "model_selection": model_selection_text,
+                "forecast_results": forecast_text,
+                "all_metrics": all_metrics_text,
+                "pre_check_flags": pre_check_text,
+            }
+            response = chain.invoke(inputs)
+            output = response.content
+            token_usage = extract_token_usage(
+                response, input_text=estimate_input_text(prompt, inputs)
             )
+            logger.info("Statistical review LLM output: %s", output[:200])
 
-        all_flags = _merge_review_flags(pre_check_flags, llm_flags)
+            verdict = _parse_verdict(output)
+            narrative_uncertainty = "validated_llm_interpretation"
+            llm_flags = _parse_flags(output)
+            endorsements = _parse_endorsements(output)
+            summary = _parse_summary(output)
 
-        verdict = _compute_verdict(verdict, pre_check_flags)
+            validation_warnings = validate_llm_output(
+                output,
+                list(all_metrics),
+                {
+                    "all_metrics": all_metrics,
+                    "selected_model": model_selection.selected_model,
+                },
+            )
+            for warning in validation_warnings:
+                llm_flags.append(
+                    {
+                        "agent": "statistical",
+                        "severity": "warning",
+                        "issue": f"Unsupported LLM review claim: {warning}",
+                        "recommendation": "Use only the supplied deterministic evidence.",
+                    }
+                )
 
+            all_flags = _merge_review_flags(pre_check_flags, llm_flags)
+
+            verdict = _compute_verdict(verdict, pre_check_flags)
+
+            reasoning_steps = [
+                {
+                    "thought": "Running deterministic consistency pre-checks...",
+                    "observation": pre_check_text,
+                },
+                {
+                    "thought": "LLM reviewing pipeline outputs for methodological soundness...",
+                    "observation": output,
+                },
+            ]
+
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Statistical review agent LLM call failed: %s — using pre-check only.",
+                exc,
+                exc_info=True,
+            )
+            verdict = "warn" if pre_check_flags else "pass"
+            all_flags = list(pre_check_flags)
+            endorsements = []
+            summary = (
+                "Statistical review completed via deterministic pre-check only "
+                "(LLM unavailable)."
+            )
+            reasoning_steps = [
+                {
+                    "thought": f"Statistical review agent LLM failed: {exc}",
+                    "observation": "Falling back to deterministic pre-check flags only.",
+                }
+            ]
+    else:
+        # Traditional Forecasting: the deterministic pre-check *is* the
+        # review. No LLM client is constructed, no failure is logged.
+        verdict = "warn" if pre_check_flags else "pass"
+        all_flags = list(pre_check_flags)
+        endorsements = []
+        summary = (
+            "Statistical review completed via deterministic pre-check only "
+            "(Traditional Forecasting — LLM skipped by request)."
+        )
         reasoning_steps = [
             {
                 "thought": "Running deterministic consistency pre-checks...",
                 "observation": pre_check_text,
             },
             {
-                "thought": "LLM reviewing pipeline outputs for methodological soundness...",
-                "observation": output,
+                "thought": "Traditional Forecasting: deterministic pre-check is the complete review (LLM skipped by request).",
+                "observation": "Complete",
             },
-        ]
-
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "Statistical review agent LLM call failed: %s — using pre-check only.",
-            exc,
-            exc_info=True,
-        )
-        verdict = "warn" if pre_check_flags else "pass"
-        all_flags = list(pre_check_flags)
-        endorsements = []
-        summary = (
-            "Statistical review completed via deterministic pre-check only "
-            "(LLM unavailable)."
-        )
-        reasoning_steps = [
-            {
-                "thought": f"Statistical review agent LLM failed: {exc}",
-                "observation": "Falling back to deterministic pre-check flags only.",
-            }
         ]
 
     logger.info(

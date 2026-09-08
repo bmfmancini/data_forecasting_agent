@@ -9,6 +9,10 @@
     Affected sections: {{ er.metadata.llm_fallback_sections | unique | map('replace', '_', ' ') | join(', ') }}.
     {% endif %}
 </div>
+{% elif traditional_mode %}
+<div class="alert alert-info">
+    Traditional Forecasting — generated without AI assistance.
+</div>
 {% endif %}
 <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
     <div>

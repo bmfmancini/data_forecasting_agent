@@ -52,9 +52,10 @@ CREATE TABLE IF NOT EXISTS forecast_jobs (
     application_user_is_admin INTEGER NOT NULL DEFAULT 0,
     file_id                   TEXT NOT NULL,
     date_col                  TEXT NOT NULL,
-    value_col                 TEXT NOT NULL,
+    value_col                  TEXT NOT NULL,
     forecast_horizon          INTEGER NOT NULL,
     forced_model              TEXT,
+    traditional_mode          INTEGER NOT NULL DEFAULT 0,
     user_prompt               TEXT,
     preflight_options         TEXT NOT NULL DEFAULT '{}',
     status                    TEXT NOT NULL,
@@ -145,10 +146,15 @@ INSERT OR IGNORE INTO model_config (name, enabled, priority) VALUES
 
 -- Singleton system-wide setup and deployment state.  ``setup_complete``
 -- gates the first-run wizard; once true the DB is authoritative and
--- env-based service-user reconciliation is skipped.
+-- env-based service-user reconciliation is skipped.  ``llm_enabled`` is
+-- the deployment-wide "Enable AI features" switch: when 0 every forecast
+-- runs in Traditional Forecasting mode and chat/LLM features are off.
+-- It lives here — not in ``llm_config`` — because it must be readable on
+-- installs that never configure an LLM provider.
 CREATE TABLE IF NOT EXISTS system_settings (
     singleton      INTEGER PRIMARY KEY CHECK (singleton = 1),
     setup_complete INTEGER NOT NULL DEFAULT 0,
+    llm_enabled    INTEGER NOT NULL DEFAULT 1,
     worker_mode    TEXT    NOT NULL DEFAULT 'standalone',
     worker_enrollment_token_hash TEXT,
     updated_at     TEXT    NOT NULL DEFAULT (datetime('now'))
@@ -208,7 +214,42 @@ def transaction(db_path: str | None = None) -> Iterator[sqlite3.Connection]:
         connection.close()
 
 
+_ADDITIVE_COLUMN_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
+    # (table, column, DDL applied when the column is missing)
+    (
+        "system_settings",
+        "llm_enabled",
+        "ALTER TABLE system_settings ADD COLUMN llm_enabled "
+        "INTEGER NOT NULL DEFAULT 1",
+    ),
+    (
+        "forecast_jobs",
+        "traditional_mode",
+        "ALTER TABLE forecast_jobs ADD COLUMN traditional_mode "
+        "INTEGER NOT NULL DEFAULT 0",
+    ),
+)
+
+
+def _migrate_schema(connection: sqlite3.Connection) -> None:
+    """Apply additive column migrations for deployments predating them.
+
+    ``CREATE TABLE IF NOT EXISTS`` never adds columns to an existing
+    database, so each schema addition needs a guarded ``ALTER TABLE``.
+    The check-then-add loop is idempotent: running it against an already
+    migrated (or freshly created) database is a no-op.
+    """
+    for table, column, ddl in _ADDITIVE_COLUMN_MIGRATIONS:
+        columns = {
+            str(row["name"])
+            for row in connection.execute(f"PRAGMA table_info({table})")
+        }
+        if column not in columns:
+            connection.execute(ddl)
+
+
 def init_database() -> None:
     """Create all backend persistence tables and indexes."""
     with transaction() as connection:
         connection.executescript(_SCHEMA)
+        _migrate_schema(connection)

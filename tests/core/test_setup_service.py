@@ -92,6 +92,7 @@ class TestSetupStatus:
             "setup_complete": False,
             "admin_exists": False,
             "llm_configured": False,
+            "llm_enabled": True,
             "models_enabled": 7,
         }
 

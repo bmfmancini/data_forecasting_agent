@@ -125,12 +125,16 @@ def run_forecasting_agent(
     loss_preference: str = "auto",
     preprocessing_options: dict[str, Any] | None = None,
     exclude_models: list[str] | None = None,
+    use_llm: bool = True,
 ) -> tuple[ForecastResult, dict[str, dict[str, float]]]:
     """Select a complete procedure, refit it, and audit its untouched test.
 
     All numerical evidence comes from identical rolling origins. Production
     failures trigger the same selection policy with the failed procedure
     excluded. Neither final-test scores nor legacy adapter holdouts rank models.
+
+    With ``use_llm=False`` (Traditional Forecasting) the loss metric is the
+    deterministic default resolution and no LLM client is constructed.
     """
     options = dict(preprocessing_options or {})
     if (
@@ -183,32 +187,43 @@ def run_forecasting_agent(
         }
     ]
     # The model may interpret context, but receives no final-test observations.
-    try:
-        llm = get_llm(temperature=0)
-        inputs = {
-            "selected": "Pending common rolling-origin selection",
-            "summary": comparison_summary,
-            "requested_loss": loss_preference,
-            "business_context": _business_context(options),
-        }
-        response = (FORECASTING_PROMPT | llm).invoke(inputs)
-        resolved_loss, loss_source = _resolve_loss_preference(
-            loss_preference, str(response.content)
-        )
-        loss_rationale = _loss_recommendation_rationale(
-            resolved_loss, loss_source, str(response.content)
-        )
-        token_usage = extract_token_usage(
-            response, input_text=estimate_input_text(FORECASTING_PROMPT, inputs)
-        )
+    if use_llm:
+        try:
+            llm = get_llm(temperature=0)
+            inputs = {
+                "selected": "Pending common rolling-origin selection",
+                "summary": comparison_summary,
+                "requested_loss": loss_preference,
+                "business_context": _business_context(options),
+            }
+            response = (FORECASTING_PROMPT | llm).invoke(inputs)
+            resolved_loss, loss_source = _resolve_loss_preference(
+                loss_preference, str(response.content)
+            )
+            loss_rationale = _loss_recommendation_rationale(
+                resolved_loss, loss_source, str(response.content)
+            )
+            token_usage = extract_token_usage(
+                response, input_text=estimate_input_text(FORECASTING_PROMPT, inputs)
+            )
+            reasoning_steps.append(
+                {
+                    "thought": "Interpreted the comparison and business objective.",
+                    "observation": str(response.content),
+                }
+            )
+        except Exception as exc:
+            logger.warning("Forecast explanation unavailable: %s", exc)
+    else:
+        # Traditional Forecasting: keep the deterministic default loss
+        # resolution (MASE unless the user selected one) and its existing
+        # rationale. No LLM client is constructed.
         reasoning_steps.append(
             {
-                "thought": "Interpreted the comparison and business objective.",
-                "observation": str(response.content),
+                "thought": "Traditional Forecasting: using the deterministic loss resolution (LLM skipped by request).",
+                "observation": f"Decision-loss objective: {resolved_loss.upper()} ({loss_source}).",
             }
         )
-    except Exception as exc:
-        logger.warning("Forecast explanation unavailable: %s", exc)
 
     if not any(
         item.is_rankable

@@ -73,6 +73,9 @@ class AnalyzeRequest(BaseModel):
     date_col: str | None = None
     value_col: str | None = None
     forced_model: str | None = None  # "Holt-Winters" | "ARIMA" | "SARIMA" | None (auto)
+    # Traditional Forecasting: skip every LLM call for this run.  Requires
+    # an explicit ``forced_model`` (auto selection is unavailable).
+    traditional_mode: bool = False
     user_prompt: str | None = None  # Extra instructions appended to the report prompt
     preflight_options: dict[str, Any] | None = Field(default_factory=dict)
     application_user_id: int | None = None
@@ -318,6 +321,12 @@ class AnalysisResponse(BaseModel):
     llm_fallback: bool = (
         False  # Indicates if the LLM was not used for report generation
     )
+    # Records the ACTUAL execution mode: True only when the whole run was
+    # LLM-free from the start (per-run Traditional Forecasting, or the
+    # deployment-wide switch already off when the worker started the job).
+    # A run that began in AI mode and fell back later keeps False here —
+    # the llm_fallback banner covers that case instead.
+    traditional_mode: bool = False
     chart_historical: dict
     chart_stl: dict
     chart_acf_pacf: str  # base64 PNG
@@ -481,6 +490,7 @@ class SetupStatusResponse(BaseModel):
     setup_complete: bool
     admin_exists: bool
     llm_configured: bool
+    llm_enabled: bool
     models_enabled: int
 
 
@@ -529,6 +539,16 @@ class LLMConfigResponse(BaseModel):
     temperature: float
     api_key_set: bool
     configured: bool
+    # Deployment-wide "Enable AI features" switch.  Stored in
+    # ``system_settings`` (not ``llm_config``) so it exists on installs
+    # that never configure a provider.
+    llm_enabled: bool = True
+
+
+class LLMEnabledRequest(BaseModel):
+    """Request schema for the deployment-wide "Enable AI features" switch."""
+
+    enabled: bool
 
 
 class LLMConfigUpdateRequest(BaseModel):

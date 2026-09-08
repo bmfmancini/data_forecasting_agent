@@ -21,7 +21,8 @@ from langchain_ollama import ChatOllama
 
 from core.llm_config_store import get_llm_config
 from core.logging_config import get_logger
-from exceptions import LLMConfigError
+from core.system_settings_store import is_llm_enabled
+from exceptions import LLMConfigError, LLMDisabledError
 
 logger = get_logger(__name__)
 
@@ -45,9 +46,19 @@ def get_llm(temperature: float = 0.0) -> BaseChatModel:
         A configured :class:`BaseChatModel` instance.
 
     Raises:
+        LLMDisabledError: When the deployment-wide "Enable AI features"
+            switch is off.  Raised before any client is built so callers
+            fall back deterministically; this also converts not-yet-
+            dispatched calls to fallbacks when an administrator disables
+            AI while a forecast is running.
         LLMConfigError: When Ollama Cloud is enabled but no API key is
             configured.
     """
+    if not is_llm_enabled():
+        raise LLMDisabledError(
+            "AI features are disabled on this deployment (Traditional "
+            "Forecasting mode)."
+        )
     config = get_llm_config()
     if config.provider == "ollama_cloud":
         if not config.api_key:

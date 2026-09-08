@@ -55,6 +55,9 @@ def render_analysis_report(
         edit_url=edit_url,
         er=executive_report,
         llm_fallback=bool(result.get("llm_fallback", False)),
+        # Actual execution mode recorded with the result at run time —
+        # independent of the deployment-wide setting at display time.
+        traditional_mode=bool(result.get("traditional_mode", False)),
         export_url=export_url,
         custom_settings=custom_settings or [],
     )

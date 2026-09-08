@@ -108,6 +108,14 @@ def init_db() -> None:
     if "section_edits_json" not in report_columns:
         db.execute("ALTER TABLE forecast_reports ADD COLUMN section_edits_json TEXT")
 
+    # Actual execution mode stored with each saved report so historical
+    # labels never depend on the deployment-wide AI setting at view time.
+    if "traditional_mode" not in report_columns:
+        db.execute(
+            "ALTER TABLE forecast_reports ADD COLUMN traditional_mode"
+            " INTEGER NOT NULL DEFAULT 0"
+        )
+
     user_columns = {row["name"] for row in db.execute("PRAGMA table_info(users)")}
     if "session_version" not in user_columns:
         db.execute(

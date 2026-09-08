@@ -12,7 +12,7 @@ from functools import wraps
 from typing import Any, Callable, TypeVar
 
 import requests
-from flask import flash, redirect, request, url_for
+from flask import flash, g, redirect, request, url_for
 from flask_login import current_user
 
 from services.api_client import BackendAPIClient, resolve_backend_connection
@@ -35,24 +35,51 @@ def get_backend_setup_status() -> dict[str, Any]:
     (via :func:`resolve_backend_connection`) so every gunicorn worker
     agrees on the backend URL, with the in-process config as fallback.
 
+    The payload is cached on :data:`flask.g` for the remainder of the
+    request (the setup gate already calls this on every request), so
+    later readers — :func:`get_llm_enabled`, template context — do not
+    trigger a second backend probe.
+
     Returns:
         The parsed status payload, or ``{"setup_complete": False}`` when
         the backend URL is not configured, the backend is unreachable, or
         the response is unexpected.
     """
-    base_url, verify_ssl = resolve_backend_connection()
-    if not base_url:
-        return {"setup_complete": False}
+    cached = getattr(g, "backend_setup_status", None)
+    if cached is not None:
+        return cached
 
-    client = BackendAPIClient(base_url=base_url, verify=verify_ssl)
+    payload = {"setup_complete": False}
+    base_url, verify_ssl = resolve_backend_connection()
+    if base_url:
+        client = BackendAPIClient(base_url=base_url, verify=verify_ssl)
+        try:
+            resp = client.get_setup_status()
+            if resp.status_code == 200:
+                payload = resp.json()
+        except (requests.RequestException, ValueError):
+            logger.debug("Setup status probe failed — treating as incomplete.")
+
     try:
-        resp = client.get_setup_status()
-        if resp.status_code == 200:
-            data: dict[str, Any] = resp.json()
-            return data
-    except (requests.RequestException, ValueError):
-        logger.debug("Setup status probe failed — treating as incomplete.")
-    return {"setup_complete": False}
+        g.backend_setup_status = payload
+    except RuntimeError:
+        # Outside an application context (e.g. a management command):
+        # skip caching and return the fresh probe.
+        return payload
+    return payload
+
+
+def get_llm_enabled() -> bool:
+    """Return whether AI features are enabled deployment-wide.
+
+    Reads the cached ``GET /setup/status`` payload.  Defaults to ``True``
+    when the flag is missing or the backend is unreachable so a transient
+    outage never silently hides Chat.
+
+    Returns:
+        ``True`` when AI features are enabled on this deployment.
+    """
+    return bool(get_backend_setup_status().get("llm_enabled", True))
 
 
 def password_change_required(f: _F) -> _F:

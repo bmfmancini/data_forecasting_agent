@@ -22,6 +22,7 @@ def run_validation_agent(
     value_col: str,
     freq: str,
     preflight_options: dict[str, Any] | None = None,
+    use_llm: bool = True,
 ) -> ValidationResult:
     """Run the data validation ReAct agent and return a ValidationResult.
 
@@ -42,6 +43,9 @@ def run_validation_agent(
         preflight_options: Optional mapping of user‑selected preflight
             decisions (used to inform the LLM when the user chose
             ``"Let AI Decide"``).
+        use_llm: When ``False`` (Traditional Forecasting), skip LLM
+            construction and invocation entirely and return the
+            deterministic heuristic summary.
 
     Returns:
         A populated :class:`ValidationResult` summarising quality issues
@@ -66,9 +70,6 @@ def run_validation_agent(
         issues.append("Irregular time intervals detected.")
     if len(series) < 20:
         issues.append("Very short series — forecasting results may be unreliable.")
-
-    # ── LLM Setup ────────────────────────────────────────────────────────────
-    llm = get_llm(temperature=0)
 
     options = preflight_options or {}
     auto_choices = [k for k, v in options.items() if v == "Let AI Decide"]
@@ -122,32 +123,51 @@ def run_validation_agent(
 
     prompt = DATA_VALIDATION_PROMPT
     token_usage: dict[str, int] = {}
+    fallback_summary = f"Validation complete. Issues found: {len(issues)}. " + " ".join(
+        issues
+    )
 
-    try:
-        chain = prompt | llm
-        inputs = {"report": quality_report, "ai_instruction": ai_instruction}
-        response = chain.invoke(inputs)
-        summary = response.content
-        token_usage = extract_token_usage(
-            response, input_text=estimate_input_text(prompt, inputs)
-        )
+    if use_llm:
+        try:
+            # Constructed here (not up front) so a mid-run deployment-wide
+            # disable raises LLMDisabledError inside this block and falls
+            # back deterministically instead of crashing the pipeline.
+            chain = prompt | get_llm(temperature=0)
+            inputs = {"report": quality_report, "ai_instruction": ai_instruction}
+            response = chain.invoke(inputs)
+            summary = response.content
+            token_usage = extract_token_usage(
+                response, input_text=estimate_input_text(prompt, inputs)
+            )
+            reasoning_steps = [
+                {
+                    "thought": "Computing quality metrics in Python...",
+                    "observation": quality_report,
+                },
+                {"thought": "Generating qualitative summary...", "observation": "Complete"},
+            ]
+        except Exception as exc:
+            logger.warning("Validation agent LLM call failed: %s", exc)
+            summary = fallback_summary
+            reasoning_steps = [
+                {
+                    "thought": f"Validation agent failed: {str(exc)}",
+                    "observation": "Proceeding with heuristic-based validation summary.",
+                }
+            ]
+    else:
+        # Traditional Forecasting: deterministic summary, no LLM call, and
+        # no exception logged — this is an intentional mode, not a failure.
+        summary = fallback_summary
         reasoning_steps = [
             {
                 "thought": "Computing quality metrics in Python...",
                 "observation": quality_report,
             },
-            {"thought": "Generating qualitative summary...", "observation": "Complete"},
-        ]
-    except Exception as exc:
-        logger.warning("Validation agent LLM call failed: %s", exc)
-        summary = f"Validation complete. Issues found: {len(issues)}. " + " ".join(
-            issues
-        )
-        reasoning_steps = [
             {
-                "thought": f"Validation agent failed: {str(exc)}",
-                "observation": "Proceeding with heuristic-based validation summary.",
-            }
+                "thought": "Traditional Forecasting: deterministic validation summary used (LLM skipped by request).",
+                "observation": "Complete",
+            },
         ]
 
     logger.info("Validation complete. Issues: %s", issues)

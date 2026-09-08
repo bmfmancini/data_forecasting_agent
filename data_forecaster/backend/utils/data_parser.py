@@ -243,7 +243,7 @@ def _finalize_parse(
     # ── Parse & sort ──────────────────────────────────────────────────────────
     # Keep all original columns so the user can choose a different value column
     # in the frontend dropdowns after upload.
-    df[date_col] = pd.to_datetime(df[date_col], infer_datetime_format=True)
+    df[date_col] = pd.to_datetime(df[date_col])
     df = df.dropna(subset=[date_col])
     df = df.sort_values(date_col).reset_index(drop=True)
     df[value_col] = pd.to_numeric(df[value_col], errors="coerce")
@@ -276,7 +276,7 @@ def _detect_date_column(df: pd.DataFrame) -> str | None:
     for col in df.columns:
         if any(kw in col.lower() for kw in date_keywords):
             try:
-                pd.to_datetime(df[col], infer_datetime_format=True)
+                pd.to_datetime(df[col])
                 return col
             except Exception:
                 continue
@@ -284,7 +284,7 @@ def _detect_date_column(df: pd.DataFrame) -> str | None:
     for col in df.columns:
         if df[col].dtype == object:
             try:
-                parsed = pd.to_datetime(df[col], infer_datetime_format=True)
+                parsed = pd.to_datetime(df[col])
                 if parsed.notna().sum() > len(df) * 0.8:
                     return col
             except Exception:

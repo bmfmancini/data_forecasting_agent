@@ -885,10 +885,12 @@ def _invoke_llm(
     Returns:
         A tuple of (output, token_usage), or ``None`` if the LLM call failed.
     """
-    llm = get_llm(temperature=0)
     prompt = MODEL_SELECTION_PROMPT
     try:
-        chain = prompt | llm
+        # Constructed here (not up front) so a mid-run deployment-wide
+        # disable raises LLMDisabledError inside this block and falls
+        # back to the heuristic instead of crashing the pipeline.
+        chain = prompt | get_llm(temperature=0)
         inputs = {"suitability": suitability_input}
         response = chain.invoke(inputs)
         token_usage = extract_token_usage(

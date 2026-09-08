@@ -18,6 +18,12 @@
 {% endif %}
 <form method="post" novalidate>
     {{ form.hidden_tag() }}
+    <div class="form-check mb-3">
+        {{ form.traditional_forecasting(class="form-check-input") }}
+        {{ form.traditional_forecasting.label(class="form-check-label") }}
+        <div class="small text-muted mt-1">The platform will run classical statistical forecasting only. An administrator can enable AI features later from the admin LLM configuration page.</div>
+    </div>
+    <div id="provider-fields">
     <div class="mb-3">
         <span class="form-label d-block">{{ form.provider.label.text }}</span>
         {% for subfield in form.provider %}
@@ -48,6 +54,7 @@
         {{ form.temperature(class="form-control", step="0.1", min="0", max="2") }}
         {% for error in form.temperature.errors %}<small class="text-danger d-block">{{ error }}</small>{% endfor %}
     </div>
+    </div>
     <div class="d-grid">
         {{ form.submit(class="btn btn-primary", value="Test, Save & Continue") }}
     </div>
@@ -58,16 +65,25 @@
 (function () {
     "use strict";
     var group = document.getElementById("base-url-group");
+    var providerFields = document.getElementById("provider-fields");
     var radios = document.querySelectorAll('input[name="provider"]');
+    var traditional = document.getElementById("traditional_forecasting");
     function toggleBaseUrl() {
         var selected = document.querySelector('input[name="provider"]:checked');
         var needsUrl = selected && selected.value !== "gemini";
         group.style.display = needsUrl ? "" : "none";
     }
+    function toggleTraditional() {
+        providerFields.style.display = traditional.checked ? "none" : "";
+        if (traditional.checked) group.style.display = "none";
+        else toggleBaseUrl();
+    }
     for (var i = 0; i < radios.length; i++) {
         radios[i].addEventListener("change", toggleBaseUrl);
     }
+    if (traditional) traditional.addEventListener("change", toggleTraditional);
     toggleBaseUrl();
+    if (traditional) toggleTraditional();
 })();
 </script>
 {% endblock %}
