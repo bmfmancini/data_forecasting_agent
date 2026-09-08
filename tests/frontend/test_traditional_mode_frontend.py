@@ -239,9 +239,7 @@ class TestLLMProviderFormValidation:
         from blueprints.setup.forms import LLMProviderForm
 
         with app.test_request_context(method="POST"):
-            form = LLMProviderForm(
-                formdata=MultiDict({"traditional_forecasting": "y"})
-            )
+            form = LLMProviderForm(formdata=MultiDict({"traditional_forecasting": "y"}))
             assert form.validate() is True
             assert not form.model.errors
             # The skipped validators are restored afterwards.
@@ -345,6 +343,61 @@ class TestGlobalDisableRoutes:
         assert b"checked" in resp.data.split(b"chk-traditional")[1]
 
 
+class TestTraceHiddenWithoutLLM:
+    """The AI Reasoning Trace tab disappears when no LLM ran."""
+
+    @staticmethod
+    def _seed_analysis(admin_client) -> None:
+        """Satisfy ``analysis_required`` so the trace route is reached."""
+        with admin_client.session_transaction() as sess:
+            sess["analysis_result"] = {"forecast": {"model_used": "ARIMA"}}
+
+    def test_trace_redirects_when_disabled(
+        self, admin_client, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(main_routes, "get_llm_enabled", lambda: False)
+        self._seed_analysis(admin_client)
+        resp = admin_client.get("/trace")
+
+        assert resp.status_code == 302
+        assert "/forecast-setup" in resp.headers["Location"]
+
+    def test_trace_redirects_for_traditional_run(
+        self, admin_client, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A per-run Traditional Forecasting run captured no reasoning."""
+        monkeypatch.setattr(main_routes, "get_llm_enabled", lambda: True)
+        self._seed_analysis(admin_client)
+        with admin_client.session_transaction() as sess:
+            sess["traditional_mode"] = True
+        resp = admin_client.get("/trace")
+
+        assert resp.status_code == 302
+        assert "/forecast-setup" in resp.headers["Location"]
+
+    def test_trace_renders_for_ai_runs(
+        self, admin_client, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(main_routes, "get_llm_enabled", lambda: True)
+        self._seed_analysis(admin_client)
+        resp = admin_client.get("/trace")
+
+        assert resp.status_code == 200
+
+    def test_sidebar_hides_trace_without_llm(self) -> None:
+        """The nav item only renders for AI-enabled, AI-mode sessions."""
+        source = (
+            REPO_ROOT / "data_forecaster" / "frontend" / "templates" / "base.html"
+        ).read_text(encoding="utf-8")
+        assert "{% if llm_enabled and not session.get('traditional_mode') %}" in source
+        nav = "<a class=\"nav-link {{ 'active' if request.endpoint == 'main.trace' }}\""
+        assert nav in source
+        # The gated item sits inside the guard.
+        assert source.index(
+            "{% if llm_enabled and not session.get('traditional_mode') %}"
+        ) < source.index(nav)
+
+
 # ── Per-run toggle plumbing ──────────────────────────────────────────────────
 
 
@@ -352,9 +405,7 @@ class TestAnalyzePayloadPlumbing:
     """The toggle flows through setup-state and the analyze payload."""
 
     def test_setup_state_persists_traditional_mode(self, admin_client) -> None:
-        resp = admin_client.post(
-            "/api/setup-state", json={"traditional_mode": True}
-        )
+        resp = admin_client.post("/api/setup-state", json={"traditional_mode": True})
         assert resp.status_code == 200
         with admin_client.session_transaction() as sess:
             assert sess.get("traditional_mode") is True
@@ -439,7 +490,9 @@ class TestDoneJobModeLabeling:
             assert sess.get("llm_fallback") is False
 
     def test_done_job_keeps_ai_label_after_midrun_global_disable(
-        self, admin_client, backend_state: dict[str, Any],
+        self,
+        admin_client,
+        backend_state: dict[str, Any],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """A run that started in AI mode and fell back stays AI-labelled even
@@ -597,12 +650,7 @@ class TestModeDisplayContracts:
     def test_app_js_blocks_auto_when_traditional(self) -> None:
         """The setup-page script blocks Auto + traditional submissions."""
         source = (
-            REPO_ROOT
-            / "data_forecaster"
-            / "frontend"
-            / "static"
-            / "js"
-            / "app.js"
+            REPO_ROOT / "data_forecaster" / "frontend" / "static" / "js" / "app.js"
         ).read_text(encoding="utf-8")
         assert "traditionalMode" in source
         assert (
