@@ -1,4 +1,4 @@
-# Time Series Data Forecaster Agent
+# Time Series Forecasting  Agent
 
 A multi-agent system that takes time series data, runs it through statistical forecasting models, and gives you back forecasts with AI-generated analysis and reports.
 
