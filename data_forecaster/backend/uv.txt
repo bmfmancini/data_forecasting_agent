@@ -12,7 +12,7 @@ pandas==2.2.2
 pyarrow==23.0.1
 numpy==1.26.4
 scipy==1.13.1
-plotly==6.8.0
+plotly==7.0.0
 matplotlib==3.10.9
 python-multipart==0.0.31
 aiofiles==23.2.1
