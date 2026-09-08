@@ -19,7 +19,7 @@ from werkzeug.wrappers import Response
 
 from blueprints.admin import admin_bp
 from blueprints.auth import auth_bp
-from blueprints.decorators import get_backend_setup_status
+from blueprints.decorators import get_backend_setup_status, get_llm_enabled
 from blueprints.main import main_bp
 from blueprints.setup import setup_bp
 from config import get_config
@@ -193,6 +193,9 @@ def _register_context_processors(app: Flask) -> None:
             "preflight_result": session.get("preflight_result"),
             "preflight_options": session.get("preflight_options", {}),
             "analysis_error": session.get("analysis_error"),
+            # Deployment-wide "Enable AI features" switch — hides Chat and
+            # the per-run Traditional Forecasting toggle when disabled.
+            "llm_enabled": get_llm_enabled(),
         }
 
 

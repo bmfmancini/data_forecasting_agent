@@ -21,6 +21,18 @@ from core import secret_store
 from core.database import get_connection
 from core.llm_config_store import is_configured
 from core.logging_config import get_logger
+from core.system_settings_store import is_llm_enabled, set_llm_enabled
+
+__all__ = [
+    "SetupAlreadyCompleteError",
+    "is_llm_enabled",
+    "is_setup_complete",
+    "mark_setup_complete",
+    "get_setup_status",
+    "migrate_legacy_deployment",
+    "run_bootstrap",
+    "set_llm_enabled",
+]
 
 logger = get_logger(__name__)
 
@@ -65,7 +77,8 @@ def get_setup_status(db_path: str | None = None) -> dict[str, Any]:
 
     Returns:
         A dict with ``setup_complete``, ``admin_exists``,
-        ``llm_configured``, and ``models_enabled`` booleans/counts.
+        ``llm_configured``, ``llm_enabled``, and ``models_enabled``
+        booleans/counts.
     """
     with get_connection(db_path) as connection:
         user_row: sqlite3.Row | None = connection.execute(
@@ -80,6 +93,7 @@ def get_setup_status(db_path: str | None = None) -> dict[str, Any]:
         "setup_complete": is_setup_complete(db_path),
         "admin_exists": admin_exists,
         "llm_configured": is_configured(db_path),
+        "llm_enabled": is_llm_enabled(db_path),
         "models_enabled": enabled_models,
     }
 

@@ -16,7 +16,9 @@
         <div class="sidebar-inner">
             <div class="sidebar-heading">Data Forecaster</div>
             <ul class="nav flex-column">
+                {% if llm_enabled %}
                 <li class="nav-item"><a class="nav-link {{ 'active' if request.endpoint == 'main.chat' }}" href="{{ url_for('main.chat') }}">💬 Chat</a></li>
+                {% endif %}
                 <li class="nav-item"><a class="nav-link {{ 'active' if request.endpoint == 'main.started' }}" href="{{ url_for('main.started') }}">ℹ️ Get Started</a></li>
                 <li class="nav-item"><a class="nav-link {{ 'active' if request.endpoint == 'main.forecast_setup' }}" href="{{ url_for('main.forecast_setup') }}">🚀 Forecast Setup</a></li>
                 <li class="nav-item"><a class="nav-link {{ 'active' if request.endpoint in ('main.reports', 'main.saved_report') }}" href="{{ url_for('main.reports') }}">📚 Reports</a></li>

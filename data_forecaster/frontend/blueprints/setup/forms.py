@@ -45,7 +45,17 @@ class BackendConnectionForm(FlaskForm):  # type: ignore[misc]
 class LLMProviderForm(FlaskForm):  # type: ignore[misc]
     """Step 2 — LLM provider configuration.
 
+    When the admin checks ``traditional_forecasting``, the platform runs
+    without an LLM entirely: no provider configuration, credentials, or
+    connection test.  Provider field validators are skipped in that case
+    (see :meth:`validate`); requiredness is enforced by the route only
+    when Traditional Forecasting is not selected.  CSRF protection is
+    unaffected — the ``csrf_token`` field is validated independently of
+    field-level validators.
+
     Fields:
+        traditional_forecasting: Run without an LLM ("Use Traditional
+                     Forecasting without an LLM").
         provider:    LLM provider selection.
         model:       Model name served by the provider.
         base_url:    Provider base URL (Ollama providers only).
@@ -55,6 +65,9 @@ class LLMProviderForm(FlaskForm):  # type: ignore[misc]
         submit:      Submission button.
     """
 
+    traditional_forecasting = BooleanField(
+        "Use Traditional Forecasting without an LLM",
+    )
     provider = RadioField(
         "Provider",
         choices=LLM_PROVIDER_CHOICES,
@@ -79,6 +92,27 @@ class LLMProviderForm(FlaskForm):  # type: ignore[misc]
         validators=[DataRequired(), NumberRange(min=0.0, max=2.0)],
     )
     submit = SubmitField("Save & Continue")
+
+    def validate(self, extra_validators=None):  # type: ignore[override]
+        """Skip provider field checks when Traditional Forecasting is chosen.
+
+        The provider/model/temperature validators are temporarily
+        bypassed for the validation pass only.  ``super().validate()``
+        still runs, so the CSRF token and every other form semantic are
+        fully enforced; requiredness of the provider fields is enforced
+        by the setup route when Traditional Forecasting is not selected.
+        """
+        skipped = (self.provider, self.model, self.temperature)
+        if not self.traditional_forecasting.data:
+            return super().validate(extra_validators)
+        saved_validators = [(field, field.validators) for field in skipped]
+        try:
+            for field in skipped:
+                field.validators = []
+            return super().validate(extra_validators)
+        finally:
+            for field, validators in saved_validators:
+                field.validators = validators
 
 
 class EnableAuthForm(FlaskForm):  # type: ignore[misc]

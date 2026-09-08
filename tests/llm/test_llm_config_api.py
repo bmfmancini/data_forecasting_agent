@@ -61,6 +61,7 @@ class TestLLMConfigRead:
             "temperature": pytest.approx(0.2),
             "api_key_set": True,
             "configured": True,
+            "llm_enabled": True,
         }
         assert "super-secret-plaintext" not in response.text
 

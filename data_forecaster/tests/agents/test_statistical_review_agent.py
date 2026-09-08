@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -596,3 +597,100 @@ class TestRunStatisticalReviewAgent:
         assert len(result.flags) >= 2
         assert any(f["severity"] == "critical" for f in result.flags)
         assert any(f["severity"] == "warning" for f in result.flags)
+
+
+# ── Traditional Forecasting Tests ─────────────────────────────────────────────
+
+
+class TestRunStatisticalReviewAgentTraditional:
+    """Traditional Forecasting (``use_llm=False``) never constructs an LLM.
+
+    The deterministic pre-check *is* the review: its verdict and flags are
+    returned directly, with a neutral summary — no failure is implied.
+    Zero-LLM-call assertions patch ``get_llm`` at the use site because a
+    raising side effect would be swallowed by the agent's except block.
+    """
+
+    def test_clean_inputs_pass_without_llm(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        clean_stat_result: StatisticalResult,
+        sarima_model_selection: ModelSelectionResult,
+        good_forecast_result: ForecastResult,
+        all_metrics: dict[str, dict[str, float]],
+    ) -> None:
+        llm = MagicMock()
+        monkeypatch.setattr("agents.statistical_review_agent.get_llm", llm)
+
+        result = run_statistical_review_agent(
+            clean_stat_result,
+            sarima_model_selection,
+            good_forecast_result,
+            all_metrics,
+            use_llm=False,
+        )
+
+        llm.assert_not_called()
+        assert result.verdict == "pass"
+        assert result.flags == []
+        assert result.endorsements == []
+        assert result.token_usage == {}
+        assert "Traditional Forecasting" in result.summary
+        assert result.reasoning_steps[-1]["thought"].startswith(
+            "Traditional Forecasting:"
+        )
+
+    def test_flagged_inputs_warn_without_llm(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        seasonal_stat_result: StatisticalResult,
+        arima_model_selection: ModelSelectionResult,
+        good_forecast_result: ForecastResult,
+        all_metrics: dict[str, dict[str, float]],
+    ) -> None:
+        """Pre-check flags surface as a 'warn' verdict, not a swallowed error."""
+        llm = MagicMock()
+        monkeypatch.setattr("agents.statistical_review_agent.get_llm", llm)
+
+        result = run_statistical_review_agent(
+            seasonal_stat_result,
+            arima_model_selection,
+            good_forecast_result,
+            all_metrics,
+            use_llm=False,
+        )
+
+        llm.assert_not_called()
+        assert result.verdict == "warn"
+        assert result.flags
+        assert "Traditional Forecasting" in result.summary
+
+    def test_midrun_disable_falls_back_deterministically(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        seasonal_stat_result: StatisticalResult,
+        arima_model_selection: ModelSelectionResult,
+        good_forecast_result: ForecastResult,
+        all_metrics: dict[str, dict[str, float]],
+    ) -> None:
+        """A run that started in AI mode completes via the pre-check when an
+        administrator disables AI features mid-run (LLMDisabledError at
+        construction)."""
+        from exceptions import LLMDisabledError
+
+        monkeypatch.setattr(
+            "agents.statistical_review_agent.get_llm",
+            MagicMock(side_effect=LLMDisabledError),
+        )
+
+        result = run_statistical_review_agent(
+            seasonal_stat_result,
+            arima_model_selection,
+            good_forecast_result,
+            all_metrics,
+            use_llm=True,
+        )
+
+        assert result.verdict == "warn"
+        assert result.flags
+        assert "deterministic pre-check only" in result.summary

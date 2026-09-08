@@ -33,7 +33,7 @@ from flask import (
 from flask_login import current_user, login_required
 from werkzeug.wrappers import Response
 
-from blueprints.decorators import password_change_required
+from blueprints.decorators import get_llm_enabled, password_change_required
 from blueprints.main import main_bp
 from services.api_client import get_api_client
 from services.pdf_service import report_to_pdf
@@ -141,6 +141,9 @@ def _custom_settings_from_session() -> list[dict[str, str]]:
     if context:
         settings.append({"label": "Data context", "value": context})
 
+    if session.get("traditional_mode"):
+        settings.append({"label": "Forecast mode", "value": "Traditional Forecasting"})
+
     options: dict[str, Any] = session.get("preflight_options") or {}
     for key, label in _SETTING_LABELS.items():
         value = str(options.get(key) or "")
@@ -173,12 +176,16 @@ def index() -> Response:
 
 @main_bp.route("/chat")
 @_login_required
-def chat() -> str:
+def chat() -> Response | str:
     """Render the chat (Data Explorer) tab.
 
     Returns:
-        Rendered HTML for the chat page.
+        Rendered HTML for the chat page, or a redirect when AI features
+        are disabled deployment-wide.
     """
+    if not get_llm_enabled():
+        flash("AI chat is disabled on this deployment.", "warning")
+        return redirect(url_for(_FORECAST_SETUP_ENDPOINT))
     chat_history: list[dict[str, Any]] = session.get("chat_history") or []
     return render_template(
         "main/chat.html",
@@ -199,6 +206,10 @@ def forecast_setup() -> str:
         "forecast_horizon": int(session.get("forecast_horizon") or 12),
         "model_choice": str(session.get("model_choice") or "Auto (AI selects)"),
         "user_prompt": str(session.get("user_prompt") or ""),
+        "traditional_mode": bool(session.get("traditional_mode", False)),
+        # Deployment-wide switch: when off, the per-run toggle is hidden and
+        # every run is Traditional Forecasting.
+        "llm_enabled": get_llm_enabled(),
     }
     return render_template(
         "main/forecast_setup.html",
@@ -772,6 +783,8 @@ def api_setup_state() -> Response:
         session["model_choice"] = str(data["model_choice"])
     if "user_prompt" in data:
         session["user_prompt"] = str(data["user_prompt"]).strip()
+    if "traditional_mode" in data:
+        session["traditional_mode"] = bool(data["traditional_mode"])
     return jsonify({"ok": True})
 
 
@@ -790,11 +803,17 @@ def _build_analyze_payload(data: dict[str, Any]) -> dict[str, Any]:
     preflight_options: dict[str, Any] = (
         data.get("preflight_options") or session.get("preflight_options") or {}
     )
+    # Per-run Traditional Forecasting request. The backend re-computes the
+    # effective mode (a deployment-wide disable overrides this to True).
+    traditional_mode = bool(
+        data.get("traditional_mode", session.get("traditional_mode", False))
+    )
 
     session["forecast_horizon"] = horizon
     session["model_choice"] = model_choice
     session["user_prompt"] = user_prompt
     session["preflight_options"] = preflight_options
+    session["traditional_mode"] = traditional_mode
 
     forced_model: str | None = (
         None if model_choice == "Auto (AI selects)" else model_choice
@@ -806,6 +825,7 @@ def _build_analyze_payload(data: dict[str, Any]) -> dict[str, Any]:
         "date_col": date_col,
         "value_col": value_col,
         "forced_model": forced_model,
+        "traditional_mode": traditional_mode,
         "user_prompt": user_prompt or None,
         "preflight_options": preflight_options,
     }
@@ -863,6 +883,9 @@ def _handle_done_job(
     session.pop("analysis_report_id", None)
     session["analysis_result"] = result_data
     session["llm_fallback"] = result_data.get("llm_fallback", False)
+    # Actual execution mode from the backend's result — a stored label
+    # must never depend on the deployment-wide setting at display time.
+    session["traditional_mode"] = bool(result_data.get("traditional_mode", False))
     session["job_running"] = False
     session["job_id"] = None
     session["analysis_error"] = None

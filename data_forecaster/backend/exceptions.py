@@ -24,6 +24,18 @@ class LLMConfigError(ForecastingAgentError):
     """
 
 
+class LLMDisabledError(ForecastingAgentError):
+    """Raised when an LLM is constructed while AI features are disabled.
+
+    The deployment-wide "Enable AI features" switch (``system_settings.
+    llm_enabled``) is off.  :func:`core.llm_factory.get_llm` raises this
+    before building a client so that any LLM call not yet dispatched —
+    including calls inside a forecast that was already running when an
+    administrator flipped the setting — fails fast at construction and the
+    calling agent's deterministic fallback path takes over.
+    """
+
+
 class PipelineExecutionError(ForecastingAgentError):
     """Raised when an expected pipeline stage cannot complete successfully."""
 

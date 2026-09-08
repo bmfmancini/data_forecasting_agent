@@ -597,3 +597,31 @@ class TestDisabledModels:
         result = run_model_selection_agent(seasonal_stat_result)
 
         assert result.selected_model in ("ARIMA", "EWMA")
+
+
+class TestMidRunDisable:
+    """A deployment-wide disable that lands mid-run must fall back, not crash.
+
+    ``get_llm`` raises ``LLMDisabledError`` at construction once an
+    administrator disables AI features.  The construction happens inside
+    the agent's broad except block, so the heuristic fallback engages —
+    the same contract the other agents already honour.
+    """
+
+    def test_llm_disabled_error_at_construction_falls_back(
+        self,
+        seasonal_stat_result: StatisticalResult,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from exceptions import LLMDisabledError
+
+        def _raise(temperature: float = 0) -> object:
+            del temperature
+            raise LLMDisabledError("AI features are disabled on this deployment.")
+
+        monkeypatch.setattr("agents.model_selection_agent.get_llm", _raise)
+
+        result = run_model_selection_agent(seasonal_stat_result)
+
+        assert result.selected_model in ("Holt-Winters", "SARIMA", "ARIMA", "EWMA")
+        assert result.selection_method != "llm_recommended"

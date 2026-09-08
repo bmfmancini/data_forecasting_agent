@@ -154,6 +154,23 @@ class APIKeyCreateForm(FlaskForm):  # type: ignore[misc]
     submit = SubmitField("Create API User")
 
 
+class LLMEnabledForm(FlaskForm):  # type: ignore[misc]
+    """Toggle the deployment-wide "Enable AI features" switch.
+
+    Kept separate from :class:`LLMConfigForm` so provider configuration can
+    be edited and tested even while AI features are disabled — that is the
+    enable-later workflow for installs that started LLM-free.
+
+    Fields:
+        enabled: Whether AI features (chat, LLM narratives, auto model
+            selection) are enabled deployment-wide.
+        submit:  Submission button.
+    """
+
+    enabled = BooleanField("Enable AI features")
+    submit = SubmitField("Save AI Features Setting")
+
+
 class LLMConfigForm(FlaskForm):  # type: ignore[misc]
     """Form for updating the backend LLM configuration.
 

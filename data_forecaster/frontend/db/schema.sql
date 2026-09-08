@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS forecast_reports (
     custom_settings_json  TEXT,
     section_edits_json    TEXT,
     llm_fallback          INTEGER NOT NULL DEFAULT 0,
+    traditional_mode      INTEGER NOT NULL DEFAULT 0,
     created_at            TEXT    NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
 );

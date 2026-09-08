@@ -238,11 +238,18 @@ def _submit_llm_config(form: LLMProviderForm) -> str | tuple[str, int] | None:
 
 @setup_bp.route("/llm", methods=["GET", "POST"])
 def llm() -> str | tuple[str, int] | Response:
-    """Step 2 — configure the LLM provider on the backend.
+    """Step 2 — configure the LLM provider, or skip it entirely.
+
+    With the "Use Traditional Forecasting without an LLM" checkbox set,
+    setup finishes with no provider configuration, credentials, or
+    connection test: the deployment-wide AI switch is set to disabled and
+    the wizard advances directly.  An administrator can configure and
+    enable AI later from the admin LLM configuration page.
 
     The API key is forwarded to the backend only; the frontend never
     persists it.  Backend auth is still off at this point, so the
-    unauthenticated ``PUT /config/llm`` succeeds.
+    unauthenticated ``PUT /config/llm`` and ``PUT /config/llm/enabled``
+    succeed.
     """
     if _setup_complete():
         return redirect(url_for(_AUTH_LOGIN_ENDPOINT))
@@ -256,6 +263,27 @@ def llm() -> str | tuple[str, int] | Response:
 
     if not form.validate_on_submit():
         return _render(_TEMPLATE_LLM, 400, form=form)
+
+    if form.traditional_forecasting.data:
+        try:
+            resp = get_api_client().put_llm_enabled(False)
+        except requests.RequestException as exc:
+            flash(
+                f"Could not connect to backend: "
+                f"{sanitize_connection_error(str(exc))}",
+                "danger",
+            )
+            return _render(_TEMPLATE_LLM, 200, form=form)
+        if resp.status_code != 200:
+            flash(
+                "Could not save Traditional Forecasting selection "
+                f"(HTTP {resp.status_code}): {_response_detail(resp)}",
+                "danger",
+            )
+            return _render(_TEMPLATE_LLM, 200, form=form)
+        session["setup_llm_ok"] = True
+        flash("Traditional Forecasting selected — no LLM configured.", "success")
+        return redirect(url_for("setup.auth"))
 
     error = _submit_llm_config(form)
     if error is not None:

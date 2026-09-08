@@ -32,6 +32,7 @@ from blueprints.admin.forms import (
     APIConfigForm,
     APIKeyCreateForm,
     LLMConfigForm,
+    LLMEnabledForm,
     LLMAllowedOriginsForm,
     ModelsForm,
     UserCreateForm,
@@ -1025,6 +1026,7 @@ def llm_config() -> str | Response:
         Rendered template on GET/validation error; redirect on success.
     """
     form = LLMConfigForm()
+    llm_enabled_form = LLMEnabledForm()
     client = get_api_client()
 
     if form.validate_on_submit():
@@ -1034,6 +1036,7 @@ def llm_config() -> str | Response:
             return render_template(
                 "admin/llm_config.html",
                 form=form,
+                llm_enabled_form=llm_enabled_form,
                 llm_config=_fetch_llm_config(client),
                 llm_test_result=test_result,
             )
@@ -1044,6 +1047,7 @@ def llm_config() -> str | Response:
             return render_template(
                 "admin/llm_config.html",
                 form=form,
+                llm_enabled_form=llm_enabled_form,
                 llm_config=_fetch_llm_config(client),
                 llm_test_result=test_result,
             )
@@ -1052,6 +1056,7 @@ def llm_config() -> str | Response:
         return render_template(
             "admin/llm_config.html",
             form=form,
+            llm_enabled_form=llm_enabled_form,
             llm_config=_fetch_llm_config(client),
             llm_test_result=test_result,
         )
@@ -1066,9 +1071,65 @@ def llm_config() -> str | Response:
     return render_template(
         "admin/llm_config.html",
         form=form,
+        llm_enabled_form=llm_enabled_form,
         llm_config=config,
         llm_test_result=None,
     )
+
+
+@admin_bp.route("/llm-enabled", methods=["POST"])
+@admin_required
+def llm_enabled() -> Response:
+    """Set the deployment-wide "Enable AI features" switch.
+
+    Disabling forces Traditional Forecasting for every forecast, hides
+    chat, and removes the per-run toggle; users cannot override.  The
+    change is read live by the backend — no restart is required.
+
+    Returns:
+        A redirect back to the LLM configuration page.
+    """
+    form = LLMEnabledForm()
+    client = get_api_client()
+    if not form.validate_on_submit():
+        flash("Invalid form submission.", "danger")
+        return redirect(url_for(_ADMIN_LLM_CONFIG_ENDPOINT))
+
+    enabled = bool(form.enabled.data)
+    try:
+        resp = client.put_llm_enabled(enabled)
+    except requests.RequestException as exc:
+        flash(
+            f"Could not connect to backend: {_sanitise_connection_error(str(exc))}",
+            "danger",
+        )
+        return redirect(url_for(_ADMIN_LLM_CONFIG_ENDPOINT))
+
+    if resp.status_code != 200:
+        flash(
+            f"Could not update AI features setting (HTTP {resp.status_code}): "
+            f"{_backend_error_detail(resp)}",
+            "danger",
+        )
+        return redirect(url_for(_ADMIN_LLM_CONFIG_ENDPOINT))
+
+    if enabled:
+        config = _fetch_llm_config(client) or {}
+        if not config.get("configured"):
+            flash(
+                "AI features enabled, but no provider is configured yet — test "
+                "and save a provider below so AI features are reachable.",
+                "warning",
+            )
+        else:
+            flash("AI features enabled.", "success")
+    else:
+        flash(
+            "AI features disabled — Traditional Forecasting is enforced for all "
+            "forecasts and chat is hidden.",
+            "success",
+        )
+    return redirect(url_for(_ADMIN_LLM_CONFIG_ENDPOINT))
 
 
 @admin_bp.route("/llm-allowed-urls", methods=["GET", "POST"])

@@ -262,6 +262,24 @@
       });
   }
 
+  /** True when the per-run Traditional Forecasting checkbox is checked. */
+  function traditionalMode() {
+    var checkbox = document.getElementById("chk-traditional");
+    return !!(checkbox && checkbox.checked);
+  }
+
+  /** Keep the model selector consistent with Traditional Forecasting. */
+  function applyTraditionalMode() {
+    var model = document.getElementById("sel-model");
+    if (!model) return;
+    var autoOption = model.querySelector('option[value="Auto (AI selects)"]');
+    if (autoOption) autoOption.disabled = traditionalMode();
+    if (traditionalMode() && model.value === "Auto (AI selects)") {
+      var firstConcrete = model.querySelector('option:not([value="Auto (AI selects)"])');
+      if (firstConcrete) model.value = firstConcrete.value;
+    }
+  }
+
   function saveSetupState() {
     var horizon = document.getElementById("inp-horizon");
     var model = document.getElementById("sel-model");
@@ -269,7 +287,8 @@
     return postJSON("/api/setup-state", {
       forecast_horizon: horizon ? horizon.value : 12,
       model_choice: model ? model.value : "Auto (AI selects)",
-      user_prompt: prompt ? prompt.value : ""
+      user_prompt: prompt ? prompt.value : "",
+      traditional_mode: traditionalMode()
     });
   }
 
@@ -319,11 +338,15 @@
     var button = document.getElementById("btn-run");
     if (!date || !value) return;
     if (button) { button.disabled = true; button.textContent = "Starting forecast…"; }
+    if (traditionalMode() && model && model.value === "Auto (AI selects)") {
+      showRunError("Traditional Forecasting requires selecting a specific forecast model — auto selection is disabled.");
+      return;
+    }
     var options = Object.assign(
       {}, preflightOptions, currentPreflightChoices(), collectCleaningOptions(),
       { statistical_tuning: collectStatisticalTuning() }
     );
-    postJSON("/api/analyze", { date_col: date.value, value_col: value.value, forecast_horizon: Number(horizon.value), model_choice: model.value, user_prompt: prompt.value, preflight_options: options })
+    postJSON("/api/analyze", { date_col: date.value, value_col: value.value, forecast_horizon: Number(horizon.value), model_choice: model.value, traditional_mode: traditionalMode(), user_prompt: prompt.value, preflight_options: options })
       .then(function (response) {
         if (response.status === 202) { window.location.assign("/forecast-progress"); return; }
         return response.json().then(function (data) { throw new Error(data.error || "Failed to submit forecast."); });
@@ -348,6 +371,14 @@
     var horizon = document.getElementById("inp-horizon");
     if (horizon) horizon.addEventListener("input", function () { document.getElementById("horizon-val").textContent = horizon.value; });
     ["inp-prompt", "inp-horizon", "sel-model"].forEach(function (id) { var field = document.getElementById(id); if (field) field.addEventListener(id === "inp-prompt" ? "blur" : "change", function () { saveSetupState(); }); });
+    var traditionalCheckbox = document.getElementById("chk-traditional");
+    if (traditionalCheckbox) {
+      traditionalCheckbox.addEventListener("change", function () {
+        applyTraditionalMode();
+        saveSetupState();
+      });
+      applyTraditionalMode();
+    }
     document.getElementById("btn-run").addEventListener("click", runAnalysis);
     if (window.forecastUploadInfo) { populateColumnSelectors(window.forecastUploadInfo); setUploadStatus(window.forecastUploadInfo.rows + " rows ready.", false); }
   }

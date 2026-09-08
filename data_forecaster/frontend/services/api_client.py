@@ -571,6 +571,24 @@ class BackendAPIClient:
             verify=self._verify,
         )
 
+    def put_llm_enabled(self, enabled: bool) -> requests.Response:
+        """Set the deployment-wide "Enable AI features" switch.
+
+        Args:
+            enabled: ``True`` to enable AI features, ``False`` to force
+                Traditional Forecasting deployment-wide.
+
+        Returns:
+            The :class:`requests.Response` from ``PUT /config/llm/enabled``.
+        """
+        return requests.put(
+            f"{self._base_url}/config/llm/enabled",
+            json={"enabled": bool(enabled)},
+            headers=self._headers(),
+            timeout=JOB_STATUS_TIMEOUT,
+            verify=self._verify,
+        )
+
     def test_llm_config(self, payload: dict[str, Any]) -> requests.Response:
         """Test candidate LLM settings without saving them.
 
