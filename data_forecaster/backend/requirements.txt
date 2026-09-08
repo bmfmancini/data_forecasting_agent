@@ -1,4 +1,4 @@
-uvicorn[standard]>=0.29.0
+uvicorn[standard]>=0.52.4
 fastapi>=0.111.0
 python-multipart>=0.0.31
 aiofiles>=23.2.1
