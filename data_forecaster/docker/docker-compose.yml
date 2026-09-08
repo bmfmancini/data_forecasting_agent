@@ -14,14 +14,13 @@ services:
     build:
       context: ../backend
       dockerfile: ../docker/Dockerfile.backend
-    env_file:
-      - ../backend/.env
     volumes:
       - logs_data:/app/logs
       - chroma_data:/app/chroma_db
       - file_store_data:/app/file_store
       - ../data:/app/data
       - api_key_data:/app/data/api_keys
+      - secret_data:/app/secrets
     restart: unless-stopped
     networks:
       - forecasting_network
@@ -38,11 +37,8 @@ services:
     build:
       context: ../frontend
       dockerfile: ../docker/Dockerfile.flask
-    env_file:
-      - ../frontend/.env
     environment:
       - FLASK_ENV=production
-      - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
     volumes:
       - flask_instance:/app/instance
     depends_on:
@@ -121,3 +117,4 @@ volumes:
   file_store_data:
   flask_instance:
   api_key_data:
+  secret_data:

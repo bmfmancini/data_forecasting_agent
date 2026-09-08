@@ -8,6 +8,25 @@ version = "1.0.0"
 description = "Multi-agent time series forecasting system"
 requires-python = ">=3.11"
 
+# Development dependencies (PEP 735) — the single source of truth for test
+# and lint tooling. Runtime dependencies stay in the service directories
+# (backend/requirements.txt, backend/uv.txt, frontend/requirements.txt).
+# Install into the active environment with:
+#   uv pip install --group dev   # pytest, pytest-asyncio, httpx
+#   uv pip install --group lint  # pylint, mypy, black
+# The `dev` group is also installed automatically by `uv sync`.
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "httpx>=0.27",
+]
+lint = [
+    "pylint>=3.3",
+    "mypy>=1.13",
+    "black>=24.10",
+]
+
 [tool.setuptools]
 # The backend and frontend are not standard installable packages — they
 # are service directories whose dependencies are managed via

@@ -31,5 +31,4 @@ services:
   frontend:
     environment:
       - FLASK_ENV=production
-      - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
     depends_on: []

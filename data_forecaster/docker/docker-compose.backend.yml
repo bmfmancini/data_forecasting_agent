@@ -11,14 +11,13 @@ services:
     build:
       context: ../backend
       dockerfile: ../docker/Dockerfile.backend
-    env_file:
-      - ../backend/.env
     volumes:
       - logs_data:/app/logs
       - chroma_data:/app/chroma_db
       - file_store_data:/app/file_store
       - ../data:/app/data
       - api_key_data:/app/data/api_keys
+      - secret_data:/app/secrets
     restart: unless-stopped
     networks:
       - forecasting_network
@@ -66,3 +65,4 @@ volumes:
   chroma_data:
   file_store_data:
   api_key_data:
+  secret_data:

@@ -97,28 +97,144 @@
     status.innerHTML = '<div class="alert alert-' + tone + '"><strong>' + title + "</strong>" +
       (result.detected_frequency ? '<p class="mb-0 mt-2 small">Detected frequency: <strong>' + escapeHtml(result.detected_frequency) + "</strong></p>" : "") +
       (messages.length ? "<ul class=\"mb-0 mt-2\">" + messages.map(function (message) { return "<li>" + escapeHtml(message) + "</li>"; }).join("") + "</ul>" : "") + "</div>";
-    decisions.innerHTML = (result.decisions || []).map(function (decision) {
-      var current = preflightOptions[decision.key] || decision.default || "";
-      var lossLabels = {
-        auto: "Auto — forecasting assistant recommends",
-        rmse: "Avoid occasional large errors (RMSE)",
-        mae: "Minimize the typical absolute error (MAE)",
-        wape: "Control error relative to total volume (WAPE)",
-        mase: "Compare accuracy against a naive forecast (MASE)"
-      };
-      var options = (decision.options || []).map(function (option) {
-        var label = decision.key === "loss_metric" ? lossLabels[option] || option : option;
-        return '<option value="' + escapeHtml(option) + '"' + (option === current ? " selected" : "") + ">" + escapeHtml(label) + "</option>";
-      }).join("");
-      return '<div class="card mb-3"><div class="card-body"><label class="form-label" for="pf-' + escapeHtml(decision.key) + '">' + escapeHtml(decision.label) + "</label>" +
-        '<p class="small text-muted">' + escapeHtml(decision.message) + '</p><select class="form-select preflight-choice" id="pf-' + escapeHtml(decision.key) + '" data-key="' + escapeHtml(decision.key) + '">' + options + "</select></div></div>";
-    }).join("");
+    decisions.innerHTML = (result.decisions || []).map(renderDecision).join("");
+    updateHolidaySubdivision(preflightOptions.holidays_subdivision || "");
     updatePreflightContinue();
+  }
+
+  var _LOSS_LABELS = {
+    auto: "Auto — forecasting assistant recommends",
+    rmse: "Avoid occasional large errors (RMSE)",
+    mae: "Minimize the typical absolute error (MAE)",
+    wape: "Control error relative to total volume (WAPE)",
+    mase: "Compare accuracy against a naive forecast (MASE)",
+    pinball: "Choose a quantile for unequal error costs (pinball loss)"
+  };
+
+  var _DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+  function decisionLabel(decision, option) {
+    if (decision.key === "loss_metric") return _LOSS_LABELS[option] || option;
+    if (decision.kind === "country") {
+      var idx = (decision.options || []).indexOf(option);
+      return (decision.option_labels && idx >= 0) ? decision.option_labels[idx] : option;
+    }
+    return option;
+  }
+
+  // Custom structured inputs are parsed into JSON at submit time (below); the
+  // plain <select> for kind=="select"/"country" is read directly by value.
+  function renderDecision(decision) {
+    var current = preflightOptions[decision.key] !== undefined ? preflightOptions[decision.key] : decision.default;
+    var id = "pf-" + decision.key;
+    var head = '<div class="card mb-3"><div class="card-body"><label class="form-label" for="' + escapeHtml(id) + '">' + escapeHtml(decision.label) + "</label>" +
+      '<p class="small text-muted">' + escapeHtml(decision.message) + "</p>";
+    var tail = "</div></div>";
+    if (decision.detail_key) {
+      var detailId = id + "-details";
+      tail = '<label class="form-label mt-3" for="' + escapeHtml(detailId) + '">Details (optional)</label>' +
+        '<textarea class="form-control preflight-text" id="' + escapeHtml(detailId) + '" data-key="' + escapeHtml(decision.detail_key) + '" rows="3" placeholder="' + escapeHtml(decision.detail_placeholder || "") + '">' + escapeHtml(preflightOptions[decision.detail_key] || "") + '</textarea>' + tail;
+    }
+    if (decision.kind === "country") {
+      tail = '<div id="pf-subdivision-group" class="mt-3" hidden><label class="form-label" for="pf-holidays_subdivision">State / province / region</label>' +
+        '<select class="form-select preflight-choice" id="pf-holidays_subdivision" data-key="holidays_subdivision"></select>' +
+        '<p class="small text-muted mt-2">Select the region whose holidays affect this series, or use the country calendar without a regional selection.</p></div>' + tail;
+    }
+    if (decision.kind === "dates") {
+      return head + '<textarea class="form-control preflight-dates" id="' + escapeHtml(id) + '" data-key="' + escapeHtml(decision.key) + '" rows="4" placeholder="2024-11-29, promotion, Black Friday, 2024-09-01">' + escapeHtml(formatEvents(current)) + "</textarea>" + tail;
+    }
+    if (decision.kind === "covariates") {
+      return head + '<textarea class="form-control preflight-covariates" id="' + escapeHtml(id) + '" data-key="' + escapeHtml(decision.key) + '" rows="4" placeholder="price: 2024-01-01=9.99@2023-12-01, 2024-02-01=9.99@2023-12-01">' + escapeHtml(formatCovariates(current)) + "</textarea>" + tail;
+    }
+    // kind == "select" or "country": a plain dropdown (country codes carry labels).
+    var options = (decision.options || []).map(function (option) {
+      return '<option value="' + escapeHtml(option) + '"' + (option === current ? " selected" : "") + ">" + escapeHtml(decisionLabel(decision, option)) + "</option>";
+    }).join("");
+    var placeholder = decision.kind === "country" ? '<option value=""' + (current === "" || current === undefined ? " selected" : "") + ">No holiday calendar</option>" : "";
+    return head + '<select class="form-select preflight-choice" id="' + escapeHtml(id) + '" data-key="' + escapeHtml(decision.key) + '">' + placeholder + options + "</select>" + tail;
+  }
+
+  function updateHolidaySubdivision(selected) {
+    var country = document.getElementById("pf-holidays_country");
+    var region = document.getElementById("pf-holidays_subdivision");
+    var group = document.getElementById("pf-subdivision-group");
+    if (!country || !region || !group) return;
+    var decision = (preflight.decisions || []).find(function (item) { return item.key === "holidays_country"; });
+    var regions = ((decision && decision.subdivisions) || {})[country.value] || [];
+    region.innerHTML = '<option value="">Country calendar only</option>' + regions.map(function (item) {
+      return '<option value="' + escapeHtml(item.code) + '"' + (item.code === selected ? ' selected' : '') + '>' + escapeHtml(item.label) + '</option>';
+    }).join("");
+    group.hidden = !country.value || !regions.length;
+    region.disabled = group.hidden;
+  }
+
+  function formatEvents(value) {
+    if (!Array.isArray(value) || !value.length) return "";
+    return value.map(function (event) {
+      if (!event || !event.date) return "";
+      var line = event.date + ", " + (event.type || "intervention");
+      line += ", " + (event.label || event.type);
+      if (event.available_at) line += ", " + event.available_at;
+      return line;
+    }).filter(Boolean).join("\n");
+  }
+
+  function parseEvents(text) {
+    var events = [];
+    (text || "").split(/\n+/).forEach(function (raw) {
+      var line = raw.trim();
+      if (!line) return;
+      var parts = line.split(",").map(function (p) { return p.trim(); });
+      if (!_DATE_RE.test(parts[0] || "")) return;
+      var type = (parts[1] || "intervention").toLowerCase() || "intervention";
+      var available = parts.length > 3 && _DATE_RE.test(parts[parts.length - 1]) ? parts.pop() : null;
+      var label = parts.slice(2).join(",").trim() || type;
+      var event = { type: type, date: parts[0], label: label };
+      if (available) event.available_at = available;
+      events.push(event);
+    });
+    return events;
+  }
+
+  function formatCovariates(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return "";
+    return Object.keys(value).map(function (name) {
+      var series = value[name] || {};
+      var pairs = Object.keys(series).map(function (date) { var item = series[date]; return date + "=" + (item && typeof item === "object" ? item.value + "@" + item.available_at : item); }).join(", ");
+      return name + ": " + pairs;
+    }).join("\n");
+  }
+
+  function parseCovariates(text) {
+    var covariates = {};
+    (text || "").split(/\n+/).forEach(function (raw) {
+      var line = raw.trim();
+      if (!line || line.indexOf(":") === -1) return;
+      var split = line.split(/:(.*)/);
+      var name = split[0].trim();
+      var rest = split[1] || "";
+      if (!name) return;
+      var series = {};
+      rest.split(",").forEach(function (pair) {
+        var kv = pair.split("=");
+        var date = (kv[0] || "").trim();
+        var parts = (kv[1] || "").trim().split("@");
+        var val = Number(parts[0]);
+        if (_DATE_RE.test(date) && parts[0] && isFinite(val)) {
+          series[date] = parts.length > 1 ? { value: val, available_at: parts[1].trim() } : val;
+        }
+      });
+      if (Object.keys(series).length) covariates[name] = series;
+    });
+    return covariates;
   }
 
   function currentPreflightChoices() {
     var choices = {};
     document.querySelectorAll(".preflight-choice").forEach(function (select) { choices[select.dataset.key] = select.value; });
+    document.querySelectorAll(".preflight-text").forEach(function (area) { choices[area.dataset.key] = area.value.trim(); });
+    document.querySelectorAll(".preflight-dates").forEach(function (area) { choices[area.dataset.key] = parseEvents(area.value); });
+    document.querySelectorAll(".preflight-covariates").forEach(function (area) { choices[area.dataset.key] = parseCovariates(area.value); });
     return choices;
   }
 
@@ -146,6 +262,24 @@
       });
   }
 
+  /** True when the per-run Traditional Forecasting checkbox is checked. */
+  function traditionalMode() {
+    var checkbox = document.getElementById("chk-traditional");
+    return !!(checkbox && checkbox.checked);
+  }
+
+  /** Keep the model selector consistent with Traditional Forecasting. */
+  function applyTraditionalMode() {
+    var model = document.getElementById("sel-model");
+    if (!model) return;
+    var autoOption = model.querySelector('option[value="Auto (AI selects)"]');
+    if (autoOption) autoOption.disabled = traditionalMode();
+    if (traditionalMode() && model.value === "Auto (AI selects)") {
+      var firstConcrete = model.querySelector('option:not([value="Auto (AI selects)"])');
+      if (firstConcrete) model.value = firstConcrete.value;
+    }
+  }
+
   function saveSetupState() {
     var horizon = document.getElementById("inp-horizon");
     var model = document.getElementById("sel-model");
@@ -153,7 +287,8 @@
     return postJSON("/api/setup-state", {
       forecast_horizon: horizon ? horizon.value : 12,
       model_choice: model ? model.value : "Auto (AI selects)",
-      user_prompt: prompt ? prompt.value : ""
+      user_prompt: prompt ? prompt.value : "",
+      traditional_mode: traditionalMode()
     });
   }
 
@@ -172,7 +307,10 @@
       "clean-duplicates": "duplicate_strategy",
       "clean-missing": "missing_strategy",
       "clean-outliers": "outlier_strategy",
-      "clean-smoothing": "smoothing"
+      "clean-smoothing": "smoothing",
+      "forecast-aggregation": "aggregation",
+      "forecast-demand-pattern": "demand_pattern",
+      "forecast-quantile": "forecast_quantile"
     };
     var options = {};
     Object.keys(fields).forEach(function (id) {
@@ -200,11 +338,15 @@
     var button = document.getElementById("btn-run");
     if (!date || !value) return;
     if (button) { button.disabled = true; button.textContent = "Starting forecast…"; }
+    if (traditionalMode() && model && model.value === "Auto (AI selects)") {
+      showRunError("Traditional Forecasting requires selecting a specific forecast model — auto selection is disabled.");
+      return;
+    }
     var options = Object.assign(
       {}, preflightOptions, currentPreflightChoices(), collectCleaningOptions(),
       { statistical_tuning: collectStatisticalTuning() }
     );
-    postJSON("/api/analyze", { date_col: date.value, value_col: value.value, forecast_horizon: Number(horizon.value), model_choice: model.value, user_prompt: prompt.value, preflight_options: options })
+    postJSON("/api/analyze", { date_col: date.value, value_col: value.value, forecast_horizon: Number(horizon.value), model_choice: model.value, traditional_mode: traditionalMode(), user_prompt: prompt.value, preflight_options: options })
       .then(function (response) {
         if (response.status === 202) { window.location.assign("/forecast-progress"); return; }
         return response.json().then(function (data) { throw new Error(data.error || "Failed to submit forecast."); });
@@ -225,10 +367,18 @@
       postJSON("/api/preflight-choices", { choices: preflightOptions }).then(function () { showStep(3); });
     });
     document.querySelectorAll("[data-wizard-back]").forEach(function (button) { button.addEventListener("click", function () { showStep(Number(button.dataset.wizardBack)); }); });
-    document.addEventListener("change", function (event) { if (event.target.classList.contains("preflight-choice")) updatePreflightContinue(); });
+    document.addEventListener("change", function (event) { if (event.target.id === "pf-holidays_country") updateHolidaySubdivision(""); if (event.target.classList.contains("preflight-choice")) updatePreflightContinue(); });
     var horizon = document.getElementById("inp-horizon");
     if (horizon) horizon.addEventListener("input", function () { document.getElementById("horizon-val").textContent = horizon.value; });
     ["inp-prompt", "inp-horizon", "sel-model"].forEach(function (id) { var field = document.getElementById(id); if (field) field.addEventListener(id === "inp-prompt" ? "blur" : "change", function () { saveSetupState(); }); });
+    var traditionalCheckbox = document.getElementById("chk-traditional");
+    if (traditionalCheckbox) {
+      traditionalCheckbox.addEventListener("change", function () {
+        applyTraditionalMode();
+        saveSetupState();
+      });
+      applyTraditionalMode();
+    }
     document.getElementById("btn-run").addEventListener("click", runAnalysis);
     if (window.forecastUploadInfo) { populateColumnSelectors(window.forecastUploadInfo); setUploadStatus(window.forecastUploadInfo.rows + " rows ready.", false); }
   }

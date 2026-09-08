@@ -31,8 +31,12 @@ jobs:
         # Install project requirements if they exist
         if [ -f data_forecaster/backend/requirements.txt ]; then pip install -r data_forecaster/backend/requirements.txt; fi
         if [ -f data_forecaster/frontend/requirements.txt ]; then pip install -r data_forecaster/frontend/requirements.txt; fi
-        # Install development tools (pinned for reproducible CI runs)
-        pip install pylint==3.3.* mypy==1.13.* black==24.10.* pytest==8.3.* pip-audit==2.7.*
+        # Development tools come from the PEP 735 dependency groups in
+        # pyproject.toml — the same source of truth as local development.
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        "$HOME/.local/bin/uv" pip install --python "$(command -v python)" \
+          --group dev --group lint
+        pip install pip-audit==2.7.*
 
     - name: Run Black (check mode)
       continue-on-error: true
@@ -52,7 +56,7 @@ jobs:
     - name: Run Pytest
       working-directory: .
       run: |
-        pytest tests/ -v
+        pytest tests/ data_forecaster/tests/ -v
 
     - name: Run pip-audit (dependency vulnerability scan)
       continue-on-error: true

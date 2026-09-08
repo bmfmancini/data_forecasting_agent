@@ -98,7 +98,8 @@ def _variance_by_horizon(
     by_horizon: dict[int, list[float]] = {}
     for residuals in fold_residuals:
         for h, value in enumerate(residuals):
-            by_horizon.setdefault(h, []).append(float(value))
+            if np.isfinite(value):
+                by_horizon.setdefault(h + 1, []).append(float(value))
     return {
         h: float(np.var(values, ddof=1)) if len(values) > 1 else 0.0
         for h, values in sorted(by_horizon.items())
@@ -117,7 +118,10 @@ def _interval_coverage(
         or upper.shape != actuals.shape
     ):
         return None
-    inside = (actuals >= lower) & (actuals <= upper)
+    valid = np.isfinite(actuals) & np.isfinite(lower) & np.isfinite(upper)
+    if not valid.any():
+        return None
+    inside = (actuals[valid] >= lower[valid]) & (actuals[valid] <= upper[valid])
     return float(np.mean(inside))
 
 
@@ -147,6 +151,10 @@ def _winkler_score(
     ):
         return None
     alpha = 1.0 - nominal_coverage
+    valid = np.isfinite(actuals) & np.isfinite(lower) & np.isfinite(upper)
+    if not valid.any():
+        return None
+    actuals, lower, upper = actuals[valid], lower[valid], upper[valid]
     width = upper - lower
     lower_penalty = 2.0 / alpha * (lower - actuals)
     upper_penalty = 2.0 / alpha * (actuals - upper)
@@ -260,10 +268,12 @@ def _compute_interval_metrics(
         a_arr = np.asarray(a, dtype=float)
         lo_arr = np.asarray(lo, dtype=float)
         hi_arr = np.asarray(hi, dtype=float)
-        min_len = min(a_arr.size, lo_arr.size, hi_arr.size)
-        actuals_list.extend(a_arr[:min_len].tolist())
-        lower_list.extend(lo_arr[:min_len].tolist())
-        upper_list.extend(hi_arr[:min_len].tolist())
+        if a_arr.shape != lo_arr.shape or a_arr.shape != hi_arr.shape:
+            continue
+        valid = np.isfinite(a_arr) & np.isfinite(lo_arr) & np.isfinite(hi_arr)
+        actuals_list.extend(a_arr[valid].tolist())
+        lower_list.extend(lo_arr[valid].tolist())
+        upper_list.extend(hi_arr[valid].tolist())
     if not actuals_list:
         return None, None, None, False
     actuals_arr = np.asarray(actuals_list, dtype=float)
@@ -314,36 +324,25 @@ def analyze_backtest_errors(
         )
 
     mean = float(np.mean(pooled))
-    ci_lower, ci_upper = _mean_ci(pooled)
-
-    is_zero_mean = None
-    if "residual_zero_mean" not in disabled and n >= 2:
-        ci_lower, ci_upper = _mean_ci(pooled)
-        is_zero_mean = (
-            ci_lower is not None
-            and ci_upper is not None
-            and ci_lower <= 0.0 <= ci_upper
+    # A sequence concatenating h=1,...,H forecasts from different origins is
+    # not a one-step innovation series. White-noise/normality tests are invalid
+    # here; those tests are performed separately on fitted innovations.
+    ci_lower, ci_upper = _origin_bias_interval(fold_residuals)
+    is_zero_mean = (
+        ci_lower <= 0 <= ci_upper
+        if ci_lower is not None
+        and ci_upper is not None
+        and "residual_zero_mean" not in disabled
+        else None
+    )
+    ljung_p = lag_used = is_uncorrelated = shapiro_p = is_normal = None
+    warnings.append(
+        "Autocorrelation and normality tests apply to fitted innovations, not pooled multi-step errors."
+    )
+    if ci_lower is None:
+        warnings.append(
+            "Too few origins for a dependence-aware bias interval (minimum eight)."
         )
-
-    ljung_p: float | None = None
-    lag_used: int | None = None
-    is_uncorrelated = None
-    if "residual_autocorrelation" not in disabled:
-        lags = min(10, max(1, n // 5))
-        ljung_p, lag_used = _ljung_box(pooled, lags, df_adjust=0)
-        if ljung_p is not None:
-            is_uncorrelated = ljung_p >= _AUTOCORRELATION_P_THRESHOLD
-
-    shapiro_p = None
-    is_normal = None
-    if "residual_normality" not in disabled and 3 <= n <= 5000:
-        try:
-            _, shapiro_p = shapiro(pooled)
-            shapiro_p = float(shapiro_p)
-            is_normal = shapiro_p >= _NORMALITY_P_THRESHOLD
-        except Exception as exc:  # pylint: disable=broad-except
-            logger.warning("Shapiro-Wilk test failed: %s", exc)
-            warnings.append("Normality test could not be computed.")
 
     variance_by_horizon = _variance_by_horizon(fold_residuals)
 
@@ -409,12 +408,38 @@ def analyze_backtest_errors(
         interval_width_by_horizon=width_by_horizon,
         winkler_score_by_horizon=winkler_by_horizon,
         nominal_coverage=nominal_coverage,
-        weighted_interval_score=(
-            winkler * (1.0 - nominal_coverage) / 2.0 if winkler is not None else None
-        ),
+        # WIS also needs the predictive median; a weighted single interval
+        # score alone must not be labelled WIS.
+        weighted_interval_score=None,
         coverage_estimable=coverage_estimable,
         warnings=warnings,
     )
+
+
+def _origin_bias_interval(
+    folds: Sequence[Sequence[float]],
+) -> tuple[float | None, float | None]:
+    """Moving-block bootstrap of complete origin error vectors."""
+    if len(folds) < 8:
+        return None, None
+    arrays = [np.asarray(fold, dtype=float) for fold in folds]
+    rng = np.random.default_rng(42)
+    n = len(arrays)
+    length = max(2, int(np.ceil(n ** (1 / 3))))
+    means = []
+    for _ in range(500):
+        starts = rng.integers(0, n, int(np.ceil(n / length)))
+        indices = np.concatenate([(start + np.arange(length)) % n for start in starts])[
+            :n
+        ]
+        sample = np.concatenate([arrays[i] for i in indices])
+        sample = sample[np.isfinite(sample)]
+        if sample.size:
+            means.append(float(sample.mean()))
+    if not means:
+        return None, None
+    lo, hi = np.quantile(means, [0.025, 0.975])
+    return float(lo), float(hi)
 
 
 def calibrate_interval_width(
@@ -424,34 +449,12 @@ def calibrate_interval_width(
     empirical_coverage: float | None,
     nominal_coverage: float = _NOMINAL_COVERAGE,
 ) -> tuple[list[float], list[float]]:
-    """Scale an interval so its nominal coverage matches empirical evidence.
+    """Compatibility no-op: pooled coverage alone cannot calibrate intervals.
 
-    When empirical coverage is below the nominal level, widen the interval
-    multiplicatively; when above, narrow it. When coverage is not estimable,
-    return the interval unchanged and let the caller label it as
-    model-based/experimental.
-
-    Args:
-        lower:               Lower prediction-interval bounds.
-        upper:               Upper prediction-interval bounds.
-        empirical_coverage:  Empirical coverage fraction (or ``None``).
-        nominal_coverage:    Target coverage level.
-
-    Returns:
-        Calibrated (lower, upper) lists.
+    Actual calibration requires held-out forecast errors at each horizon and
+    an independently evaluated adjustment. Never relabel this as calibrated.
     """
-    lo = np.asarray(lower, dtype=float)
-    hi = np.asarray(upper, dtype=float)
-    if empirical_coverage is None or not math.isfinite(empirical_coverage):
-        return lo.tolist(), hi.tolist()
-    if empirical_coverage <= 0.0 or empirical_coverage >= 1.0:
-        return lo.tolist(), hi.tolist()
-    # Multiplicative scaling based on the coverage shortfall.
-    z_nominal = float(t.ppf(0.5 + nominal_coverage / 2.0, df=10_000))
-    z_empirical = float(t.ppf(0.5 + empirical_coverage / 2.0, df=10_000))
-    if not math.isfinite(z_empirical) or z_empirical <= 0:
-        return lo.tolist(), hi.tolist()
-    scale = z_nominal / z_empirical
-    centre = (lo + hi) / 2.0
-    half_width = (hi - lo) / 2.0 * scale
-    return (centre - half_width).tolist(), (centre + half_width).tolist()
+    return (
+        np.asarray(lower, dtype=float).tolist(),
+        np.asarray(upper, dtype=float).tolist(),
+    )

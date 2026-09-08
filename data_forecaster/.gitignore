@@ -15,12 +15,10 @@ venv/
 env/
 ENV/
 
-# Environment variables
-.env
-
 # Application runtime
 logs/
 chroma_db/
+frontend/instance/
 
 # Backend database (auto-generated at runtime, must not be committed)
 data/backend.db

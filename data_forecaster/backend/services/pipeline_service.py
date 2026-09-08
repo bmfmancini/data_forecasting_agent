@@ -34,10 +34,9 @@ from schemas import (
     ValidationResult,
 )
 from services.rag_service import get_rag_kb
-from utils.data_cleaning import apply_iqr_clipping, apply_zscore_clipping
 from utils.data_cleaning import impute_missing
 from utils.preflight import prepare_series_frame
-from utils.statistical import apply_boxcox, compute_acf_pacf, run_stl_decomposition
+from utils.statistical import compute_acf_pacf, run_stl_decomposition
 from utils.visualization import (
     chart_dict_to_png_b64,
     plot_acf_pacf,
@@ -146,6 +145,7 @@ def run_pipeline(
     freq: str,
     forecast_horizon: int,
     forced_model: str | None = None,
+    traditional_mode: bool = False,
     user_prompt: str | None = None,
     preflight_options: dict[str, Any] | None = None,
     chroma_persist_dir: str = "./chroma_db",
@@ -161,7 +161,10 @@ def run_pipeline(
         freq:              Frequency string.
         forecast_horizon:  Number of future periods to forecast.
         forced_model:      Optional model override (``"ARIMA"``, ``"SARIMA"``,
-                           ``"Holt-Winters"``).
+                           ``"Holt-Winters"``, ``"Prophet"``).
+        traditional_mode:  Traditional Forecasting — skip every LLM call in
+                           the pipeline.  Requires ``forced_model`` (auto
+                           selection is unavailable without the LLM).
         user_prompt:       Optional extra instructions for the report agent.
         preflight_options: Optional preflight configuration dict.
         chroma_persist_dir: Path to the ChromaDB persistence directory.
@@ -169,6 +172,11 @@ def run_pipeline(
 
     Returns:
         The complete :class:`AnalysisResponse`.
+
+    Raises:
+        ValueError: When ``traditional_mode`` is set without a
+            ``forced_model`` — rejected before any stage runs so an
+            auto-selection request can never silently pick a model.
     """
 
     def _progress(pct: int, step: str) -> None:
@@ -176,22 +184,34 @@ def run_pipeline(
             progress_callback(pct, step)
 
     logger.info(
-        "Pipeline start: file_id=%s date_col=%s value_col=%s freq=%s horizon=%d",
+        "Pipeline start: file_id=%s date_col=%s value_col=%s freq=%s horizon=%d "
+        "traditional_mode=%s",
         file_id,
         date_col,
         value_col,
         freq,
         forecast_horizon,
+        traditional_mode,
     )
+
+    # Boundary validation: Traditional Forecasting must carry an explicit
+    # model.  Checked before any stage runs (defense-in-depth — the HTTP
+    # layer and the job worker also validate).
+    if traditional_mode and not forced_model:
+        raise ValueError(
+            "Traditional Forecasting requires selecting a specific forecast "
+            "model; auto selection is disabled."
+        )
 
     if (preflight_options or {}).get("continue_short_series") == "stop":
         raise DataValidationError(
             "Analysis stopped because the selected series is too short."
         )
 
+    use_llm = not traditional_mode
     prepared = _prepare_pipeline_input(df, date_col, value_col, freq, preflight_options)
     statistical_stage = _run_statistical_stages(
-        prepared, date_col, value_col, preflight_options, _progress
+        prepared, date_col, value_col, preflight_options, _progress, use_llm
     )
     forecast_options = dict(preflight_options or {})
     if user_prompt:
@@ -206,6 +226,7 @@ def run_pipeline(
         forced_model,
         forecast_options,
         _progress,
+        use_llm,
     )
     report_stage = _run_report_stage(
         statistical_stage.validation,
@@ -215,6 +236,8 @@ def run_pipeline(
         user_prompt,
         preflight_options,
         _progress,
+        historical_series=statistical_stage.series,
+        use_llm=use_llm,
     )
     visualization_stage = _build_visualizations(
         statistical_stage.series,
@@ -244,6 +267,10 @@ def run_pipeline(
         report_reasoning=report_stage.reasoning,
         strategic_visual_recommendations=report_stage.visual_strategy,
         llm_fallback=report_stage.llm_fallback,
+        # Actual execution mode: True only when the whole run was LLM-free
+        # from the start.  A run that began in AI mode and fell back later
+        # keeps False here (see schemas.AnalysisResponse).
+        traditional_mode=traditional_mode,
         chart_historical=visualization_stage.historical,
         chart_stl=visualization_stage.stl,
         chart_acf_pacf=visualization_stage.acf_pacf,
@@ -290,6 +317,7 @@ def _run_statistical_stages(
     value_col: str,
     preflight_options: dict[str, Any] | None,
     progress: ProgressCallback,
+    use_llm: bool = True,
 ) -> StatisticalStageOutput:
     """Run validation, statistical analysis, and agent-selected remediation."""
     logger.info("Agent 1: Data Validation")
@@ -300,6 +328,7 @@ def _run_statistical_stages(
         value_col,
         prepared.freq,
         preflight_options=preflight_options,
+        use_llm=use_llm,
     )
     progress(15, "Data validation complete")
 
@@ -310,20 +339,23 @@ def _run_statistical_stages(
     missing_strategy = options.get("missing_strategy", "interpolate")
     if missing_strategy == "Let AI Decide":
         missing_strategy = "interpolate"
-    analysis_series = prepared.series
-    if missing_strategy != "drop":
-        analysis_series = impute_missing(analysis_series, missing_strategy)
-    analysis_series = analysis_series.dropna()
+    analysis_series = impute_missing(
+        prepared.series,
+        "interpolate" if missing_strategy == "drop" else missing_strategy,
+    ).dropna()
     stat_result = run_statistical_agent(
         analysis_series,
         prepared.seasonal_period,
         user_domain=user_domain,
         disabled_tests=prepared.disabled_statistical_tests,
+        use_llm=use_llm,
     )
     progress(35, "Statistical analysis complete")
 
+    # Reporting and charts retain the target's observed units. Forecasting
+    # procedures fit transformations independently inside each training window.
     series = _apply_agent_remediation(
-        analysis_series,
+        prepared.series,
         stat_result,
         prepared.disabled_statistical_tests,
         preflight_options,
@@ -343,51 +375,18 @@ def _apply_agent_remediation(
     preflight_options: dict[str, Any] | None,
 ) -> pd.Series:
     """Apply safe, agent-recommended transformations before forecasting."""
-    remediated = series
-    if (preflight_options or {}).get("outlier_strategy") == "Let AI Decide":
-        if "iqr_clip" in stat_result.recommended_remediation:
-            logger.info("Agent decided to APPLY IQR clipping.")
-            remediated = apply_iqr_clipping(remediated)
-            logger.info("IQR clipping applied successfully.")
-        elif "zscore_clip" in stat_result.recommended_remediation:
-            logger.info("Agent decided to APPLY Z-score clipping.")
-            remediated = apply_zscore_clipping(remediated)
-            logger.info("Z-score clipping applied successfully.")
-        else:
-            logger.info(
-                "Agent decided to SKIP outlier clipping "
-                "(likely determined outliers are signal)."
-            )
-
-    if (
-        "box_cox" in stat_result.recommended_remediation
-        and "box_cox" not in disabled_statistical_tests
-    ):
-        logger.info("Agent decided to APPLY Box-Cox transformation.")
-        try:
-            remediated, _ = apply_boxcox(remediated)
-            stat_result.summary += (
-                "\n\n(Note: A Box-Cox transformation was applied to stabilize "
-                "variance based on agent recommendation.)"
-            )
-        except (TypeError, ValueError) as exc:
-            logger.warning("Box-Cox application failed: %s", exc)
-
+    # Kept as a compatibility hook: descriptive diagnostics must never mutate
+    # the history plotted beside original-scale predictions.
     if (
         "change_point_analysis" in stat_result.recommended_remediation
         and "change_points" not in disabled_statistical_tests
     ):
-        logger.info(
-            "Agent identified candidate change points. Adding note to analysis."
-        )
         stat_result.summary += (
-            "\n\n(Note: Change-point analysis identified candidate breaks. "
-            "Validate candidate break dates, effect sizes, and persistence before "
-            "choosing a response. Only if a durable break is confirmed should "
-            "intervention terms, recency weighting, segmentation, or "
-            "regime-specific models be compared.)"
+            "\n\nValidate candidate break dates, effect sizes, and persistence before "
+            "considering segmentation or intervention terms. Recent-window forecasts "
+            "are compared with expanding-window forecasts on common validation origins."
         )
-    return remediated
+    return series
 
 
 def _run_forecast_stages(
@@ -400,6 +399,7 @@ def _run_forecast_stages(
     forced_model: str | None,
     preflight_options: dict[str, Any] | None,
     progress: ProgressCallback,
+    use_llm: bool = True,
 ) -> ForecastStageOutput:
     """Run model selection, forecasting, baselines, review, and optional retry."""
     model_selection = _select_model(stat_result, forced_model, progress)
@@ -415,6 +415,7 @@ def _run_forecast_stages(
         disabled_tests=disabled_statistical_tests,
         loss_preference=(preflight_options or {}).get("loss_metric", "auto"),
         preprocessing_options=preflight_options,
+        use_llm=use_llm,
     )
     if model_selection.selection_method != "forced":
         decision_loss = forecast_result.validation_design.get("decision_loss", {})
@@ -441,6 +442,7 @@ def _run_forecast_stages(
             forecast_result.model_used,
             stat_result,
             all_metrics,
+            loss_preference=resolved_loss,
         )
         model_selection = model_selection.model_copy(
             update={
@@ -469,6 +471,11 @@ def _run_forecast_stages(
                             "interventions",
                             "censoring_or_stockouts",
                             "known_future_covariates",
+                            "interventions_details",
+                            "censoring_or_stockouts_details",
+                            "known_future_covariates_details",
+                            "holidays_country",
+                            "holidays_subdivision",
                             "aggregation",
                             "minimum_value",
                             "maximum_value",
@@ -492,7 +499,7 @@ def _run_forecast_stages(
     logger.info("Baseline comparisons included in common rolling-origin evaluation")
 
     statistical_review = _run_statistical_review(
-        stat_result, model_selection, forecast_result, all_metrics, progress
+        stat_result, model_selection, forecast_result, all_metrics, progress, use_llm
     )
 
     return _maybe_retry_forecast_after_review(
@@ -508,6 +515,7 @@ def _run_forecast_stages(
         forced_model,
         preflight_options,
         progress,
+        use_llm,
     )
 
 
@@ -548,6 +556,11 @@ def _select_model(
                 if forced_model == "SARIMA"
                 else "Not selected (user chose a different model)."
             ),
+            prophet_rejected_reason=(
+                None
+                if forced_model == "Prophet"
+                else "Not selected (user chose a different model)."
+            ),
             reasoning_steps=[
                 {
                     "thought": (
@@ -572,12 +585,13 @@ def _run_statistical_review(
     forecast_result: ForecastResult,
     all_metrics: dict[str, dict[str, float]],
     progress: ProgressCallback,
+    use_llm: bool = True,
 ) -> StatisticalReviewResult:
     """Run the statistical QA review stage."""
     logger.info("Agent 4.5: Statistical Review")
     progress(77, "Statistical review…")
     statistical_review = run_statistical_review_agent(
-        stat_result, model_selection, forecast_result, all_metrics
+        stat_result, model_selection, forecast_result, all_metrics, use_llm=use_llm
     )
     progress(80, "Statistical review complete")
     return statistical_review
@@ -596,6 +610,7 @@ def _maybe_retry_forecast_after_review(
     forced_model: str | None,
     preflight_options: dict[str, Any] | None,
     progress: ProgressCallback,
+    use_llm: bool = True,
 ) -> ForecastStageOutput:
     """Retry forecasting once when statistical review identifies critical issues."""
     retry_enabled = (preflight_options or {}).get(
@@ -681,6 +696,7 @@ def _maybe_retry_forecast_after_review(
         loss_preference=(preflight_options or {}).get("loss_metric", "auto"),
         preprocessing_options=preflight_options,
         exclude_models=retry_exclusions,
+        use_llm=use_llm,
     )
     if not forced_model:
         retry_selected_model = model_selection.selected_model
@@ -689,6 +705,9 @@ def _maybe_retry_forecast_after_review(
             stat_result,
             all_metrics,
             retry_exclusions,
+            loss_preference=forecast_result.validation_design.get(
+                "decision_loss", {}
+            ).get("resolved"),
         )
         selection_evidence = dict(model_selection.selection_evidence)
         selection_evidence.update(
@@ -727,7 +746,7 @@ def _maybe_retry_forecast_after_review(
         )
     progress(87, "Re-running statistical review…")
     statistical_review = run_statistical_review_agent(
-        stat_result, model_selection, forecast_result, all_metrics
+        stat_result, model_selection, forecast_result, all_metrics, use_llm=use_llm
     )
     progress(88, "Statistical review re-run complete")
 
@@ -765,6 +784,8 @@ def _run_report_stage(
     user_prompt: str | None,
     preflight_options: dict[str, Any] | None,
     progress: ProgressCallback,
+    historical_series: pd.Series | None = None,
+    use_llm: bool = True,
 ) -> ReportStageOutput:
     """Generate and render the executive report."""
     logger.info("Agent 5: Report Generation")
@@ -781,6 +802,8 @@ def _run_report_stage(
             preflight_options=preflight_options,
             statistical_review=forecast_stage.statistical_review,
             all_metrics=forecast_stage.all_metrics,
+            historical_series=historical_series,
+            use_llm=use_llm,
         )
     )
     report_md, report_html = _render_report_outputs(executive_report)

@@ -93,6 +93,15 @@ Poll job status. Returns the current state and, when complete, the full results.
 }
 ```
 
+### Forecast monitoring
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/jobs/{job_id}/actuals` | Record or correct observed values as a JSON timestamp-to-number mapping; return updated accuracy |
+| `GET` | `/jobs/{job_id}/monitoring` | Read accuracy, bias, baseline skill, coverage, and horizon scores for an issued forecast |
+
+Both endpoints require authentication and job ownership (or admin access). Predictions are immutable. Unknown jobs and jobs without snapshots return `404`; invalid actuals return `422`. See [statistical forecasting](statistical-improvements.md) for examples, model options, and interpretation.
+
 ### `POST /chat`
 
 Ask a follow-up question about the analysis results.
@@ -118,7 +127,31 @@ These endpoints also require auth. They let you manage API users from the admin 
 | `POST` | `/api-users/{id}/rotate` | Rotate a user's key (returns new plaintext key once) |
 | `POST` | `/api-users/{id}/toggle` | Enable or disable a user |
 | `DELETE` | `/api-users/{id}` | Delete a user |
-| `POST` | `/api-users/bootstrap` | One-time bootstrap endpoint (guarded by `X-Admin-Key`) |
+
+## Setup wizard
+
+First-run provisioning. Unauthenticated; the bootstrap endpoint is guarded by an atomic "no users exist yet" check (no preset admin token).
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/setup/status` | Setup state flags (`setup_complete`, `admin_exists`, `llm_configured`, `models_enabled`) — never secrets |
+| `POST` | `/setup/bootstrap` | One-time atomic bootstrap: creates the first admin API user, generates the backend encryption key, enables auth. `409` once any user exists |
+
+## LLM configuration (admin)
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/config/llm` | Masked LLM config (`provider`, `model`, `base_url`, `temperature`, `api_key_set`) — the key is never returned |
+| `GET` | `/config/llm/allowed-origins` | Saved connection-test allowlist (`origins` array); always requires verified admin credentials |
+| `PUT` | `/config/llm/allowed-origins` | Replace allowlist with `{"origins": ["https://ollama.com"]}` (up to 100 exact HTTP(S) base URLs); always requires verified admin credentials |
+| `PUT` | `/config/llm` | Update LLM config; `api_key` is write-only (omit to keep the stored key) |
+
+## Model registry (admin)
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/models` | List the seven forecasting models with enabled state |
+| `PUT` | `/models/{name}` | Enable/disable a model; `400` when disabling the last enabled model |
 
 ## Error responses
 
@@ -132,9 +165,58 @@ All errors return JSON with a `detail` field:
 |---|---|
 | `400` | Bad file, unsupported extension, file too large, empty file, bad preflight options |
 | `401` | Missing or invalid API key headers, or disabled account |
-| `403` | Missing or invalid `X-Admin-Key` on the bootstrap endpoint |
+| `409` | `/setup/bootstrap` called after setup completed |
 | `404` | Unknown `file_id` or `job_id` |
 | `409` | Duplicate username, or bootstrap attempted when users already exist |
 | `422` | Pydantic validation failure (e.g. chat query too long) |
 | `500` | Unexpected server error (details logged server-side) |
 | `503` | Worker not ready, or backend unreachable from frontend |
+
+## Predictor availability and monitoring across runs
+
+`preflight_options.known_covariates` supports dated values and revision histories:
+
+```json
+{
+  "known_covariates": {
+    "price": {
+      "2025-01-01": [
+        {"value": 9.99, "available_at": "2024-11-01"},
+        {"value": 10.99, "available_at": "2025-02-01"}
+      ]
+    }
+  },
+  "monitoring_series_id": "store-12-product-8-units"
+}
+```
+
+Supply every historical and forecast timestamp required by the model. Each fit
+uses the latest version available at its training cutoff. A missing eligible
+version fails that candidate’s fold. Scalar predictor values require an explicit
+`covariates_known_in_advance: true` assertion; the fit records that assumption.
+Custom events accept `available_at` too, defaulting to their event date.
+
+`POST /monitoring/compare` accepts a JSON array of 1–100 distinct job IDs:
+
+```json
+["earlier-job-id", "later-job-id"]
+```
+
+The endpoint checks ownership of every job and returns 404 for inaccessible jobs,
+or 422 for invalid or incompatible groups. Jobs must refer to the same owner,
+application user, target columns, units, frequency, aggregation, bounds, and forecast quantile.
+Use the same `monitoring_series_id` across uploads of one continuing series;
+otherwise the comparison requires the same file ID.
+
+The response includes `summary`, `earlier`, `recent`, `alerts`, and `alert_status`.
+It groups complete runs with equal horizon lengths into recent and earlier
+windows, each with at least five runs, 20 observations, and 20 distinct actual
+dates. Alerts remain unavailable until both groups meet those requirements.
+Duplicate forecast origins count once. These are descriptive review rules;
+they neither establish statistical drift nor trigger automatic retraining.
+
+Forecast responses also include `validation_design.interval_calibration`, with
+per-horizon sample counts, empirical interval expansions, and a separate final-test
+coverage/width audit. Five non-overlapping observed backtest errors are required
+per horizon. Unsupported horizons retain their model intervals. The adjustment
+uses selection folds and does not guarantee nominal coverage.

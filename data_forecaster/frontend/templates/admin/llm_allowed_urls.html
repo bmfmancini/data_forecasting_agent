@@ -1,0 +1,33 @@
+{% extends "admin/base.html" %}
+{% block title %}Allowed LLM URLs — Admin{% endblock %}
+{% block header %}Allowed LLM URLs{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-7">
+        <div class="card">
+            <div class="card-body">
+                <p>Choose which Ollama servers can receive connection tests and provider credentials. Add trusted servers only.</p>
+                <form method="post" novalidate>
+                    {{ form.hidden_tag() }}
+                    <div class="mb-3">
+                        {{ form.origins.label(class="form-label") }}
+                        {{ form.origins(class="form-control font-monospace", rows="8", spellcheck="false", aria_describedby="origins-help") }}
+                        <div id="origins-help" class="form-text">
+                            Enter one complete HTTP or HTTPS base URL per line, up to 100 URLs.
+                            URLs must match exactly; trailing slashes are ignored. Include a proxy path if needed.
+                            Wildcards, credentials, queries and fragments are not accepted. Redirects are not followed.
+                            Leaving the list empty blocks all Ollama connection tests. Gemini uses its fixed provider address.
+                        </div>
+                        {% for error in form.origins.errors %}<small class="text-danger d-block">{{ error }}</small>{% endfor %}
+                    </div>
+                    <p class="small text-muted">Changes take effect immediately for new connection tests. Save this list before testing a newly added server in LLM Config.</p>
+                    <div class="d-flex justify-content-end gap-2">
+                        <a href="{{ url_for('admin.llm_config') }}" class="btn btn-outline-secondary btn-sm">Back to LLM Config</a>
+                        {{ form.submit(class="btn btn-primary btn-sm", disabled=not loaded) }}
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

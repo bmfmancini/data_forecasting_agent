@@ -105,6 +105,17 @@ def init_db() -> None:
     if "custom_settings_json" not in report_columns:
         db.execute("ALTER TABLE forecast_reports ADD COLUMN custom_settings_json TEXT")
 
+    if "section_edits_json" not in report_columns:
+        db.execute("ALTER TABLE forecast_reports ADD COLUMN section_edits_json TEXT")
+
+    # Actual execution mode stored with each saved report so historical
+    # labels never depend on the deployment-wide AI setting at view time.
+    if "traditional_mode" not in report_columns:
+        db.execute(
+            "ALTER TABLE forecast_reports ADD COLUMN traditional_mode"
+            " INTEGER NOT NULL DEFAULT 0"
+        )
+
     user_columns = {row["name"] for row in db.execute("PRAGMA table_info(users)")}
     if "session_version" not in user_columns:
         db.execute(
@@ -128,32 +139,24 @@ def init_db() -> None:
             ("admin", admin_hash),
         )
 
-    db.execute(
-        """
+    db.execute("""
         INSERT INTO api_credentials (label, base_url, timeout, verify_ssl)
         VALUES ('default', '', 30, 0)
         ON CONFLICT(label) DO NOTHING
-        """
-    )
+        """)
 
-    db.execute(
-        """
+    db.execute("""
         INSERT OR IGNORE INTO app_config (key, value)
         VALUES ('app_name', 'Time Series Data Forecaster Agent')
-        """
-    )
-    db.execute(
-        """
+        """)
+    db.execute("""
         INSERT OR IGNORE INTO app_config (key, value)
         VALUES ('max_reports_per_user', '10')
-        """
-    )
-    db.execute(
-        """
+        """)
+    db.execute("""
         INSERT OR IGNORE INTO app_config (key, value)
         VALUES ('max_upload_mb', '100')
-        """
-    )
+        """)
 
     db.commit()
 

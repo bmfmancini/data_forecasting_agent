@@ -15,7 +15,6 @@ On success, the backend updates `last_used` and `last_used_ip` on the user recor
 
 ## First setup
 
-The frontend does not read backend API credentials from its `.env` file.
 After first login, configure the active backend connection in
 **Admin → API Config**.
 
@@ -60,7 +59,7 @@ The admin panel lets you update these credentials under **Admin → API Config**
 
 ## Disabling auth entirely (dev only)
 
-Set `API_KEY_ENABLED=false` in the backend `.env` to make the auth dependency a no-op. All protected endpoints become open. This is useful for local development or testing — **never do this in production**.
+Set `API_KEY_ENABLED=false` in the backend process environment to make the auth dependency a no-op. All protected endpoints become open. This is useful for local development or testing — **never do this in production**.
 
 ## If a key is compromised
 

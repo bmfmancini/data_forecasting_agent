@@ -1,0 +1,22 @@
+{% extends "setup/base.html" %}
+{% block title %}Backend Connection — Setup{% endblock %}
+{% block content %}
+<h5 class="mb-1">Step 1 — Backend connection</h5>
+<p class="small text-muted mb-3">Enter the URL of the FastAPI backend. The connection is tested before continuing.</p>
+<form method="post" novalidate>
+    {{ form.hidden_tag() }}
+    <div class="mb-3">
+        {{ form.base_url.label(class="form-label") }}
+        {{ form.base_url(class="form-control", placeholder="http://backend:8000") }}
+        {% for error in form.base_url.errors %}<small class="text-danger d-block">{{ error }}</small>{% endfor %}
+    </div>
+    <div class="mb-3 form-check">
+        {{ form.verify_ssl(class="form-check-input") }}
+        {{ form.verify_ssl.label(class="form-check-label") }}
+        <small class="text-muted d-block">Uncheck when the backend uses a self-signed certificate.</small>
+    </div>
+    <div class="d-grid">
+        {{ form.submit(class="btn btn-primary") }}
+    </div>
+</form>
+{% endblock %}

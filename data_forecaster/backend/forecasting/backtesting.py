@@ -55,14 +55,29 @@ def _bootstrap_metric_intervals(
     mase_period: int,
     *,
     repetitions: int = 500,
+    origin_sizes: list[int] | None = None,
 ) -> dict[str, list[float]]:
-    """Return deterministic percentile intervals for aggregate metrics."""
-    if actual.size < 3:
+    """Paired moving-block bootstrap of origins, preserving horizon vectors.
+
+    Small origin counts do not support useful uncertainty estimates. Identical
+    origin sizes and seed produce paired resamples across competing models.
+    """
+    if not origin_sizes or len(origin_sizes) < 8:
         return {}
+    boundaries = np.cumsum([0, *origin_sizes])
+    blocks = [
+        np.arange(boundaries[i], boundaries[i + 1]) for i in range(len(origin_sizes))
+    ]
+    n_origins = len(blocks)
+    block_length = max(2, int(np.ceil(n_origins ** (1 / 3))))
     rng = np.random.default_rng(42)
     samples: dict[str, list[float]] = {name: [] for name in ("rmse", "mae", "mase")}
     for _ in range(repetitions):
-        indices = rng.integers(0, actual.size, actual.size)
+        starts = rng.integers(0, n_origins, int(np.ceil(n_origins / block_length)))
+        origins = np.concatenate(
+            [(start + np.arange(block_length)) % n_origins for start in starts]
+        )[:n_origins]
+        indices = np.concatenate([blocks[i] for i in origins])
         metrics = calculate_forecast_metrics(
             actual[indices],
             predicted[indices],
@@ -115,6 +130,9 @@ class BacktestConfig:
     imputation_method: str = "interpolate"
     smoothing_method: str = "none"
     final_test_size: int = 0
+    minimum_origins: int = 2
+    quantile: float = 0.5
+    max_train_size: int | None = None
 
 
 # ── Fold generation ──────────────────────────────────────────────────────────
@@ -150,25 +168,34 @@ def generate_folds(
     step = config.step_size or horizon
     step = max(1, step)
 
+    latest = end_limit - config.gap - horizon
+    # Anchor to the most recent eligible origin; keep the requested cadence.
+    origins = list(range(latest, initial - 1, -step))[::-1]
+    if config.max_origins is not None and len(origins) > config.max_origins:
+        if config.max_origins < 1:
+            return []
+        indices = np.linspace(0, len(origins) - 1, config.max_origins, dtype=int)
+        if config.max_origins == 1:
+            indices = np.array([len(origins) - 1])
+        origins = [origins[i] for i in indices]
     folds: list[BacktestFold] = []
-    fold_index = 0
-    train_end = initial
-    while train_end + config.gap + horizon <= end_limit:
-        if config.max_origins is not None and fold_index >= config.max_origins:
-            break
+    for fold_index, train_end in enumerate(origins):
         test_start = train_end + config.gap
         test_end = test_start + horizon
         folds.append(
             BacktestFold(
                 fold_index=fold_index,
                 train_end_index=train_end,
+                train_start_index=(
+                    max(0, train_end - config.max_train_size)
+                    if config.max_train_size
+                    else 0
+                ),
                 test_start_index=test_start,
                 test_end_index=test_end,
                 horizon=horizon,
             )
         )
-        fold_index += 1
-        train_end += step
 
     if not folds:
         logger.warning(
@@ -228,21 +255,24 @@ def _process_fold(
     ``None`` indicates the fold was skipped (insufficient data). Pooled and
     by-horizon accumulators are updated in place when predictions succeed.
     """
-    train = series.iloc[: fold.train_end_index].copy()
+    train = series.iloc[fold.train_start_index : fold.train_end_index].copy()
     strategy = "clip" if config.apply_iqr_clip else config.outlier_strategy
-    train = prepare_training_series(
-        train,
-        outlier_strategy=strategy,
-        imputation_method=config.imputation_method,
-        smoothing_method=config.smoothing_method,
-        apply_iqr_clip=config.apply_iqr_clip,
-    )
     test = series.iloc[fold.test_start_index : fold.test_end_index]
     if len(train) < 2 or len(test) == 0:
-        warnings.append(f"Fold {fold.fold_index} skipped (insufficient data).")
-        return None
+        return BacktestFoldResult(
+            fold=fold,
+            status=ForecastFitStatus.NOT_ESTIMABLE,
+            warnings=["Insufficient training or test observations."],
+        )
 
     try:
+        if not getattr(candidate_fn, "handles_preprocessing", False):
+            train = prepare_training_series(
+                train,
+                outlier_strategy=strategy,
+                imputation_method=config.imputation_method,
+                smoothing_method=config.smoothing_method,
+            )
         result = candidate_fn(train, fold)
     except Exception as exc:  # pylint: disable=broad-except
         logger.warning("Candidate %s failed on fold %d: %s", name, fold.fold_index, exc)
@@ -269,17 +299,25 @@ def _process_fold(
 
     preds = np.asarray(result.predictions, dtype=float)
     actuals = test.values.astype(float)
-    if preds.shape[0] != actuals.shape[0]:
+    if preds.shape != actuals.shape or not np.isfinite(preds).all():
         warning = (
-            f"Fold {fold.fold_index} prediction length mismatch "
-            f"({preds.shape[0]} vs {actuals.shape[0]})."
+            f"Fold {fold.fold_index} requires finite predictions at every timestamp "
+            f"with shape {actuals.shape}; received {preds.shape}."
         )
+
         warnings.append(warning)
         return BacktestFoldResult(
             fold=fold,
             status=ForecastFitStatus.FAILED,
             warnings=[warning],
             fitted_configuration=dict(result.fitted_configuration or {}),
+        )
+
+    if not np.isfinite(actuals).any():
+        return BacktestFoldResult(
+            fold=fold,
+            status=ForecastFitStatus.NOT_ESTIMABLE,
+            warnings=["No observed actuals in this fold."],
         )
 
     residuals = (actuals - preds).tolist()
@@ -352,23 +390,22 @@ def evaluate_candidate(
         )
         if result is not None:
             fold_results.append(result)
+            warnings.extend(
+                f"Origin {fold.fold_index}: {message}" for message in result.warnings
+            )
 
-    if folds:
-        strategy = "clip" if config.apply_iqr_clip else config.outlier_strategy
-        initial_series = prepare_training_series(
-            series.iloc[: folds[0].train_end_index].copy(),
-            outlier_strategy=strategy,
-            imputation_method=config.imputation_method,
-            smoothing_method=config.smoothing_method,
-        )
-        initial_training = initial_series.to_numpy(dtype=float)
-    else:
-        initial_training = np.asarray([], dtype=float)
+    # Common original-scale denominator, preserving missing calendar lag pairs.
+    initial_training = (
+        series.iloc[: folds[0].train_end_index].to_numpy(dtype=float)
+        if folds
+        else np.asarray([], dtype=float)
+    )
     pooled = calculate_forecast_metrics(
         np.asarray(pooled_actuals, dtype=float),
         np.asarray(pooled_preds, dtype=float),
         training=initial_training,
         mase_period=config.mase_period,
+        quantile=config.quantile,
     )
 
     by_horizon: dict[int, ForecastMetrics] = {}
@@ -378,6 +415,7 @@ def evaluate_candidate(
             np.asarray(by_horizon_preds[h], dtype=float),
             training=initial_training,
             mase_period=config.mase_period,
+            quantile=config.quantile,
         )
 
     n_evaluated = pooled.n_evaluated
@@ -388,55 +426,24 @@ def evaluate_candidate(
     successful_origins = sum(
         fold.status == ForecastFitStatus.OK for fold in fold_results
     )
+    if successful_origins < config.minimum_origins or successful_origins != len(folds):
+        unavailable["ranking"] = (
+            f"Requires at least {config.minimum_origins} origins and success on every fold; "
+            f"completed {successful_origins}/{len(folds)}."
+        )
+        warnings.append(unavailable["ranking"])
     final_test_metrics = ForecastMetrics(
         unavailable_reasons={"all": "No untouched final test window was reserved."}
     )
     # Reuse the same clamped final_test_size as generate_folds so at least
     # two training observations are preserved.
     final_test_size = max(0, min(config.final_test_size, max(0, len(series) - 2)))
-    if final_test_size > 0 and len(series) > final_test_size:
-        final_start = len(series) - final_test_size
-        final_fold = BacktestFold(
-            fold_index=len(folds),
-            train_end_index=final_start,
-            test_start_index=final_start,
-            test_end_index=len(series),
-            horizon=final_test_size,
+    if final_test_size:
+        final_test_metrics = ForecastMetrics(
+            unavailable_reasons={
+                "all": "Reserved for evaluation after model selection is frozen."
+            }
         )
-        final_actuals: list[float] = []
-        final_predictions: list[float] = []
-        final_result = _process_fold(
-            name,
-            series,
-            final_fold,
-            candidate_fn,
-            final_actuals,
-            final_predictions,
-            {},
-            {},
-            warnings,
-            config,
-        )
-        if final_result is not None and final_result.status == ForecastFitStatus.OK:
-            strategy = "clip" if config.apply_iqr_clip else config.outlier_strategy
-            final_training = prepare_training_series(
-                series.iloc[:final_start].copy(),
-                outlier_strategy=strategy,
-                imputation_method=config.imputation_method,
-                smoothing_method=config.smoothing_method,
-            )
-            final_test_metrics = calculate_forecast_metrics(
-                np.asarray(final_actuals, dtype=float),
-                np.asarray(final_predictions, dtype=float),
-                training=final_training,
-                mase_period=config.mase_period,
-            )
-        else:
-            final_test_metrics = ForecastMetrics(
-                unavailable_reasons={
-                    "all": "Candidate failed on the untouched final test window."
-                }
-            )
     evaluated_horizon = folds[0].horizon if folds else 0
     requested_horizon = config.requested_horizon or config.horizon or evaluated_horizon
     return BacktestEvaluation(
@@ -449,7 +456,12 @@ def evaluate_candidate(
         n_failed_origins=len(fold_results) - successful_origins,
         n_evaluated=n_evaluated,
         validation_design={
-            "method": "expanding_window",
+            "method": "sliding_window" if config.max_train_size else "expanding_window",
+            "minimum_origins": config.minimum_origins,
+            "origin_sampling": "spread_including_latest",
+            "origin_train_ends": [fold.train_end_index for fold in folds],
+            "comparison_policy": "all_folds_finite_predictions",
+            "metric_interval_method": "paired_moving_block_origins",
             "initial_train_size": folds[0].train_end_index if folds else 0,
             "requested_horizon": requested_horizon,
             "evaluated_horizon": evaluated_horizon,
@@ -463,6 +475,7 @@ def evaluate_candidate(
             "failed_origins": len(fold_results) - successful_origins,
             "n_evaluated": n_evaluated,
             "mase_period": config.mase_period,
+            "quantile": config.quantile,
             "apply_iqr_clip": config.apply_iqr_clip,
             "outlier_strategy": config.outlier_strategy,
             "imputation_method": config.imputation_method,
@@ -475,6 +488,11 @@ def evaluate_candidate(
             np.asarray(pooled_preds, dtype=float),
             initial_training,
             config.mase_period,
+            origin_sizes=[
+                len(f.predictions)
+                for f in fold_results
+                if f.status == ForecastFitStatus.OK
+            ],
         ),
         unavailable_reasons=unavailable,
         warnings=warnings,
@@ -511,9 +529,15 @@ def evaluate_candidates(
     if references:
         reference = min(
             references,
-            key=lambda item: item.pooled_metrics.mae or float("inf"),
+            key=lambda item: (
+                item.pooled_metrics.mae
+                if item.pooled_metrics.mae is not None
+                else float("inf")
+            ),
         )
         for name, evaluation in list(evaluations.items()):
+            if not evaluation.is_rankable:
+                continue
             skill: dict[str, float] = {}
             for metric in ("mae", "rmse"):
                 candidate_value = getattr(evaluation.pooled_metrics, metric)
@@ -524,3 +548,48 @@ def evaluate_candidates(
                     )
             evaluations[name] = evaluation.model_copy(update={"skill_scores": skill})
     return evaluations
+
+
+def evaluate_final_candidate(
+    name: str,
+    series: pd.Series,
+    candidate_fn: CandidateFn,
+    config: BacktestConfig,
+) -> tuple[ForecastMetrics, BacktestFoldResult | None]:
+    """Audit a frozen winner. The returned evidence must not drive selection."""
+    size = min(config.final_test_size, max(0, len(series) - 2))
+    if size < 1:
+        return (
+            ForecastMetrics(unavailable_reasons={"all": "No final test reserved."}),
+            None,
+        )
+    start = len(series) - size
+    fold = BacktestFold(
+        fold_index=0,
+        train_end_index=start,
+        test_start_index=start,
+        test_end_index=len(series),
+        horizon=size,
+    )
+    actuals: list[float] = []
+    predictions: list[float] = []
+    result = _process_fold(
+        name, series, fold, candidate_fn, actuals, predictions, {}, {}, [], config
+    )
+    if result is None or result.status != ForecastFitStatus.OK:
+        return (
+            ForecastMetrics(
+                unavailable_reasons={"all": "Frozen model failed final test."}
+            ),
+            result,
+        )
+    return (
+        calculate_forecast_metrics(
+            np.asarray(actuals),
+            np.asarray(predictions),
+            training=series.iloc[:start],
+            mase_period=config.mase_period,
+            quantile=config.quantile,
+        ),
+        result,
+    )

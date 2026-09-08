@@ -1,18 +1,85 @@
 """Decorators for Flask blueprint route protection.
 
 Provides :func:`password_change_required` which redirects users to the
-password-change page when their ``must_change_password`` flag is set.
+password-change page when their ``must_change_password`` flag is set, and
+:func:`get_backend_setup_status` which powers the first-run setup gate.
 """
 
 from __future__ import annotations
 
+import logging
 from functools import wraps
-from typing import Callable, TypeVar
+from typing import Any, Callable, TypeVar
 
-from flask import flash, redirect, request, url_for
+import requests
+from flask import flash, g, redirect, request, url_for
 from flask_login import current_user
 
+from services.api_client import BackendAPIClient, resolve_backend_connection
+
 _F = TypeVar("_F", bound=Callable[..., ...])
+
+logger = logging.getLogger(__name__)
+
+
+def get_backend_setup_status() -> dict[str, Any]:
+    """Probe the backend ``GET /setup/status`` endpoint.
+
+    Builds a lightweight, unauthenticated client — the endpoint requires no
+    auth, so the probe works before setup completes and before any
+    credentials are stored.  Connection errors are tolerated and reported
+    as "setup incomplete" so the wizard's backend-connection step can
+    handle them.
+
+    The connection settings come from the ``api_credentials`` DB row first
+    (via :func:`resolve_backend_connection`) so every gunicorn worker
+    agrees on the backend URL, with the in-process config as fallback.
+
+    The payload is cached on :data:`flask.g` for the remainder of the
+    request (the setup gate already calls this on every request), so
+    later readers — :func:`get_llm_enabled`, template context — do not
+    trigger a second backend probe.
+
+    Returns:
+        The parsed status payload, or ``{"setup_complete": False}`` when
+        the backend URL is not configured, the backend is unreachable, or
+        the response is unexpected.
+    """
+    cached = getattr(g, "backend_setup_status", None)
+    if cached is not None:
+        return cached
+
+    payload = {"setup_complete": False}
+    base_url, verify_ssl = resolve_backend_connection()
+    if base_url:
+        client = BackendAPIClient(base_url=base_url, verify=verify_ssl)
+        try:
+            resp = client.get_setup_status()
+            if resp.status_code == 200:
+                payload = resp.json()
+        except (requests.RequestException, ValueError):
+            logger.debug("Setup status probe failed — treating as incomplete.")
+
+    try:
+        g.backend_setup_status = payload
+    except RuntimeError:
+        # Outside an application context (e.g. a management command):
+        # skip caching and return the fresh probe.
+        return payload
+    return payload
+
+
+def get_llm_enabled() -> bool:
+    """Return whether AI features are enabled deployment-wide.
+
+    Reads the cached ``GET /setup/status`` payload.  Defaults to ``True``
+    when the flag is missing or the backend is unreachable so a transient
+    outage never silently hides Chat.
+
+    Returns:
+        ``True`` when AI features are enabled on this deployment.
+    """
+    return bool(get_backend_setup_status().get("llm_enabled", True))
 
 
 def password_change_required(f: _F) -> _F:

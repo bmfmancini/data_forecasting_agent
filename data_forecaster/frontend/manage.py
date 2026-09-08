@@ -8,7 +8,6 @@ Register these commands with the Flask application by calling
     flask user-list
     flask credentials-set --label default --base-url http://backend:8000
     flask credentials-list
-    flask generate-key
 """
 
 from __future__ import annotations
@@ -16,7 +15,6 @@ from __future__ import annotations
 import re
 
 import click
-from cryptography.fernet import Fernet
 from flask import Flask
 from werkzeug.security import generate_password_hash
 
@@ -79,14 +77,12 @@ def register_commands(app: Flask) -> None:
     def user_list() -> None:
         """List all application users."""
         with app.app_context():
-            rows = query_db(
-                """
+            rows = query_db("""
                 SELECT u.id, u.username, r.name AS role, u.active, u.created_at
                 FROM users u
                 JOIN roles r ON r.id = u.role_id
                 ORDER BY u.id
-                """
-            )
+                """)
             if not rows or not isinstance(rows, list):
                 click.echo("No users found.")
                 return
@@ -166,9 +162,3 @@ def register_commands(app: Flask) -> None:
         with app.app_context():
             execute_db("DELETE FROM api_credentials WHERE label = ?", (label,))
             click.echo(f"Credential '{label}' deleted.")
-
-    @app.cli.command("generate-key")
-    def generate_key() -> None:
-        """Generate a new Fernet encryption key for FLASK_ENCRYPTION_KEY."""
-        key = Fernet.generate_key().decode()
-        click.echo(f"Generated key (set as FLASK_ENCRYPTION_KEY):\n{key}")

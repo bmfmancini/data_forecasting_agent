@@ -196,6 +196,7 @@ class ForecastMetrics(BaseModel):
     wape: float | None = None
     mase: float | None = None
     interval_label: str = "prediction_interval"
+    interval_calibration_note: str = ""
     prediction_intervals: list[PredictionInterval] = Field(default_factory=list)
     selection_metrics: dict[str, float | None] = Field(default_factory=dict)
     final_test_metrics: dict[str, object] = Field(default_factory=dict)
@@ -285,20 +286,26 @@ class Risk(BaseModel):
     """A strategic risk identified from the analysis.
 
     Attributes:
+        title:             Business-facing issue heading; optional for older reports.
         category:          Risk category (e.g. "Data", "Model", "Market").
-        description:       What the risk is.
+        description:       Factual seed describing what was detected.
         potential_impact:  Business impact if the risk materialises.
-        mitigation:        Suggested mitigation approach.
+        mitigation:        Concrete next step to address the risk.
         evidence:          Supporting evidence strings from the analysis.
         severity:          "High", "Medium", or "Low".
+        narrative:          LLM-generated flowing prose merging the seed
+                           fields (Stage 2); deterministic merge is used as
+                           the fallback.
     """
 
+    title: str = ""
     category: str
     description: str
     potential_impact: str
     mitigation: str
     evidence: list[str] = Field(default_factory=list)
     severity: str
+    narrative: str | None = None
 
 
 # ── Recommendations & Evidence ───────────────────────────────────────────────
@@ -347,10 +354,14 @@ class Assumption(BaseModel):
     Attributes:
         assumption:          The assumption statement.
         consequence_if_false: Material consequence if the assumption fails.
+        narrative:           LLM-generated flowing prose merging the seed
+                             fields (Stage 2); deterministic merge is used as
+                             the fallback.
     """
 
     assumption: str
     consequence_if_false: str
+    narrative: str | None = None
 
 
 # ── Statistical Audit ────────────────────────────────────────────────────────
@@ -425,6 +436,7 @@ class HistoricalAnalysis(BaseModel):
     seasonal_period: int | None = None
     dominant_period: float | None = None
     is_stationary: bool
+    context_notes: list[str] = Field(default_factory=list)
     narrative: str = ""
 
 
@@ -440,6 +452,7 @@ class ForecastOutlook(BaseModel):
     """
 
     metrics: ForecastMetrics
+    context_notes: list[str] = Field(default_factory=list)
     narrative: str = ""
 
 
@@ -458,6 +471,17 @@ class ReportMetadata(BaseModel):
         dataset_frequency:   Frequency of the input dataset.
         data_quality_rating: Overall data quality rating.
         row_count:           Number of rows in the input dataset.
+        llm_narrative_fallback: Whether deterministic narrative templates
+            replaced one or more LLM-generated sections.
+        llm_fallback_sections: Narrative sections that used deterministic
+            templates, if any.
+        business_context: Distilled user-supplied preflight context
+            (domain, units, interventions, stockouts, covariates, and the
+            structured known-event summary: holidays country, custom events
+            by type, covariate names) that is threaded into every narrative
+            prompt. Sentinel/placeholder answers ("Let AI Guess",
+            "Unspecified", "None known", …) are excluded, so an empty dict
+            means no usable context was given.
     """
 
     engine_version: str
@@ -468,6 +492,9 @@ class ReportMetadata(BaseModel):
     dataset_frequency: str
     data_quality_rating: str
     row_count: int
+    llm_narrative_fallback: bool = False
+    llm_fallback_sections: list[str] = Field(default_factory=list)
+    business_context: dict[str, Any] = Field(default_factory=dict)
 
 
 class Appendix(BaseModel):

@@ -9,7 +9,7 @@ forecast), chat, jobs, and API key management.
 from __future__ import annotations
 
 from typing import Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 
 from forecasting.contracts import ForecastFitStatus
 
@@ -36,6 +36,16 @@ class PreflightDecision(BaseModel):
     default: Any
     required: bool = False
     allow_custom: bool = False
+    # Rendering hint for the frontend. ``select`` (default) renders the
+    # standard dropdown. ``country`` renders a dropdown whose ``options`` are
+    # ISO codes and ``option_labels`` are display names. ``dates`` renders a
+    # textarea of ``YYYY-MM-DD[, label]`` lines. ``covariates`` renders a
+    # repeatable name + date:value row builder.
+    detail_key: str | None = None
+    detail_placeholder: str = ""
+    subdivisions: dict[str, list[dict[str, str]]] = Field(default_factory=dict)
+    kind: str = "select"
+    option_labels: list[str] = Field(default_factory=list)
 
 
 class PreflightResponse(BaseModel):
@@ -63,6 +73,9 @@ class AnalyzeRequest(BaseModel):
     date_col: str | None = None
     value_col: str | None = None
     forced_model: str | None = None  # "Holt-Winters" | "ARIMA" | "SARIMA" | None (auto)
+    # Traditional Forecasting: skip every LLM call for this run.  Requires
+    # an explicit ``forced_model`` (auto selection is unavailable).
+    traditional_mode: bool = False
     user_prompt: str | None = None  # Extra instructions appended to the report prompt
     preflight_options: dict[str, Any] | None = Field(default_factory=dict)
     application_user_id: int | None = None
@@ -169,6 +182,7 @@ class ModelSelectionResult(BaseModel):
     arima_rejected_reason: str | None = None
     sarima_rejected_reason: str | None = None
     ewma_rejected_reason: str | None = None
+    prophet_rejected_reason: str | None = None
     reasoning_steps: list[dict[str, Any]] = Field(default_factory=list)
     token_usage: dict[str, Any] = Field(default_factory=dict)
     # ── Selection policy additions ──────────────────────────────────────────
@@ -194,6 +208,7 @@ class ResidualDiagnostics(BaseModel):
     disabled_tests: list[str] = Field(default_factory=list)
     # ── Residual diagnostics additions ──────────────────────────────────────
     error_type: str = "innovations"
+    innovation_diagnostics: dict[str, Any] = Field(default_factory=dict)
     n_errors: int = 0
     mean_ci_lower: float | None = None
     mean_ci_upper: float | None = None
@@ -226,6 +241,7 @@ class ForecastCandidateResult(BaseModel):
     mase: float | None = None
     smape: float | None = None
     rmsse: float | None = None
+    pinball: float | None = None
     n_evaluated: int = 0
     n_missing: int = 0
     fitted_configuration: dict[str, Any] = Field(default_factory=dict)
@@ -255,6 +271,7 @@ class ForecastResult(BaseModel):
     mase: float | None = None
     smape: float | None = None
     rmsse: float | None = None
+    pinball: float | None = None
     residual_diagnostics: ResidualDiagnostics | None = None
     candidate_results: list[ForecastCandidateResult] = Field(default_factory=list)
     reasoning_steps: list[dict[str, Any]] = Field(default_factory=list)
@@ -304,6 +321,12 @@ class AnalysisResponse(BaseModel):
     llm_fallback: bool = (
         False  # Indicates if the LLM was not used for report generation
     )
+    # Records the ACTUAL execution mode: True only when the whole run was
+    # LLM-free from the start (per-run Traditional Forecasting, or the
+    # deployment-wide switch already off when the worker started the job).
+    # A run that began in AI mode and fell back later keeps False here —
+    # the llm_fallback banner covers that case instead.
+    traditional_mode: bool = False
     chart_historical: dict
     chart_stl: dict
     chart_acf_pacf: str  # base64 PNG
@@ -442,3 +465,113 @@ class AuthStatusResponse(BaseModel):
 
     auth_enabled: bool
     has_users: bool
+
+
+# ── Setup Wizard Schemas ──────────────────────────────────────────────────────
+
+
+class SetupBootstrapRequest(BaseModel):
+    """Request schema for the atomic first-run setup bootstrap."""
+
+    username: str
+    api_key: str
+
+
+class SetupBootstrapResponse(BaseModel):
+    """Response schema after a successful setup bootstrap."""
+
+    user: APIUserResponse
+    setup_complete: bool = True
+
+
+class SetupStatusResponse(BaseModel):
+    """Response schema for setup status — booleans only, never secrets."""
+
+    setup_complete: bool
+    admin_exists: bool
+    llm_configured: bool
+    llm_enabled: bool
+    models_enabled: int
+
+
+# ── Model Registry Schemas ───────────────────────────────────────────────────
+
+
+class ModelState(BaseModel):
+    """Enable/disable state of one forecasting model."""
+
+    name: str
+    display_name: str
+    enabled: bool
+
+
+class ModelsResponse(BaseModel):
+    """Response schema listing all models and their states."""
+
+    models: list[ModelState]
+
+
+class ModelUpdateRequest(BaseModel):
+    """Request schema for enabling or disabling a model."""
+
+    enabled: bool
+
+
+# ── LLM Configuration Schemas ────────────────────────────────────────────────
+
+
+class LLMAllowedOrigins(BaseModel):
+    """Complete allowlist; an empty list disables Ollama connection tests."""
+
+    origins: list[str] = Field(max_length=100)
+
+
+class LLMConfigResponse(BaseModel):
+    """Masked LLM configuration — the API key is structurally absent.
+
+    Only ``api_key_set`` reveals whether a key is stored; the key itself
+    (plaintext or ciphertext) is never included in any API response.
+    """
+
+    provider: str
+    model: str
+    base_url: str | None = None
+    temperature: float
+    api_key_set: bool
+    configured: bool
+    # Deployment-wide "Enable AI features" switch.  Stored in
+    # ``system_settings`` (not ``llm_config``) so it exists on installs
+    # that never configure a provider.
+    llm_enabled: bool = True
+
+
+class LLMEnabledRequest(BaseModel):
+    """Request schema for the deployment-wide "Enable AI features" switch."""
+
+    enabled: bool
+
+
+class LLMConfigUpdateRequest(BaseModel):
+    """One-way write schema for LLM configuration.
+
+    ``api_key`` is a :class:`SecretStr` so it cannot leak via logs or
+    ``repr``.  Omitting it (``None``) preserves the stored key.
+    """
+
+    provider: str
+    model: str
+    base_url: str | None = None
+    api_key: SecretStr | None = None
+    temperature: float = 0.1
+
+
+class LLMConfigTestResponse(BaseModel):
+    """Result of testing candidate LLM settings without saving them."""
+
+    ok: bool
+    url_reachable: bool
+    credentials_valid: bool
+    llm_responded: bool
+    message: str
+    response: str | None = None
+    diagnostic: str | None = None

@@ -194,7 +194,9 @@ def missing_timestamps_series(n: int = 36, missing_count: int = 5) -> pd.Series:
     Returns:
         A series with an irregular index (some periods missing).
     """
-    full = pd.Series(np.arange(n, dtype=float), index=_index(n), name="missing_timestamps")
+    full = pd.Series(
+        np.arange(n, dtype=float), index=_index(n), name="missing_timestamps"
+    )
     rng = np.random.default_rng(_FIXTURE_SEED)
     drop_idx = rng.choice(n, size=missing_count, replace=False)
     return full.drop(full.index[drop_idx])

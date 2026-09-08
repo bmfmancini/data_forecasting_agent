@@ -43,8 +43,13 @@ def run_statistical_agent(
     seasonal_period: int = 12,
     user_domain: str = "General",
     disabled_tests: list[str] | None = None,
+    use_llm: bool = True,
 ) -> StatisticalResult:
-    """Compute typed evidence in Python and use the LLM only for explanation."""
+    """Compute typed evidence in Python and use the LLM only for explanation.
+
+    With ``use_llm=False`` (Traditional Forecasting) the prose summary is
+    the deterministic one below and no LLM client is constructed.
+    """
     disabled = set(disabled_tests or [])
     values = series.dropna().astype(float)
     is_constant = values.nunique() <= 1
@@ -117,27 +122,40 @@ def run_statistical_agent(
             "observation": str(profile),
         }
     ]
-    try:
-        prompt = STATISTICAL_ANALYSIS_PROMPT
-        inputs = {"profile": str(profile)}
-        response = (prompt | get_llm(temperature=0)).invoke(inputs)
-        narrative = str(response.content)
-        if narrative.strip():
-            summary = narrative
-        token_usage = extract_token_usage(
-            response, input_text=estimate_input_text(prompt, inputs)
-        )
+    if use_llm:
+        try:
+            prompt = STATISTICAL_ANALYSIS_PROMPT
+            inputs = {"profile": str(profile)}
+            response = (prompt | get_llm(temperature=0)).invoke(inputs)
+            narrative = str(response.content)
+            if narrative.strip():
+                summary = narrative
+            token_usage = extract_token_usage(
+                response, input_text=estimate_input_text(prompt, inputs)
+            )
+            if user_domain in {"Skip / Let AI Guess", "Other (Custom)"}:
+                match = re.search(r"DOMAIN:\s*([^\n\.]+)", summary, re.IGNORECASE)
+                inferred_domain = match.group(1).strip() if match else "General / Unknown"
+            reasoning_steps.append(
+                {
+                    "thought": "Generated a qualitative explanation of typed evidence.",
+                    "observation": "Complete",
+                }
+            )
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.warning("Statistical narrative unavailable: %s", exc)
+    else:
+        # Traditional Forecasting: keep the deterministic summary above and
+        # never construct an LLM client. This is an intentional mode, not a
+        # failure — no warning is logged.
         if user_domain in {"Skip / Let AI Guess", "Other (Custom)"}:
-            match = re.search(r"DOMAIN:\s*([^\n\.]+)", summary, re.IGNORECASE)
-            inferred_domain = match.group(1).strip() if match else "General / Unknown"
+            inferred_domain = "General / Unknown"
         reasoning_steps.append(
             {
-                "thought": "Generated a qualitative explanation of typed evidence.",
+                "thought": "Traditional Forecasting: deterministic statistical summary used (LLM skipped by request).",
                 "observation": "Complete",
             }
         )
-    except Exception as exc:  # pylint: disable=broad-except
-        logger.warning("Statistical narrative unavailable: %s", exc)
 
     # LLM prose cannot request transformations. Structured change-point
     # evidence may request a follow-up analysis but never mutates observations.

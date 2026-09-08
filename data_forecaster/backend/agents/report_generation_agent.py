@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from typing import Any
+
+import pandas as pd
 from report.narrative import _fallback_narrative
 
 from core.logging_config import get_logger
@@ -21,6 +23,71 @@ from schemas import (
 logger = get_logger(__name__)
 
 
+def _apply_fallback_narratives(report: ExecutiveReport) -> ExecutiveReport:
+    """Fill every narrative field from the deterministic fallback templates.
+
+    Sets ``metadata.llm_narrative_fallback`` and records all sections in
+    ``metadata.llm_fallback_sections``. Shared by the LLM-failure path and
+    the Traditional Forecasting path so both produce identical
+    deterministic narratives.
+
+    Args:
+        report: The Stage-1 :class:`ExecutiveReport` to fill.
+
+    Returns:
+        The same report with all narrative fields populated from
+        :func:`report.narrative._fallback_narrative`.
+    """
+    report.metadata.llm_narrative_fallback = True
+    report.metadata.llm_fallback_sections = [
+        "executive_summary",
+        "data_quality",
+        "historical_analysis",
+        "forecast_outlook",
+        "model_comparison",
+        "statistical_audit",
+        "explainability",
+        *["recommendation"] * len(report.recommendations),
+        *["assumption"] * len(report.assumptions),
+    ]
+    report.executive_summary.narrative = _fallback_narrative(
+        report.executive_summary, "executive_summary"
+    )
+    report.data_quality.narrative = _fallback_narrative(report.data_quality, "data_quality")
+    report.historical_analysis.narrative = _fallback_narrative(
+        report.historical_analysis, "historical_analysis"
+    )
+    report.forecast_outlook.narrative = _fallback_narrative(
+        report.forecast_outlook, "forecast_outlook"
+    )
+    report.model_comparison.narrative = _fallback_narrative(
+        report.model_comparison, "model_comparison"
+    )
+    report.statistical_audit.narrative = _fallback_narrative(
+        report.statistical_audit, "statistical_audit"
+    )
+    report.explainability.narrative = _fallback_narrative(
+        report.explainability, "explainability"
+    )
+    report.recommendations = [
+        rec.model_copy(
+            update={"narrative": _fallback_narrative(rec, "recommendation")}
+        )
+        for rec in report.recommendations
+    ]
+    report.risks = [
+        risk.model_copy(update={"narrative": _fallback_narrative(risk, "risk")})
+        for risk in report.risks
+    ]
+    report.assumptions = [
+        assumption.model_copy(
+            update={"narrative": _fallback_narrative(assumption, "assumption")}
+        )
+        for assumption in report.assumptions
+    ]
+    return report
+
+
 def run_report_agent(
     validation: ValidationResult,
     statistical: StatisticalResult,
@@ -31,6 +98,8 @@ def run_report_agent(
     preflight_options: dict[str, Any] | None = None,
     statistical_review: StatisticalReviewResult | None = None,
     all_metrics: dict[str, dict[str, float]] | None = None,
+    historical_series: pd.Series | None = None,
+    use_llm: bool = True,
 ) -> tuple[
     ExecutiveReport,
     list[dict[str, Any]],
@@ -54,13 +123,16 @@ def run_report_agent(
         preflight_options:   Optional preflight configuration dict.
         statistical_review:  Statistical review (QA) agent output.
         all_metrics:         All model comparison metrics dict.
+        historical_series:  Prepared historical observations, if available.
+        use_llm:             When ``False`` (Traditional Forecasting), skip
+                             Stage 2's LLM narrative generation and fill
+                             every section from the deterministic templates.
 
     Returns:
         A tuple of (ExecutiveReport, reasoning_steps, visual_strategy,
         token_usage).
     """
     del rag_kb  # RAG context not needed for per-section narrative prompts.
-    del preflight_options  # Preflight options handled by the builder inputs.
 
     reasoning_steps: list[dict[str, Any]] = [
         {
@@ -78,6 +150,8 @@ def run_report_agent(
         forecast=forecast,
         statistical_review=statistical_review,
         all_metrics=all_metrics or {},
+        preflight_options=preflight_options,
+        historical_series=historical_series,
     )
     reasoning_steps.append(
         {
@@ -92,51 +166,71 @@ def run_report_agent(
     )
 
     # ── Stage 2: Generate narratives via LLM ──────────────────────────────
-    reasoning_steps.append(
-        {
-            "thought": "Stage 2: Generating narrative text via LLM...",
-            "observation": "Narrative generation started",
-        }
-    )
-    try:
-        report, token_usage = generate_narratives(report, user_prompt)
+    token_usage: dict[str, int] = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+    }
+    if use_llm:
         reasoning_steps.append(
             {
-                "thought": "Stage 2 complete: Narratives generated",
-                "observation": (f"Tokens: {token_usage.get('total_tokens', 0)}"),
+                "thought": "Stage 2: Generating narrative text via LLM...",
+                "observation": "Narrative generation started",
             }
         )
-    except Exception as exc:
-        logger.warning(
-            "Narrative generation failed: %s — using fallback narratives.",
-            exc,
-        )
-        token_usage = {
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "total_tokens": 0,
-        }
+        try:
+            report, token_usage = generate_narratives(report, user_prompt)
+            reasoning_steps.append(
+                {
+                    "thought": (
+                        "Stage 2 complete: Deterministic narrative fallback used"
+                        if report.metadata.llm_narrative_fallback
+                        else "Stage 2 complete: Narratives generated by LLM"
+                    ),
+                    "observation": (
+                        "Fallback sections: "
+                        + ", ".join(report.metadata.llm_fallback_sections)
+                        if report.metadata.llm_narrative_fallback
+                        else f"Tokens: {token_usage.get('total_tokens', 0)}"
+                    ),
+                    "llm_fallback": report.metadata.llm_narrative_fallback,
+                }
+            )
+        except Exception as exc:
+            logger.warning(
+                "Narrative generation failed: %s — using fallback narratives.",
+                exc,
+            )
+            token_usage = {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+            }
+            reasoning_steps.append(
+                {
+                    "thought": f"Narrative generation error: {exc}",
+                    "observation": "Fallback narratives used",
+                    "llm_fallback": True,
+                }
+            )
+            report = _apply_fallback_narratives(report)
+    else:
+        # Traditional Forecasting: Stage 2 never constructs an LLM. The
+        # deterministic templates are the intended output, so this is not
+        # logged as a failure.
+        report = _apply_fallback_narratives(report)
         reasoning_steps.append(
             {
-                "thought": f"Narrative generation error: {exc}",
-                "observation": "Fallback narratives used",
-                "llm_fallback": True,
+                "thought": (
+                    "Stage 2 complete: Traditional Forecasting — standard "
+                    "template narratives used (LLM skipped by request)."
+                ),
+                "observation": (
+                    "Fallback sections: "
+                    + ", ".join(report.metadata.llm_fallback_sections)
+                ),
             }
         )
-        # Ensure all narrative fields have a fallback value
-        report.executive_summary.narrative = _fallback_narrative("executive_summary")
-        report.data_quality.narrative = _fallback_narrative("data_quality")
-        report.historical_analysis.narrative = _fallback_narrative(
-            "historical_analysis"
-        )
-        report.forecast_outlook.narrative = _fallback_narrative("forecast_outlook")
-        report.model_comparison.narrative = _fallback_narrative("model_comparison")
-        report.statistical_audit.narrative = _fallback_narrative("statistical_audit")
-        report.explainability.narrative = _fallback_narrative("explainability")
-        report.recommendations = [
-            rec.model_copy(update={"narrative": _fallback_narrative("recommendation")})
-            for rec in report.recommendations
-        ]
 
     # ── Visual strategy (retained for pipeline compatibility) ─────────────
     visual_strategy = _compute_visual_strategy(statistical, forecast, model_selection)

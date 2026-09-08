@@ -11,7 +11,13 @@ the pre-computed structured fields and LLM-generated narrative strings.
 
 from __future__ import annotations
 
-from report.models import ExecutiveReport, format_metric
+from report.models import (
+    ExecutiveReport,
+    Recommendation,
+    Risk,
+    Assumption,
+    format_metric,
+)
 
 
 def _sanitize_cell(value: str) -> str:
@@ -27,6 +33,37 @@ def _sanitize_cell(value: str) -> str:
         Sanitised cell text safe for Markdown table insertion.
     """
     return value.replace("|", "\\|").replace("\n", " ").replace("\r", " ")
+
+
+def _recommendation_title(rec: Recommendation) -> str:
+    """Derive a short heading from a recommendation's action sentence."""
+    text = rec.recommendation.strip()
+    # Use the first clause/sentence, trimmed to a heading-friendly length.
+    for sep in (".", ";", "—", ":"):
+        if sep in text:
+            text = text.split(sep, 1)[0].strip()
+    if len(text) > 70:
+        text = text[:67].rstrip() + "…"
+    return text or rec.recommendation
+
+
+def _risk_fallback_text(risk: Risk) -> str:
+    """Merge a risk's seed fields into one paragraph (no-LLM fallback)."""
+    parts = [risk.description, risk.potential_impact, risk.mitigation]
+    return " ".join(part for part in parts if part).strip()
+
+
+def _recommendation_fallback_text(rec: Recommendation) -> str:
+    """Merge a recommendation's seed fields into one paragraph (no-LLM fallback)."""
+    parts = [rec.recommendation, rec.rationale, rec.expected_outcome]
+    return " ".join(part for part in parts if part).strip()
+
+
+def _assumption_fallback_text(assumption: Assumption) -> str:
+    """Merge an assumption's seed fields into one sentence (no-LLM fallback)."""
+    if assumption.consequence_if_false:
+        return f"{assumption.assumption} {assumption.consequence_if_false}"
+    return assumption.assumption
 
 
 class MarkdownRenderer:
@@ -134,6 +171,9 @@ class MarkdownRenderer:
         lines.append(
             f"**Statistical Stability:** {'Stable' if h.is_stationary else 'Changing over time'}"
         )
+        if h.context_notes:
+            lines.extend(["", "**Calendar and event context:**", ""])
+            lines.extend(f"- {note}" for note in h.context_notes)
         if h.narrative:
             lines.append("")
             lines.append(h.narrative)
@@ -180,6 +220,9 @@ class MarkdownRenderer:
         )
         if m.final_test_assessment:
             lines.append(f"**Recent Holdout Assessment:** {m.final_test_assessment}")
+        if report.forecast_outlook.context_notes:
+            lines.extend(["", "**Calendar and event context:**", ""])
+            lines.extend(f"- {note}" for note in report.forecast_outlook.context_notes)
         if report.forecast_outlook.narrative:
             lines.append("")
             lines.append(report.forecast_outlook.narrative)
@@ -202,7 +245,11 @@ class MarkdownRenderer:
             if interval_label == "experimental"
             else "Model-Based 95% Prediction Intervals"
         )
+        if interval_label == "empirically_adjusted_prediction_interval":
+            interval_heading = "95% Prediction Intervals with Backtest Adjustments"
         lines.append(f"### {interval_heading}")
+        if m.interval_calibration_note:
+            lines.extend(["", m.interval_calibration_note])
         lines.append("")
         lines.append("| Date | Forecast | Lower Bound | Upper Bound |")
         lines.append("|------|----------|-------------|-------------|")
@@ -216,12 +263,14 @@ class MarkdownRenderer:
             if interval_label == "experimental"
             else "Forecast with Model-Based Prediction Intervals"
         )
+        if interval_label == "empirically_adjusted_prediction_interval":
+            figure_label = "Forecast with Backtest-Adjusted Prediction Intervals"
         lines.append(f"**Figure: {figure_label}**")
         lines.append(
             "The projected values with an estimated 95% planning range; empirical "
             "coverage was not evaluated."
             if interval_label == "experimental"
-            else "The projected values with a model-based 95% planning range."
+            else "The projected values with a nominal 95% planning range."
         )
         lines.append("")
         lines.append("[VISUAL:FORECAST]")
@@ -327,18 +376,20 @@ class MarkdownRenderer:
     # ── Section 10: Strategic Risks ───────────────────────────────────────
 
     def _render_risks(self, report: ExecutiveReport) -> str:
-        """Render the strategic risks section."""
+        """Render the strategic risks section as prose + evidence bullets."""
         lines = ["## 10. Strategic Risks & Operational Constraints", ""]
         if not report.risks:
             lines.append("No significant risks were identified from the analysis.")
             return "\n".join(lines)
         for risk in report.risks:
-            lines.append(f"### {risk.category} — {risk.severity}")
-            lines.append(f"**Risk:** {risk.description}")
-            lines.append(f"**Potential Impact:** {risk.potential_impact}")
-            lines.append(f"**Mitigation:** {risk.mitigation}")
+            lines.extend([f"### {risk.title or risk.description}", ""])
+            if risk.title:
+                lines.extend([risk.description, ""])
+            lines.extend([f"**Business implication:** {risk.potential_impact}", ""])
+            lines.append(f"**Recommended action:** {risk.mitigation}")
             if risk.evidence:
-                lines.append("**Evidence:**")
+                lines.append("")
+                lines.extend(["**Supporting evidence:**", ""])
                 for ev in risk.evidence:
                     lines.append(f"- {ev}")
             lines.append("")
@@ -347,19 +398,19 @@ class MarkdownRenderer:
     # ── Section 11: Executive Recommendations ─────────────────────────────
 
     def _render_recommendations(self, report: ExecutiveReport) -> str:
-        """Render recommendations with evidence refs."""
+        """Render recommendations as a title + narrative paragraph + evidence."""
         lines = ["## 11. Executive Recommendations & Next Steps", ""]
         if not report.recommendations:
             lines.append("No specific recommendations at this time.")
             return "\n".join(lines)
         for i, rec in enumerate(report.recommendations, 1):
-            lines.append(f"### {i}. [{rec.priority}] {rec.recommendation}")
-            text = rec.narrative if rec.narrative else rec.recommendation
-            lines.append(f"**Action:** {text}")
-            lines.append(f"**Rationale:** {rec.rationale}")
-            lines.append(f"**Expected Outcome:** {rec.expected_outcome}")
+            title = _recommendation_title(rec)
+            lines.append(f"### {i}. [{rec.priority}] {title}")
+            narrative = rec.narrative or _recommendation_fallback_text(rec)
+            lines.append(narrative)
             if rec.supporting_evidence:
-                lines.append("**Supporting Evidence:**")
+                lines.append("")
+                lines.append("**Evidence:**")
                 for ev in rec.supporting_evidence:
                     lines.append(
                         f"- {ev.metric}: {ev.value} (from {ev.source_section})"
@@ -370,16 +421,14 @@ class MarkdownRenderer:
     # ── Section 12: Critical Business Assumptions ─────────────────────────
 
     def _render_assumptions(self, report: ExecutiveReport) -> str:
-        """Render the critical business assumptions."""
+        """Render the critical business assumptions as numbered flowing prose."""
         lines = ["## 12. Critical Business Assumptions", ""]
         if not report.assumptions:
             lines.append("No specific assumptions identified.")
             return "\n".join(lines)
         for i, assumption in enumerate(report.assumptions, 1):
-            lines.append(f"{i}. **{assumption.assumption}**")
-            lines.append(
-                f"   *Consequence if false:* {assumption.consequence_if_false}"
-            )
+            narrative = assumption.narrative or _assumption_fallback_text(assumption)
+            lines.append(f"{i}. {narrative}")
             lines.append("")
         return "\n".join(lines)
 
@@ -399,4 +448,13 @@ class MarkdownRenderer:
         lines.append(f"| Dataset Frequency | {meta.dataset_frequency} |")
         lines.append(f"| Data Quality Rating | {meta.data_quality_rating} |")
         lines.append(f"| Row Count | {meta.row_count} |")
+        narrative_source = "LLM-generated"
+        if meta.llm_narrative_fallback:
+            sections = ", ".join(
+                section.replace("_", " ") for section in meta.llm_fallback_sections
+            )
+            narrative_source = "Deterministic fallback used" + (
+                f" ({sections})" if sections else ""
+            )
+        lines.append(f"| Narrative Generation | {narrative_source} |")
         return "\n".join(lines)

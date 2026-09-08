@@ -9,8 +9,14 @@ import pandas as pd
 from statsmodels.tsa.holtwinters import ExponentialSmoothing
 
 from core.logging_config import get_logger
-from forecasting.contracts import ForecastAdapterResult, ForecastFitStatus, ForecastMetrics
+from forecasting.contracts import (
+    ForecastAdapterResult,
+    ForecastFitStatus,
+    ForecastMetrics,
+)
 from forecasting.evaluation import evaluate_predictions, make_terminal_holdout
+from forecasting.indexing import normalize_forecast_index
+from forecasting.intervals import smoothing_paths, path_intervals
 
 logger = get_logger(__name__)
 
@@ -78,20 +84,13 @@ def bootstrap_holt_winters_interval(
     repetitions: int = 1000,
 ) -> tuple[list[float], list[float]]:
     """Bootstrap multi-step forecast errors from fitted innovations."""
-    residuals = np.asarray(fitted.resid, dtype=float)
-    residuals = residuals[np.isfinite(residuals)]
-    if residuals.size == 0:
-        return [], []
-    rng = np.random.default_rng(seed)
-    sampled = rng.choice(
-        residuals,
-        size=(repetitions, point_forecast.size),
-        replace=True,
-    )
-    simulated = point_forecast[None, :] + np.cumsum(sampled, axis=1)
-    return (
-        np.quantile(simulated, 0.025, axis=0).tolist(),
-        np.quantile(simulated, 0.975, axis=0).tolist(),
+    return path_intervals(
+        smoothing_paths(
+            fitted,
+            point_forecast.size,
+            seed=seed,
+            repetitions=repetitions,
+        )
     )
 
 
@@ -102,7 +101,7 @@ def fit_holt_winters(
     mase_period: int = 1,
 ) -> ForecastAdapterResult:
     """Select the Holt-Winters form on training data and refit it on all data."""
-    series = series.dropna().astype(float)
+    series = normalize_forecast_index(series.dropna().astype(float))
     seasonal_period = max(1, int(seasonal_period))
     holdout = make_terminal_holdout(series, forecast_horizon)
     train, test = holdout.train, holdout.test

@@ -218,13 +218,16 @@ def recommended_action(
             "warning",
         )
     if data_quality.rating != "Good":
-        has_collection_issue = any(
-            (
-                data_quality.missing_values,
-                data_quality.duplicate_timestamps,
-                data_quality.missing_timestamps,
+        has_collection_issue = (
+            any(
+                (
+                    data_quality.missing_values,
+                    data_quality.duplicate_timestamps,
+                    data_quality.missing_timestamps,
+                )
             )
-        ) or not data_quality.is_regular
+            or not data_quality.is_regular
+        )
         if has_collection_issue:
             return "Improve data collection quality and re-run analysis", "warning"
         if data_quality.outlier_count:
