@@ -378,12 +378,23 @@ def forecast() -> str:
 @main_bp.route("/trace")
 @_login_required
 @analysis_required
-def trace() -> str:
+def trace() -> Response | str:
     """Render the AI Reasoning Trace tab.
 
     Returns:
-        Rendered HTML for the AI reasoning trace page.
+        Rendered HTML for the AI reasoning trace page, or a redirect when AI
+        features are disabled deployment-wide or the run used Traditional
+        Forecasting (no LLM reasoning was captured).
     """
+    if not get_llm_enabled():
+        flash("AI trace is disabled on this deployment.", "warning")
+        return redirect(url_for(_FORECAST_SETUP_ENDPOINT))
+    if session.get("traditional_mode"):
+        flash(
+            "AI trace is not available for Traditional Forecasting runs.",
+            "warning",
+        )
+        return redirect(url_for(_FORECAST_SETUP_ENDPOINT))
     result: dict[str, Any] = session.get("analysis_result") or {}
     agents: list[dict[str, Any]] = [
         {
